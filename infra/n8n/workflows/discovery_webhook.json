@@ -1,0 +1,86 @@
+{
+  "name": "100.com - Discovery Agent (generic, topic-agnostic)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "100times/discover",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "discovery-webhook",
+      "name": "Discussion Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "100times-discover"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/api/acquisition/discussions/discover",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {}
+      },
+      "id": "discovery-call-fastapi",
+      "name": "Run Discovery Agent via FastAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "discovery-respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.2,
+      "position": [
+        680,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Discussion Webhook": {
+      "main": [
+        [
+          {
+            "node": "Run Discovery Agent via FastAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Discovery Agent via FastAPI": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "description": "The generic acquisition-agent entry point: User Discussion -> n8n -> FastAPI /acquisition/discussions/discover. Expects a POST body of {platform, communityName, title, content, url?} for ANY topic -- there is nothing topic-specific in this workflow or in the endpoint it calls. FastAPI does all the work: Claude understands the discussion and generates dynamic search queries, searches the selected platform's connector, extracts candidate events with Claude, checks them against the 100.com catalog, and either stages a reply to an existing match or a new-event candidate for human approval. This workflow is just the trigger + passthrough; it contains no business logic."
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

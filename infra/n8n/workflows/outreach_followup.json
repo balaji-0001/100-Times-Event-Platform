@@ -1,0 +1,61 @@
+{
+  "name": "100.com - Organizer Outreach Follow-up",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "outreach-followup-schedule-trigger",
+      "name": "Daily at 9am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/api/acquisition/outreach/process-followups",
+        "options": {}
+      },
+      "id": "outreach-process-followups",
+      "name": "Process Follow-ups",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Daily at 9am": {
+      "main": [
+        [
+          {
+            "node": "Process Follow-ups",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "description": "Thin wrapper, same pattern as the other 4 workflows: fires daily, calls FastAPI's /api/acquisition/outreach/process-followups, which does all the real logic (find OutreachMessage rows sent >= OUTREACH_FOLLOWUP_DAYS ago with no follow-up yet -> send exactly one follow-up each; find rows whose follow-up itself got no response after another full window -> mark them NO_RESPONSE as a terminal status). No business logic lives in this workflow. Import via the n8n REST API like the other 4 workflows (the UI's classic import path may not be visible in newer n8n versions) - see infra/n8n/README.md."
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

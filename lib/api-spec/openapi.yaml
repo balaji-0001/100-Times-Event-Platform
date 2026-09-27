@@ -3,20 +3,25 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: API for the 100 Times event discovery platform
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
-    description: Health operations
+  - name: home
+  - name: events
+  - name: directories
+  - name: auth
+  - name: user
+  - name: organizer
+  - name: admin
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,13 +29,762 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /home:
+    get:
+      operationId: getHome
+      tags: [home]
+      summary: Get homepage discovery content
+      responses:
+        "200":
+          description: Homepage content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HomePayload"
+  /events:
+    get:
+      operationId: listEvents
+      tags: [events]
+      summary: Search and filter events
+      parameters:
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/Search" }
+        - { $ref: "#/components/parameters/Category" }
+        - { $ref: "#/components/parameters/City" }
+        - { $ref: "#/components/parameters/EventType" }
+        - { $ref: "#/components/parameters/DateRange" }
+        - { $ref: "#/components/parameters/Format" }
+        - { $ref: "#/components/parameters/Sort" }
+      responses:
+        "200":
+          description: Paginated event results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventList"
+  /events/{slug}:
+    get:
+      operationId: getEvent
+      tags: [events]
+      summary: Get an event by slug
+      parameters:
+        - { $ref: "#/components/parameters/Slug" }
+      responses:
+        "200":
+          description: Event detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /events/{id}/save:
+    post:
+      operationId: saveEvent
+      tags: [user]
+      summary: Save an event for the current demo user
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+      responses:
+        "200":
+          description: Saved event state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+    delete:
+      operationId: unsaveEvent
+      tags: [user]
+      summary: Remove an event from saved events
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+      responses:
+        "200":
+          description: Saved event state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionResult"
+  /events/{id}/register:
+    post:
+      operationId: registerForEvent
+      tags: [events]
+      summary: Register for an event
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegistrationInput"
+      responses:
+        "201":
+          description: Registration created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Registration"
+  /events/{id}/reviews:
+    post:
+      operationId: createReview
+      tags: [events]
+      summary: Review an event
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewInput"
+      responses:
+        "201":
+          description: Review created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Review"
+  /categories:
+    get:
+      operationId: listCategories
+      tags: [directories]
+      summary: List event categories
+      responses:
+        "200":
+          description: Categories
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Category"
+  /categories/{slug}:
+    get:
+      operationId: getCategory
+      tags: [directories]
+      summary: Get category details
+      parameters:
+        - { $ref: "#/components/parameters/Slug" }
+      responses:
+        "200":
+          description: Category detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DirectoryDetail"
+  /cities:
+    get:
+      operationId: listCities
+      tags: [directories]
+      summary: List cities
+      responses:
+        "200":
+          description: Cities
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/City"
+  /cities/{slug}:
+    get:
+      operationId: getCity
+      tags: [directories]
+      summary: Get city details
+      parameters:
+        - { $ref: "#/components/parameters/Slug" }
+      responses:
+        "200":
+          description: City detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DirectoryDetail"
+  /organizers:
+    get:
+      operationId: listOrganizers
+      tags: [directories]
+      summary: List organizers
+      responses:
+        "200":
+          description: Organizers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Organizer"
+  /organizers/{slug}:
+    get:
+      operationId: getOrganizer
+      tags: [directories]
+      summary: Get organizer details
+      parameters:
+        - { $ref: "#/components/parameters/Slug" }
+      responses:
+        "200":
+          description: Organizer detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizerDetail"
+  /venues:
+    get:
+      operationId: listVenues
+      tags: [directories]
+      summary: List venues
+      responses:
+        "200":
+          description: Venues
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Venue"
+  /venues/{slug}:
+    get:
+      operationId: getVenue
+      tags: [directories]
+      summary: Get venue details
+      parameters:
+        - { $ref: "#/components/parameters/Slug" }
+      responses:
+        "200":
+          description: Venue detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VenueDetail"
+  /speakers/{slug}:
+    get:
+      operationId: getSpeaker
+      tags: [directories]
+      summary: Get speaker details
+      parameters:
+        - { $ref: "#/components/parameters/Slug" }
+      responses:
+        "200":
+          description: Speaker detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SpeakerDetail"
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Start a demo session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginInput"
+      responses:
+        "200":
+          description: Demo session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+  /auth/register:
+    post:
+      operationId: registerUser
+      tags: [auth]
+      summary: Create a user account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserInput"
+      responses:
+        "201":
+          description: Account created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+  /dashboard:
+    get:
+      operationId: getDashboard
+      tags: [user]
+      summary: Get the current user's dashboard
+      responses:
+        "200":
+          description: Dashboard overview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Dashboard"
+  /dashboard/saved-events:
+    get:
+      operationId: getSavedEvents
+      tags: [user]
+      summary: Get saved events
+      responses:
+        "200":
+          description: Saved events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/EventCard"
+  /dashboard/registrations:
+    get:
+      operationId: getRegistrations
+      tags: [user]
+      summary: Get registrations
+      responses:
+        "200":
+          description: Registrations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Registration"
+  /dashboard/notifications:
+    get:
+      operationId: getNotifications
+      tags: [user]
+      summary: Get notifications
+      responses:
+        "200":
+          description: Notifications
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Notification"
+  /organizer:
+    get:
+      operationId: getOrganizerDashboard
+      tags: [organizer]
+      summary: Get organizer dashboard
+      responses:
+        "200":
+          description: Organizer metrics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizerDashboard"
+  /organizer/events:
+    get:
+      operationId: getOrganizerEvents
+      tags: [organizer]
+      summary: List organizer events
+      responses:
+        "200":
+          description: Organizer events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/EventCard"
+    post:
+      operationId: createOrganizerEvent
+      tags: [organizer]
+      summary: Create an event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EventInput"
+      responses:
+        "201":
+          description: Event created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventCard"
+  /organizer/analytics:
+    get:
+      operationId: getOrganizerAnalytics
+      tags: [organizer]
+      summary: Get organizer analytics
+      responses:
+        "200":
+          description: Analytics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Analytics"
+  /admin:
+    get:
+      operationId: getAdminDashboard
+      tags: [admin]
+      summary: Get admin dashboard
+      responses:
+        "200":
+          description: Admin metrics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminDashboard"
 components:
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: number }
+    Slug:
+      name: slug
+      in: path
+      required: true
+      schema: { type: string }
+    Page:
+      name: page
+      in: query
+      schema: { type: number, minimum: 1, default: 1 }
+    PageSize:
+      name: pageSize
+      in: query
+      schema: { type: number, minimum: 1, maximum: 50, default: 12 }
+    Search:
+      name: q
+      in: query
+      schema: { type: string }
+    Category:
+      name: category
+      in: query
+      schema: { type: string }
+    City:
+      name: city
+      in: query
+      schema: { type: string }
+    EventType:
+      name: eventType
+      in: query
+      schema: { type: string }
+    DateRange:
+      name: date
+      in: query
+      schema: { type: string }
+    Format:
+      name: format
+      in: query
+      schema: { type: string, enum: [all, online, in-person] }
+    Sort:
+      name: sort
+      in: query
+      schema: { type: string, enum: [soonest, popular, newest], default: soonest }
+  responses:
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
   schemas:
     HealthStatus:
       type: object
       properties:
-        status:
-          type: string
-      required:
-        - status
-
+        status: { type: string }
+      required: [status]
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+      required: [error]
+    Category:
+      type: object
+      properties:
+        id: { type: number }
+        name: { type: string }
+        slug: { type: string }
+        description: { type: string }
+        icon: { type: string }
+        eventCount: { type: number }
+      required: [id, name, slug, description, icon, eventCount]
+    City:
+      type: object
+      properties:
+        id: { type: number }
+        name: { type: string }
+        slug: { type: string }
+        country: { type: string }
+        image: { type: string }
+        eventCount: { type: number }
+      required: [id, name, slug, country, image, eventCount]
+    Organizer:
+      type: object
+      properties:
+        id: { type: number }
+        name: { type: string }
+        slug: { type: string }
+        description: { type: string }
+        logo: { type: string }
+        eventCount: { type: number }
+        rating: { type: number }
+      required: [id, name, slug, description, logo, eventCount, rating]
+    Venue:
+      type: object
+      properties:
+        id: { type: number }
+        name: { type: string }
+        slug: { type: string }
+        address: { type: string }
+        city: { type: string }
+        country: { type: string }
+        capacity: { type: number }
+        image: { type: string }
+      required: [id, name, slug, address, city, country, capacity, image]
+    Speaker:
+      type: object
+      properties:
+        id: { type: number }
+        name: { type: string }
+        slug: { type: string }
+        title: { type: string }
+        company: { type: string }
+        image: { type: string }
+        expertise: { type: array, items: { type: string } }
+      required: [id, name, slug, title, company, image, expertise]
+    EventCard:
+      type: object
+      properties:
+        id: { type: number }
+        title: { type: string }
+        slug: { type: string }
+        eventType: { type: string }
+        category: { type: string }
+        categorySlug: { type: string }
+        startDate: { type: string }
+        endDate: { type: string }
+        startTime: { type: string }
+        location: { type: string }
+        venue: { type: string }
+        organizer: { type: string }
+        image: { type: string }
+        rating: { type: number }
+        attendeeCount: { type: number }
+        price: { type: number }
+        format: { type: string, enum: [online, in-person] }
+        isSaved: { type: boolean }
+        status: { type: string, enum: [draft, published, pending] }
+      required: [id, title, slug, eventType, category, categorySlug, startDate, endDate, startTime, location, venue, organizer, image, rating, attendeeCount, price, format, isSaved, status]
+    AgendaItem:
+      type: object
+      properties:
+        time: { type: string }
+        title: { type: string }
+        detail: { type: string }
+      required: [time, title, detail]
+    EventDetail:
+      allOf:
+        - $ref: "#/components/schemas/EventCard"
+        - type: object
+          properties:
+            description: { type: string }
+            organizerId: { type: number }
+            venueId: { type: number }
+            agenda: { type: array, items: { $ref: "#/components/schemas/AgendaItem" } }
+            speakers: { type: array, items: { $ref: "#/components/schemas/Speaker" } }
+            exhibitors: { type: array, items: { type: string } }
+            reviews: { type: array, items: { $ref: "#/components/schemas/Review" } }
+            relatedEvents: { type: array, items: { $ref: "#/components/schemas/EventCard" } }
+          required: [description, organizerId, venueId, agenda, speakers, exhibitors, reviews, relatedEvents]
+    EventList:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/EventCard" } }
+        total: { type: number }
+        page: { type: number }
+        pageSize: { type: number }
+        totalPages: { type: number }
+      required: [items, total, page, pageSize, totalPages]
+    HomePayload:
+      type: object
+      properties:
+        featured: { type: array, items: { $ref: "#/components/schemas/EventCard" } }
+        trending: { type: array, items: { $ref: "#/components/schemas/Category" } }
+        cities: { type: array, items: { $ref: "#/components/schemas/City" } }
+        eventTypes: { type: array, items: { type: string } }
+        stats:
+          type: object
+          properties:
+            events: { type: number }
+            cities: { type: number }
+            organizers: { type: number }
+          required: [events, cities, organizers]
+      required: [featured, trending, cities, eventTypes, stats]
+    DirectoryDetail:
+      type: object
+      properties:
+        name: { type: string }
+        slug: { type: string }
+        description: { type: string }
+        events: { type: array, items: { $ref: "#/components/schemas/EventCard" } }
+        related: { type: array, items: { type: string } }
+      required: [name, slug, description, events, related]
+    OrganizerDetail:
+      type: object
+      properties:
+        organizer: { $ref: "#/components/schemas/Organizer" }
+        events: { type: array, items: { $ref: "#/components/schemas/EventCard" } }
+        reviews: { type: array, items: { $ref: "#/components/schemas/Review" } }
+      required: [organizer, events, reviews]
+    VenueDetail:
+      type: object
+      properties:
+        venue: { $ref: "#/components/schemas/Venue" }
+        description: { type: string }
+        facilities: { type: array, items: { type: string } }
+        events: { type: array, items: { $ref: "#/components/schemas/EventCard" } }
+      required: [venue, description, facilities, events]
+    SpeakerDetail:
+      type: object
+      properties:
+        speaker: { $ref: "#/components/schemas/Speaker" }
+        biography: { type: string }
+        events: { type: array, items: { $ref: "#/components/schemas/EventCard" } }
+      required: [speaker, biography, events]
+    RegistrationInput:
+      type: object
+      properties:
+        firstName: { type: string, minLength: 1 }
+        lastName: { type: string, minLength: 1 }
+        email: { type: string }
+        phone: { type: string }
+        company: { type: string }
+        jobTitle: { type: string }
+        country: { type: string }
+        ticketType: { type: string, enum: [Free, Standard, Premium, VIP] }
+      required: [firstName, lastName, email, ticketType]
+    Registration:
+      type: object
+      properties:
+        id: { type: number }
+        eventId: { type: number }
+        eventTitle: { type: string }
+        eventSlug: { type: string }
+        ticketType: { type: string }
+        registeredAt: { type: string }
+        status: { type: string, enum: [confirmed, pending, cancelled] }
+      required: [id, eventId, eventTitle, eventSlug, ticketType, registeredAt, status]
+    Review:
+      type: object
+      properties:
+        id: { type: number }
+        author: { type: string }
+        rating: { type: number, minimum: 1, maximum: 5 }
+        title: { type: string }
+        comment: { type: string }
+        createdAt: { type: string }
+      required: [id, author, rating, title, comment, createdAt]
+    ReviewInput:
+      type: object
+      properties:
+        rating: { type: number, minimum: 1, maximum: 5 }
+        title: { type: string, minLength: 1 }
+        comment: { type: string, minLength: 1 }
+      required: [rating, title, comment]
+    ActionResult:
+      type: object
+      properties:
+        success: { type: boolean }
+        isSaved: { type: boolean }
+        message: { type: string }
+      required: [success, isSaved, message]
+    LoginInput:
+      type: object
+      properties:
+        email: { type: string }
+        password: { type: string, minLength: 6 }
+      required: [email, password]
+    UserInput:
+      type: object
+      properties:
+        name: { type: string, minLength: 2 }
+        email: { type: string }
+        password: { type: string, minLength: 6 }
+        country: { type: string }
+      required: [name, email, password]
+    Session:
+      type: object
+      properties:
+        user:
+          type: object
+          properties:
+            name: { type: string }
+            email: { type: string }
+            role: { type: string, enum: [USER, ORGANIZER, ADMIN] }
+          required: [name, email, role]
+        token: { type: string }
+      required: [user, token]
+    Dashboard:
+      type: object
+      properties:
+        userName: { type: string }
+        savedCount: { type: number }
+        registrationCount: { type: number }
+        attendedCount: { type: number }
+        upcoming: { type: array, items: { $ref: "#/components/schemas/Registration" } }
+        saved: { type: array, items: { $ref: "#/components/schemas/EventCard" } }
+        recommended: { type: array, items: { $ref: "#/components/schemas/EventCard" } }
+        notifications: { type: array, items: { $ref: "#/components/schemas/Notification" } }
+      required: [userName, savedCount, registrationCount, attendedCount, upcoming, saved, recommended, notifications]
+    Notification:
+      type: object
+      properties:
+        id: { type: number }
+        title: { type: string }
+        message: { type: string }
+        isRead: { type: boolean }
+        createdAt: { type: string }
+      required: [id, title, message, isRead, createdAt]
+    EventInput:
+      type: object
+      properties:
+        title: { type: string, minLength: 3 }
+        description: { type: string, minLength: 10 }
+        eventType: { type: string }
+        category: { type: string }
+        startDate: { type: string }
+        endDate: { type: string }
+        startTime: { type: string }
+        location: { type: string }
+        format: { type: string, enum: [online, in-person] }
+        price: { type: number, minimum: 0 }
+      required: [title, description, eventType, category, startDate, endDate, startTime, location, format, price]
+    OrganizerDashboard:
+      type: object
+      properties:
+        totalEvents: { type: number }
+        publishedEvents: { type: number }
+        registrations: { type: number }
+        views: { type: number }
+        conversionRate: { type: number }
+        recentEvents: { type: array, items: { $ref: "#/components/schemas/EventCard" } }
+      required: [totalEvents, publishedEvents, registrations, views, conversionRate, recentEvents]
+    Analytics:
+      type: object
+      properties:
+        views: { type: array, items: { type: number } }
+        registrations: { type: array, items: { type: number } }
+        conversion: { type: array, items: { type: number } }
+        ticketDistribution:
+          type: object
+          additionalProperties: { type: number }
+      required: [views, registrations, conversion, ticketDistribution]
+    AdminDashboard:
+      type: object
+      properties:
+        users: { type: number }
+        events: { type: number }
+        organizers: { type: number }
+        registrations: { type: number }
+        reviews: { type: number }
+        userGrowth: { type: array, items: { type: number } }
+        eventGrowth: { type: array, items: { type: number } }
+        popularCategories: { type: array, items: { type: string } }
+      required: [users, events, organizers, registrations, reviews, userGrowth, eventGrowth, popularCategories]

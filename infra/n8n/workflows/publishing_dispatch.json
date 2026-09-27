@@ -1,0 +1,163 @@
+{
+  "name": "100.com - Publishing Dispatch (scheduled items)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "publish-schedule-trigger",
+      "name": "Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://host.docker.internal:8000/api/acquisition/opportunities",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "approval_status",
+              "value": "scheduled"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "publish-get-scheduled",
+      "name": "Get Scheduled Opportunities",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "due-condition",
+              "leftValue": "={{ $json.scheduledAt }}",
+              "rightValue": "={{ $now.toISO() }}",
+              "operator": {
+                "type": "dateTime",
+                "operation": "before"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "publish-filter-due",
+      "name": "Filter: Due Now",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "publish-loop",
+      "name": "Loop Over Due Items",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://host.docker.internal:8000/api/acquisition/opportunities/{{ $json.id }}/publish",
+        "options": {}
+      },
+      "id": "publish-call-fastapi",
+      "name": "Publish via FastAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Every 5 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Get Scheduled Opportunities",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Scheduled Opportunities": {
+      "main": [
+        [
+          {
+            "node": "Filter: Due Now",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter: Due Now": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Due Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Due Items": {
+      "main": [
+        [
+          {
+            "node": "Publish via FastAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "description": "This is what actually makes 'Schedule' mean something: today, scheduling an opportunity only sets a timestamp \u2014 nothing fires the publish automatically. This workflow polls for opportunities the human already explicitly scheduled, and once their chosen time arrives, calls the same /publish endpoint a manual 'Publish Now' click would. The only thing done here is date-comparison filtering and looping \u2014 publish_reply/verify_publication and every real API call happen inside FastAPI (backend/services/social_agent/publishers/), not in n8n."
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

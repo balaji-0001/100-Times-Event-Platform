@@ -1,0 +1,87 @@
+{
+  "name": "100.com - Analytics",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 7
+            }
+          ]
+        }
+      },
+      "id": "analytics-schedule-trigger",
+      "name": "Daily at 7am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://host.docker.internal:8000/api/acquisition/analytics",
+        "options": {}
+      },
+      "id": "analytics-collect",
+      "name": "Collect Metrics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/api/acquisition/analytics/insights",
+        "options": {}
+      },
+      "id": "analytics-insights",
+      "name": "Generate Claude Insight (optional)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Daily at 7am": {
+      "main": [
+        [
+          {
+            "node": "Collect Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Metrics": {
+      "main": [
+        [
+          {
+            "node": "Generate Claude Insight (optional)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "description": "Scheduled trigger -> collect real, code-calculated metrics from FastAPI -> optional Claude qualitative summary (never recomputes the numbers, only narrates them). Wire in your own notification node (Slack/Email) after 'Generate Claude Insight' if you want this delivered somewhere rather than just logged in n8n's execution history. A separate Tracking workflow was deliberately not built: click tracking is inherently synchronous (the /r/{id} redirect records a ClickEvent the moment it happens) and has nothing for a scheduled workflow to do."
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

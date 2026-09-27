@@ -47,3 +47,42 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Local environment files, keys, secrets, and development databases
+.env
+.env.*
+*.env
+*.env.*
+!.env.example
+!**/.env.example
+*.pem
+*.key
+*.crt
+*.cert
+*.p12
+*.pfx
+*secret*.json
+*credentials*.json
+*.db
+*.db.*
+*.sqlite
+*.sqlite3
+*.bak
+*.bak-*
+
+# Python & virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# Security scanners, AI assistants & local run logs
+.semgrep/
+.claude/
+*.log
+_*.log
+_final_test_result.json
+

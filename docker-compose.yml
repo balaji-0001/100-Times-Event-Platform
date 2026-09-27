@@ -1,0 +1,53 @@
+# Development infrastructure: n8n (workflow orchestration) + PostgreSQL
+# (production-parity testing only — SQLite remains the default local dev DB,
+# see artifacts/api-server/.env) + an optional containerized FastAPI.
+#
+# Default usage (n8n + Postgres only, FastAPI keeps running natively):
+#   docker compose up -d
+#
+# Full stack including a containerized FastAPI (rarely needed — the native
+# `py -3 -m uvicorn` flow is the primary documented dev path):
+#   docker compose --profile full up -d
+
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:-change-this-in-production}
+      - GENERIC_TIMEZONE=Asia/Kolkata
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./infra/n8n/workflows:/home/node/workflows:ro
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      - POSTGRES_USER=hundredtimes
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-devpassword}
+      - POSTGRES_DB=hundredtimes
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  fastapi:
+    build:
+      context: ./artifacts/api-server
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./artifacts/api-server/.env
+    profiles:
+      - full
+
+volumes:
+  n8n_data:
+  postgres_data:

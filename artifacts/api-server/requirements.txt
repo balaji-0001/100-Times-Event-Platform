@@ -1,0 +1,16 @@
+# Runtime and local-development dependencies used by backend/ and alembic/.
+alembic>=1.19.1
+anthropic>=1.4.0
+beautifulsoup4>=4.12.3
+email-validator>=2.3.0
+fastapi>=0.141.1
+google-genai>=2.23.0
+httpx>=0.28.1
+langchain-core>=1.6.3
+langgraph>=1.2.11
+psycopg[binary]>=3.3.4
+pwdlib[argon2]>=0.3.1
+pydantic-settings>=2.15.0
+pyjwt>=2.13.0
+sqlalchemy>=2.0.52
+uvicorn[standard]>=0.52.4

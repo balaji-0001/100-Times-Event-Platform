@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "100 Times Event Platform"
+description = "A polished event discovery and professional networking platform for finding conferences, exhibitions, workshops, trade shows, and meaningful industry gatherings across India and the world."
+version = "1.0.0"
+id = "artifacts/100-times"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 23895
+
+[services.development]
+run = "pnpm --filter @workspace/100-times run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/100-times", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/100-times/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "23895"
+BASE_PATH = "/"
