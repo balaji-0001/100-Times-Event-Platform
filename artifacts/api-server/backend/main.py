@@ -71,13 +71,20 @@ async def lifespan(_: FastAPI):
     engine.dispose()
 
 
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
+_FAVICON_PNG = _STATIC_DIR / "favicon.png"
+_FAVICON_SVG = _STATIC_DIR / "favicon.svg"
+
 settings = get_settings()
 app = FastAPI(
     title=settings.app_name,
     description="Production API for the 100 TIMES event discovery, networking, and management platform.",
     version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url=None,
+    redoc_url=None,
     openapi_url="/openapi.json",
     lifespan=lifespan,
 )
@@ -89,6 +96,56 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+@app.get("/favicon.png", include_in_schema=False)
+def get_favicon_png():
+    return FileResponse(_FAVICON_PNG, media_type="image/png")
+
+
+@app.get("/favicon.svg", include_in_schema=False)
+def get_favicon_svg():
+    return FileResponse(_FAVICON_SVG, media_type="image/svg+xml")
+
+
+@app.get("/docs", include_in_schema=False)
+def custom_swagger_ui_html():
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} — Swagger UI",
+        swagger_favicon_url="/favicon.png?v=2",
+    )
+
+
+@app.get("/redoc", include_in_schema=False)
+def custom_redoc_html():
+    return get_redoc_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} — ReDoc",
+        redoc_favicon_url="/favicon.png?v=2",
+    )
+
+
+@app.get("/", include_in_schema=False, response_class=HTMLResponse)
+def backend_root():
+    return """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>100 TIMES API Server</title>
+  <link rel="icon" type="image/png" href="/favicon.png?v=2" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=2" />
+  <style>body{font-family:system-ui,sans-serif;background:#090d16;color:#f8fafc;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}a{color:#38bdf8;text-decoration:none;margin:0 10px;font-weight:600}</style>
+</head>
+<body>
+  <div style="text-align:center">
+    <img src="/favicon.png?v=2" width="72" height="72" style="border-radius:50%" alt="100 TIMES" />
+    <h1>100 TIMES API Server is Live</h1>
+    <p><a href="/docs">Swagger Docs (/docs)</a> &bull; <a href="/redoc">ReDoc (/redoc)</a> &bull; <a href="/api/healthz">Health (/api/healthz)</a></p>
+  </div>
+</body>
+</html>"""
 
 
 @app.exception_handler(Exception)
