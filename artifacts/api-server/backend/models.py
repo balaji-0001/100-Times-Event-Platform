@@ -72,6 +72,14 @@ class Organizer(Base):
     website: Mapped[str | None] = mapped_column(Text)
     email: Mapped[str | None] = mapped_column(Text)
     phone: Mapped[str | None] = mapped_column(Text)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    discovered_organizer_id: Mapped[int | None] = mapped_column(ForeignKey("discovered_organizers.id"))
+    company_name: Mapped[str | None] = mapped_column(Text)
+    contact_name: Mapped[str | None] = mapped_column(Text)
+    lifecycle_stage: Mapped[str] = mapped_column(String(40), default="SIGNED_UP", nullable=False)
+    verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    social_links: Mapped[dict | None] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     events: Mapped[list["Event"]] = relationship(back_populates="organizer")
 
 
@@ -101,14 +109,36 @@ class Event(Base):
     end_date: Mapped[date] = mapped_column(Date, nullable=False)
     start_time: Mapped[str] = mapped_column(Text, nullable=False)
     end_time: Mapped[str | None] = mapped_column(Text)
+    timezone: Mapped[str] = mapped_column(String(64), default="Asia/Kolkata", nullable=False)
     price: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0, nullable=False)
+    is_free: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    capacity: Mapped[int | None] = mapped_column(Integer)
     image: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(Text, default="draft", nullable=False)
+    lifecycle_state: Mapped[str] = mapped_column(String(40), default="PUBLISHED", nullable=False)
     format: Mapped[str] = mapped_column(Text, default="in-person", nullable=False)
+    full_address: Mapped[str | None] = mapped_column(Text)
+    city_name: Mapped[str | None] = mapped_column(Text)
+    state_name: Mapped[str | None] = mapped_column(Text)
+    country_name: Mapped[str | None] = mapped_column(Text, default="India")
+    online_meeting_url: Mapped[str | None] = mapped_column(Text)
+    registration_url: Mapped[str | None] = mapped_column(Text)
+    ticket_info: Mapped[dict | None] = mapped_column(JSON, default=dict)
+    speaker_info: Mapped[list[dict] | None] = mapped_column(JSON, default=list)
+    contact_info: Mapped[dict | None] = mapped_column(JSON, default=dict)
+    social_links: Mapped[dict | None] = mapped_column(JSON, default=dict)
+    terms_policy: Mapped[str | None] = mapped_column(Text)
+    tags: Mapped[list[str] | None] = mapped_column(JSON, default=list)
+    target_audience: Mapped[str | None] = mapped_column(Text)
+    trust_score: Mapped[int | None] = mapped_column(Integer)
+    trust_status: Mapped[str | None] = mapped_column(String(30))
+    trust_confidence: Mapped[str | None] = mapped_column(String(20))
+    views_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id"))
     organizer_id: Mapped[int | None] = mapped_column(ForeignKey("organizers.id"))
     venue_id: Mapped[int | None] = mapped_column(ForeignKey("venues.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
     category: Mapped[Category | None] = relationship(back_populates="events")
     organizer: Mapped[Organizer | None] = relationship(back_populates="events")
     venue: Mapped[Venue | None] = relationship(back_populates="events")
@@ -150,6 +180,17 @@ class Registration(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     ticket_type: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, default="confirmed", nullable=False)
+    registration_code: Mapped[str | None] = mapped_column(String(64), index=True)
+    attendee_name: Mapped[str | None] = mapped_column(Text)
+    attendee_email: Mapped[str | None] = mapped_column(Text)
+    attendee_phone: Mapped[str | None] = mapped_column(Text)
+    company: Mapped[str | None] = mapped_column(Text)
+    job_title: Mapped[str | None] = mapped_column(Text)
+    country: Mapped[str | None] = mapped_column(Text)
+    payment_status: Mapped[str] = mapped_column(String(30), default="not_required", nullable=False)
+    calendar_added: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    checked_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     registered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
     event: Mapped[Event] = relationship(back_populates="registrations")
     user: Mapped[User] = relationship(back_populates="registrations")
@@ -171,6 +212,10 @@ class Notification(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
+    channel: Mapped[str] = mapped_column(String(30), default="in_app", nullable=False)
+    template_key: Mapped[str | None] = mapped_column(String(60))
+    status: Mapped[str] = mapped_column(String(20), default="sent", nullable=False)
+    metadata_json: Mapped[dict | None] = mapped_column(JSON, default=dict)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
     user: Mapped[User] = relationship(back_populates="notifications")
@@ -604,3 +649,299 @@ class AgentSetting(Base):
     key: Mapped[str] = mapped_column(String(50), primary_key=True)
     value: Mapped[str] = mapped_column(String(200), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class Organization(Base):
+    """Company or organization entity associated with an Organizer."""
+
+    __tablename__ = "organizations"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    slug: Mapped[str] = mapped_column(Text, unique=True, index=True, nullable=False)
+    website: Mapped[str | None] = mapped_column(Text)
+    industry: Mapped[str | None] = mapped_column(String(100))
+    registration_number: Mapped[str | None] = mapped_column(String(100))
+    city: Mapped[str | None] = mapped_column(Text)
+    state: Mapped[str | None] = mapped_column(Text)
+    country: Mapped[str | None] = mapped_column(Text, default="India")
+    verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+
+class OrganizerProfile(Base):
+    """Detailed onboarding profile and lifecycle tracking for an Organizer."""
+
+    __tablename__ = "organizer_profiles"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, index=True, nullable=False)
+    organizer_id: Mapped[int | None] = mapped_column(ForeignKey("organizers.id"), index=True)
+    organization_id: Mapped[int | None] = mapped_column(ForeignKey("organizations.id"))
+    discovered_organizer_id: Mapped[int | None] = mapped_column(ForeignKey("discovered_organizers.id"))
+    organization_name: Mapped[str | None] = mapped_column(Text)
+    contact_name: Mapped[str | None] = mapped_column(Text)
+    contact_email: Mapped[str | None] = mapped_column(Text)
+    contact_phone: Mapped[str | None] = mapped_column(Text)
+    website: Mapped[str | None] = mapped_column(Text)
+    social_links: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    bio: Mapped[str | None] = mapped_column(Text)
+    city: Mapped[str | None] = mapped_column(Text)
+    state: Mapped[str | None] = mapped_column(Text)
+    country: Mapped[str | None] = mapped_column(Text, default="India")
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    identity_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    lifecycle_stage: Mapped[str] = mapped_column(String(40), default="SIGNED_UP", nullable=False)
+    lifecycle_history: Mapped[list[dict]] = mapped_column(JSON, default=list, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class EventLocation(Base):
+    """Structured address and location details for an Event."""
+
+    __tablename__ = "event_locations"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id"), unique=True, index=True, nullable=False)
+    venue_name: Mapped[str | None] = mapped_column(Text)
+    full_address: Mapped[str | None] = mapped_column(Text)
+    city: Mapped[str | None] = mapped_column(Text, index=True)
+    state: Mapped[str | None] = mapped_column(Text)
+    country: Mapped[str | None] = mapped_column(Text, default="India")
+    postal_code: Mapped[str | None] = mapped_column(String(30))
+    online_meeting_url: Mapped[str | None] = mapped_column(Text)
+    registration_url: Mapped[str | None] = mapped_column(Text)
+    timezone: Mapped[str] = mapped_column(String(64), default="Asia/Kolkata", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+
+class Ticket(Base):
+    """Ticket tier / confirmation pass definition for an Event or Registration."""
+
+    __tablename__ = "tickets"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id"), index=True, nullable=False)
+    registration_id: Mapped[int | None] = mapped_column(ForeignKey("registrations.id"), index=True)
+    ticket_code: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    tier_name: Mapped[str] = mapped_column(String(60), default="Standard", nullable=False)
+    price: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0, nullable=False)
+    currency: Mapped[str] = mapped_column(String(10), default="INR", nullable=False)
+    is_free: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="ISSUED", nullable=False)
+    qr_payload: Mapped[str | None] = mapped_column(Text)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+
+class Attendee(Base):
+    """Attendee CRM record linked to User or external community profile."""
+
+    __tablename__ = "attendees"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    email: Mapped[str | None] = mapped_column(Text, index=True)
+    phone: Mapped[str | None] = mapped_column(Text)
+    platform: Mapped[str | None] = mapped_column(String(40))
+    external_handle: Mapped[str | None] = mapped_column(String(120), index=True)
+    city: Mapped[str | None] = mapped_column(Text)
+    interests: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    opt_in_notifications: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+
+class AttendeeIntent(Base):
+    """Structured event-seeking intent extracted by the Attendee Agent."""
+
+    __tablename__ = "attendee_intents"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    discussion_id: Mapped[int | None] = mapped_column(ForeignKey("discussions.id"), index=True)
+    attendee_id: Mapped[int | None] = mapped_column(ForeignKey("attendees.id"), index=True)
+    source_platform: Mapped[str] = mapped_column(String(40), default="community", nullable=False)
+    source_url: Mapped[str | None] = mapped_column(Text)
+    author_handle: Mapped[str | None] = mapped_column(String(120))
+    raw_text: Mapped[str] = mapped_column(Text, nullable=False)
+    location: Mapped[str | None] = mapped_column(Text, index=True)
+    event_category: Mapped[str | None] = mapped_column(Text, index=True)
+    event_type: Mapped[str | None] = mapped_column(String(80))
+    date_preference: Mapped[str | None] = mapped_column(Text)
+    price_preference: Mapped[str | None] = mapped_column(String(40), default="any")
+    format_preference: Mapped[str | None] = mapped_column(String(40), default="any")
+    keywords: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    inferred_interests: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    confidence: Mapped[float] = mapped_column(Numeric(4, 2), default=0.80, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="DETECTED", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+
+class EventMatch(Base):
+    """Match between an AttendeeIntent and a published Event on 100.com."""
+
+    __tablename__ = "event_matches"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    intent_id: Mapped[int] = mapped_column(ForeignKey("attendee_intents.id"), index=True, nullable=False)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id"), index=True, nullable=False)
+    match_score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    match_reasons: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    recommendation_text: Mapped[str | None] = mapped_column(Text)
+    tracking_url: Mapped[str | None] = mapped_column(Text)
+    recommendation_status: Mapped[str] = mapped_column(String(30), default="GENERATED", nullable=False)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    response_received: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    converted_registration_id: Mapped[int | None] = mapped_column(ForeignKey("registrations.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+
+class TrustReview(Base):
+    """Trust Agent (Agent 3) evaluation record for an Event submission."""
+
+    __tablename__ = "trust_reviews"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id"), index=True, nullable=False)
+    organizer_id: Mapped[int | None] = mapped_column(ForeignKey("organizers.id"), index=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)  # APPROVED | NEEDS_REVIEW | REJECTED | DUPLICATE
+    score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    confidence: Mapped[str] = mapped_column(String(20), default="MEDIUM", nullable=False)  # HIGH | MEDIUM | LOW
+    reasons: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    warnings: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    duplicate_candidates: Mapped[list[dict]] = mapped_column(JSON, default=list, nullable=False)
+    missing_fields: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    recommended_action: Mapped[str] = mapped_column(String(40), nullable=False)
+    checks_summary: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    evaluated_by: Mapped[str] = mapped_column(String(40), default="trust_agent", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class TrustDecision(Base):
+    """Immutable log of Trust Agent or Admin moderation decisions on an Event."""
+
+    __tablename__ = "trust_decisions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    trust_review_id: Mapped[int] = mapped_column(ForeignKey("trust_reviews.id"), index=True, nullable=False)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id"), index=True, nullable=False)
+    actor_type: Mapped[str] = mapped_column(String(30), nullable=False)  # TRUST_AGENT | ADMIN
+    actor_id: Mapped[int | None] = mapped_column(Integer)
+    decision: Mapped[str] = mapped_column(String(30), nullable=False)  # APPROVE | REJECT | REQUEST_CHANGES | FLAG_DUPLICATE
+    previous_status: Mapped[str | None] = mapped_column(String(30))
+    new_status: Mapped[str] = mapped_column(String(30), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+
+class DuplicateCandidate(Base):
+    """Detected duplicate or near-duplicate Event candidate flagged by Trust Agent."""
+
+    __tablename__ = "duplicate_candidates"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id"), index=True, nullable=False)
+    candidate_event_id: Mapped[int | None] = mapped_column(ForeignKey("events.id"))
+    candidate_discovered_event_id: Mapped[int | None] = mapped_column(ForeignKey("discovered_events.id"))
+    candidate_title: Mapped[str] = mapped_column(Text, nullable=False)
+    similarity_score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    match_reason: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+
+class AgentMessage(Base):
+    """Outbound or inbound message generated by Attendee Agent or Organizer Outreach Agent."""
+
+    __tablename__ = "agent_messages"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    agent_type: Mapped[str] = mapped_column(String(30), nullable=False)  # attendee_agent | trust_agent | outreach_agent
+    channel: Mapped[str] = mapped_column(String(40), nullable=False)
+    recipient: Mapped[str | None] = mapped_column(Text)
+    subject: Mapped[str | None] = mapped_column(Text)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    related_event_id: Mapped[int | None] = mapped_column(ForeignKey("events.id"))
+    related_intent_id: Mapped[int | None] = mapped_column(ForeignKey("attendee_intents.id"))
+    status: Mapped[str] = mapped_column(String(30), default="SENT", nullable=False)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+
+class AutomationRun(Base):
+    """Idempotent n8n / automation workflow execution record."""
+
+    __tablename__ = "automation_runs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    workflow_id: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    workflow_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(160), unique=True, index=True, nullable=False)
+    trigger_event: Mapped[str] = mapped_column(String(80), nullable=False)
+    entity_type: Mapped[str | None] = mapped_column(String(50))
+    entity_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    status: Mapped[str] = mapped_column(String(30), default="COMPLETED", nullable=False)  # RUNNING | COMPLETED | FAILED | SKIPPED_DUPLICATE
+    payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    result: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class EventReminder(Base):
+    """Timezone-aware scheduled reminder (T-7d, T-24h, T-1h) for a Registration."""
+
+    __tablename__ = "event_reminders"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id"), index=True, nullable=False)
+    registration_id: Mapped[int] = mapped_column(ForeignKey("registrations.id"), index=True, nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    reminder_type: Mapped[str] = mapped_column(String(20), nullable=False)  # 7_DAYS | 24_HOURS | 1_HOUR
+    event_timezone: Mapped[str] = mapped_column(String(64), default="Asia/Kolkata", nullable=False)
+    scheduled_for_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="SCHEDULED", nullable=False)  # SCHEDULED | SENT | CANCELLED | SKIPPED
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    idempotency_key: Mapped[str] = mapped_column(String(160), unique=True, index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+
+class OrganizerFollowup(Base):
+    """Post-event or cancellation follow-up sequence with an Organizer (wait 1d, then +2d)."""
+
+    __tablename__ = "organizer_followups"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id"), index=True, nullable=False)
+    organizer_id: Mapped[int] = mapped_column(ForeignKey("organizers.id"), index=True, nullable=False)
+    followup_reason: Mapped[str] = mapped_column(String(40), default="POST_EVENT", nullable=False)  # POST_EVENT | EVENT_CANCELLED
+    status: Mapped[str] = mapped_column(String(30), default="PENDING", nullable=False)  # PENDING | AWAITING_RESPONSE | RESPONDED | EXHAUSTED
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    next_followup_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_contacted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reported_attendance: Mapped[int | None] = mapped_column(Integer)
+    event_outcome: Mapped[str | None] = mapped_column(Text)
+    organizer_feedback: Mapped[str | None] = mapped_column(Text)
+    wants_repeat_event: Mapped[bool | None] = mapped_column(Boolean)
+    next_event_date: Mapped[str | None] = mapped_column(String(40))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+
+class AttendeeFeedback(Base):
+    """Post-event attendee survey, attendance confirmation, rating, and similar-event preference."""
+
+    __tablename__ = "attendee_feedback"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id"), index=True, nullable=False)
+    registration_id: Mapped[int | None] = mapped_column(ForeignKey("registrations.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    attended: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    rating: Mapped[int | None] = mapped_column(Integer)
+    feedback: Mapped[str | None] = mapped_column(Text)
+    wants_similar_events: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    __table_args__ = (UniqueConstraint("event_id", "user_id", name="attendee_feedback_event_user_idx"),)
+
+
+class AuditLog(Base):
+    """Platform-wide immutable audit log for security, compliance, and timeline visibility."""
+
+    __tablename__ = "audit_logs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    actor: Mapped[str] = mapped_column(String(120), nullable=False)
+    actor_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    action: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    entity: Mapped[str] = mapped_column(String(60), index=True, nullable=False)
+    entity_id: Mapped[str | None] = mapped_column(String(80), index=True)
+    result: Mapped[str] = mapped_column(String(30), default="SUCCESS", nullable=False)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, index=True, nullable=False)
+

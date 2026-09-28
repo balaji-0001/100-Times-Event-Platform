@@ -1,0 +1,49 @@
+{
+  "name": "02 — Event Confirmation & Pass Delivery",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "event-confirmation",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger-02",
+      "name": "Confirmation Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL || 'http://127.0.0.1:8000' }}/api/webhooks/n8n/event-published",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Webhook-Secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ idempotencyKey: 'wf02-confirm-' + ($json.body.registrationId || $json.body.eventId || '1'), eventId: $json.body.eventId, registrationId: $json.body.registrationId, data: { calendarProvider: $env.CALENDAR_PROVIDER || 'ics' } }) }}",
+        "options": {}
+      },
+      "id": "api-call-02",
+      "name": "Send Ticket, Calendar Invite & Organizer Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [540, 300]
+    }
+  ],
+  "connections": {
+    "Confirmation Trigger": {
+      "main": [[{ "node": "Send Ticket, Calendar Invite & Organizer Alert", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": true,
+  "settings": { "executionOrder": "v1" }
+}

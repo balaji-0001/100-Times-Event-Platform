@@ -17,6 +17,8 @@ class UserInput(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
     country: str | None = Field(default="India", max_length=80)
+    role: Literal["USER", "ORGANIZER"] | None = None
+    company: str | None = Field(default=None, max_length=160)
 
 
 class LoginInput(BaseModel):

@@ -1,0 +1,63 @@
+{
+  "name": "06 — Post-Event Attendee Follow-up & Feedback",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "attendee-post-event",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-trigger-06",
+      "name": "Event Completed Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "amount": 2,
+        "unit": "hours"
+      },
+      "id": "wait-06",
+      "name": "Wait Post-Event Cool-down",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL || 'http://127.0.0.1:8000' }}/api/webhooks/n8n/attendee-followup",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Webhook-Secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ idempotencyKey: 'wf06-attendee-followup-' + ($json.body.eventId || '1'), eventId: $json.body.eventId }) }}",
+        "options": {}
+      },
+      "id": "api-call-06",
+      "name": "Request Attendance, Rating & Similar Events Opt-In",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 300]
+    }
+  ],
+  "connections": {
+    "Event Completed Webhook": {
+      "main": [[{ "node": "Wait Post-Event Cool-down", "type": "main", "index": 0 }]]
+    },
+    "Wait Post-Event Cool-down": {
+      "main": [[{ "node": "Request Attendance, Rating & Similar Events Opt-In", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": true,
+  "settings": { "executionOrder": "v1" }
+}

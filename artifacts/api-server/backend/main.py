@@ -14,8 +14,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.core.config import get_settings
-from backend.db import Base, engine
-from backend.routes import acquisition, ai, auth, dashboard, directories, discovery, events, networking, outreach, redirect, workflow
+from backend.db import Base, engine, sync_schema_columns
+from backend.routes import (
+    acquisition,
+    ai,
+    auth,
+    dashboard,
+    directories,
+    discovery,
+    events,
+    networking,
+    outreach,
+    platform_ops,
+    redirect,
+    webhooks_n8n,
+    workflow,
+)
 from backend.services.social_agent.scheduler import start_background_scheduler, stop_background_scheduler
 
 
@@ -27,6 +41,7 @@ async def lifespan(_: FastAPI):
         from backend import models  # noqa: F401 - registers all model metadata
 
         Base.metadata.create_all(bind=engine, checkfirst=True)
+        sync_schema_columns(engine)
     if settings.seed_demo_data:
         from backend.seed import seed
 
@@ -98,6 +113,8 @@ app.include_router(acquisition.router, prefix="/api")
 app.include_router(outreach.router, prefix="/api")
 app.include_router(discovery.router, prefix="/api")
 app.include_router(workflow.router, prefix="/api")
+app.include_router(platform_ops.router, prefix="/api")
+app.include_router(webhooks_n8n.router, prefix="/api")
 app.include_router(redirect.router)  # no /api prefix: short /r/{id} tracking links
 
 

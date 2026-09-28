@@ -1,0 +1,70 @@
+{
+  "name": "01 — Event Registration Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "event-registration",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger-01",
+      "name": "Registration Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL || 'http://127.0.0.1:8000' }}/api/webhooks/n8n/registration",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Webhook-Secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ idempotencyKey: 'wf01-reg-' + ($json.body.eventId || '1') + '-' + ($json.body.userId || '1'), eventId: $json.body.eventId, userId: $json.body.userId, data: { ticketType: $json.body.ticketType || 'Standard', calendarProvider: $env.CALENDAR_PROVIDER || 'ics', emailProvider: $env.EMAIL_PROVIDER || 'smtp' } }) }}",
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "waitBetweenTries": 2000
+          }
+        }
+      },
+      "id": "api-call-01",
+      "name": "Validate & Persist Registration + Reminders",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [540, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "respond-01",
+      "name": "Return Confirmation",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [840, 300]
+    }
+  ],
+  "connections": {
+    "Registration Webhook": {
+      "main": [[{ "node": "Validate & Persist Registration + Reminders", "type": "main", "index": 0 }]]
+    },
+    "Validate & Persist Registration + Reminders": {
+      "main": [[{ "node": "Return Confirmation", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": true,
+  "settings": { "executionOrder": "v1" }
+}

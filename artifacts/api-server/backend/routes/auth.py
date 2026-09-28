@@ -17,12 +17,44 @@ def session_for(user: User) -> SessionOut:
 
 @router.post("/register", response_model=SessionOut, status_code=status.HTTP_201_CREATED)
 def register(payload: UserInput, response: Response, db: Session = Depends(get_db)) -> SessionOut:
+    from backend.services.audit import record_audit_log
+    from backend.services.notifications import send_templated_notification
+
     email = payload.email.lower()
     if db.scalar(select(User).where(User.email == email)):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="An account with this email already exists")
-    user = User(name=payload.name.strip(), email=email, password_hash=hash_password(payload.password), country=payload.country)
+    role = payload.role if payload.role in ("USER", "ORGANIZER") else "USER"
+    user = User(
+        name=payload.name.strip(),
+        email=email,
+        password_hash=hash_password(payload.password),
+        country=payload.country,
+        role=role,
+        company=payload.company,
+    )
     db.add(user)
     try:
+        db.flush()
+        if role == "ORGANIZER":
+            from backend.routes.platform_ops import _ensure_organizer_and_profile
+
+            _ensure_organizer_and_profile(db, user)
+        send_templated_notification(
+            db,
+            template_key="welcome",
+            user_id=user.id,
+            recipient_email=user.email,
+            context={"name": user.name, "email": user.email},
+        )
+        record_audit_log(
+            db,
+            actor=user.email,
+            actor_id=user.id,
+            action="USER_SIGNUP",
+            entity="User",
+            entity_id=user.id,
+            metadata={"role": role, "company": payload.company},
+        )
         db.commit()
         db.refresh(user)
     except IntegrityError as exc:

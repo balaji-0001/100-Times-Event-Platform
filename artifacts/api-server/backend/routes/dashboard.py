@@ -250,9 +250,20 @@ def organizer_events(db: Session = Depends(get_db), user: User = Depends(require
 
 @router.post("/organizer/events", response_model=EventCard, status_code=status.HTTP_201_CREATED)
 def create_organizer_event(payload: EventInput, db: Session = Depends(get_db), user: User = Depends(require_roles("ORGANIZER", "ADMIN"))) -> EventCard:
-    organizer = db.scalar(select(Organizer).where(Organizer.id == user.id))
+    from backend.services.trust_agent import evaluate_event_trust
+
+    organizer = db.scalar(select(Organizer).where((Organizer.user_id == user.id) | (Organizer.id == user.id)))
     if not organizer:
-        organizer = Organizer(id=user.id, name=user.name, slug=slugify(user.name), description="100 TIMES community organizer", logo=user.name[:2].upper())
+        organizer = Organizer(
+            id=user.id,
+            user_id=user.id,
+            name=user.name,
+            slug=slugify(user.name),
+            description="100 TIMES community organizer",
+            logo=user.name[:2].upper(),
+            email=user.email,
+            verified=True,
+        )
         db.add(organizer)
         db.flush()
 
@@ -270,6 +281,9 @@ def create_organizer_event(payload: EventInput, db: Session = Depends(get_db), u
         format=payload.format,
         organizer=organizer,
     )
+    event.city_name = payload.location
+    event.full_address = payload.location
+    evaluate_event_trust(db, event, organizer=organizer, auto_publish_if_approved=True)
     db.commit()
     db.refresh(event)
     return event_card(db, event, user.id)

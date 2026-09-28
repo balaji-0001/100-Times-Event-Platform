@@ -1,0 +1,49 @@
+{
+  "name": "04 — Event Cancellation & Attendee Broadcast",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "event-cancellation",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-trigger-04",
+      "name": "Event Cancelled Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL || 'http://127.0.0.1:8000' }}/api/webhooks/n8n/event-cancelled",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Webhook-Secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ idempotencyKey: 'wf04-cancel-' + ($json.body.eventId || '1'), eventId: $json.body.eventId, data: { reason: $json.body.reason || 'Cancelled by organizer' } }) }}",
+        "options": {}
+      },
+      "id": "api-call-04",
+      "name": "Cancel Reminders, Notify Attendees & Start Follow-up",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [560, 300]
+    }
+  ],
+  "connections": {
+    "Event Cancelled Webhook": {
+      "main": [[{ "node": "Cancel Reminders, Notify Attendees & Start Follow-up", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": true,
+  "settings": { "executionOrder": "v1" }
+}

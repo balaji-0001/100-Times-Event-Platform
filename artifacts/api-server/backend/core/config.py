@@ -126,6 +126,21 @@ class Settings(BaseSettings):
     smtp_from_email: str | None = None
     smtp_use_tls: bool = True
 
+    # n8n Webhook & Automation security
+    n8n_webhook_secret: str = "dev-n8n-webhook-secret-100times"
+    n8n_webhooks_enabled: bool = False
+    calendar_provider: str = "ics"  # ics | google | outlook
+
+    # Trust Agent (Agent 3) thresholds
+    trust_agent_auto_approve_score: int = 75
+    trust_agent_min_description_length: int = 25
+    trust_agent_max_daily_submissions_per_organizer: int = 10
+
+    # Organizer & Attendee follow-up settings
+    organizer_followup_max_attempts: int = 3
+    organizer_followup_first_wait_days: int = 1
+    organizer_followup_second_wait_days: int = 2
+
     model_config = SettingsConfigDict(env_file=_ENV_PATHS, extra="ignore")
 
     @field_validator("ai_provider")

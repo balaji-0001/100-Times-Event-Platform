@@ -60,6 +60,10 @@ const NAV: NavGroup[] = [
       { label: 'Follow-ups', href: '/admin/outreach/follow-ups' },
     ],
   },
+  { title: 'Trust Review (Agent 3)', icon: Sparkles, href: '/admin/trust-review', items: [] },
+  { title: 'Attendee Agent', icon: CalendarSearch, href: '/admin/attendee-agent', items: [] },
+  { title: 'n8n Workflows', icon: Activity, href: '/admin/workflows', items: [] },
+  { title: 'Audit & System Logs', icon: Activity, href: '/admin/audit-logs', items: [] },
   { title: 'Agent Activity', icon: Activity, href: '/admin/activity', items: [] },
   { title: 'Settings', icon: Settings2, href: '/admin/settings', items: [] },
 ];

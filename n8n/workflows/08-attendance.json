@@ -1,0 +1,49 @@
+{
+  "name": "08 — Event Attendance & No-Show Reconciliation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "event-attendance",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-trigger-08",
+      "name": "Attendance Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL || 'http://127.0.0.1:8000' }}/api/webhooks/n8n/attendance",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Webhook-Secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ idempotencyKey: 'wf08-attendance-' + ($json.body.eventId || '1'), eventId: $json.body.eventId, data: { attendedRegistrationIds: $json.body.attendedRegistrationIds || [] } }) }}",
+        "options": {}
+      },
+      "id": "api-call-08",
+      "name": "Mark Attended vs No-Shows & Dispatch Follow-ups",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [560, 300]
+    }
+  ],
+  "connections": {
+    "Attendance Webhook": {
+      "main": [[{ "node": "Mark Attended vs No-Shows & Dispatch Follow-ups", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": true,
+  "settings": { "executionOrder": "v1" }
+}

@@ -37,6 +37,10 @@ import { ContactsPage } from '@/ops/ContactsPage';
 import { OutreachPage } from '@/ops/OutreachPage';
 import { ActivityPage } from '@/ops/ActivityPage';
 import { SettingsPage } from '@/ops/SettingsPage';
+import { TrustReviewPage } from '@/ops/TrustReviewPage';
+import { AttendeeAgentPage } from '@/ops/AttendeeAgentPage';
+import { WorkflowsLogsPage } from '@/ops/WorkflowsLogsPage';
+import { OrganizerStudioPage } from '@/organizer/OrganizerStudio';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import '@/index.css';
@@ -2035,7 +2039,7 @@ function RegisterPage() {
     mutation.mutate(
       { id: event.id, data: form },
       {
-        onSuccess: (res) => {
+        onSuccess: (res: any) => {
           const passData: RegistrationPass = {
             id: res.id,
             eventId: event.id,
@@ -2047,6 +2051,8 @@ function RegisterPage() {
             userName: `${form.firstName} ${form.lastName}`.trim(),
             company: form.company,
             jobTitle: form.jobTitle,
+            ticketCode: res.ticketCode,
+            qrCode: res.qrCode,
             eventVenue: event.venue,
             eventLocation: event.location,
             eventStartDate: event.startDate,
@@ -2055,7 +2061,12 @@ function RegisterPage() {
           };
           setCreatedPass(passData);
         },
-        onError: () => setError('We could not complete that registration. Please check your details and try again.'),
+        onError: (err: any) =>
+          setError(
+            err?.data?.detail ||
+              err?.message ||
+              'We could not complete that registration. Please check your details and try again.'
+          ),
       }
     );
   };
@@ -3316,13 +3327,18 @@ function Router() {
         <Route path="/dashboard/settings" component={() => <DashboardPage tab="settings" />} />
 
         {/* Organizer Desk */}
-        <Route path="/organizer" component={() => <OrganizerPage />} />
-        <Route path="/organizer/events" component={() => <OrganizerPage view="events" />} />
-        <Route path="/organizer/events/create" component={CreateEventPage} />
-        <Route path="/organizer/analytics" component={() => <OrganizerPage view="analytics" />} />
+        <Route path="/organizer" component={() => <OrganizerStudioPage initialTab="overview" />} />
+        <Route path="/organizer/events" component={() => <OrganizerStudioPage initialTab="events" />} />
+        <Route path="/organizer/events/create" component={() => <OrganizerStudioPage initialTab="create" />} />
+        <Route path="/organizer/analytics" component={() => <OrganizerStudioPage initialTab="analytics" />} />
+        <Route path="/organizer/profile" component={() => <OrganizerStudioPage initialTab="profile" />} />
 
-        {/* Admin Console — Organizer Discovery & Organizer Outreach operations */}
+        {/* Admin Console — Organizer Discovery, Outreach, Trust Agent 3, Attendee Agent & n8n Automations */}
         <Route path="/admin" component={() => <OpsLayout><OpsDashboardPage /></OpsLayout>} />
+        <Route path="/admin/trust-review" component={() => <OpsLayout><TrustReviewPage /></OpsLayout>} />
+        <Route path="/admin/attendee-agent" component={() => <OpsLayout><AttendeeAgentPage /></OpsLayout>} />
+        <Route path="/admin/workflows" component={() => <OpsLayout><WorkflowsLogsPage mode="workflows" /></OpsLayout>} />
+        <Route path="/admin/audit-logs" component={() => <OpsLayout><WorkflowsLogsPage mode="audit" /></OpsLayout>} />
         <Route path="/admin/acquisition" component={() => <Redirect to="/admin" />} />
         <Route path="/acquisition-agent" component={() => <Redirect to="/admin" />} />
         <Route path="/admin/discovery" component={() => <OpsLayout><DiscoveryPage mode="new" /></OpsLayout>} />

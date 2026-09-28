@@ -1,0 +1,48 @@
+{
+  "name": "03 — Timezone-Aware Event Reminders (7d, 24h, 1h)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "minutes", "minutesInterval": 15 }]
+        }
+      },
+      "id": "schedule-trigger-03",
+      "name": "Every 15 Minutes Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL || 'http://127.0.0.1:8000' }}/api/webhooks/n8n/reminders-dispatch",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Webhook-Secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ idempotencyKey: 'wf03-reminders-' + $now.toFormat('yyyyMMddHHmm') }) }}",
+        "options": {}
+      },
+      "id": "api-call-03",
+      "name": "Dispatch Due T-7d, T-24h & T-1h Reminders",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [560, 300]
+    }
+  ],
+  "connections": {
+    "Every 15 Minutes Schedule": {
+      "main": [[{ "node": "Dispatch Due T-7d, T-24h & T-1h Reminders", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": true,
+  "settings": { "executionOrder": "v1" }
+}

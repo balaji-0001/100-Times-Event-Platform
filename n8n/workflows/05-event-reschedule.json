@@ -1,0 +1,49 @@
+{
+  "name": "05 — Event Reschedule & Calendar Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "event-reschedule",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-trigger-05",
+      "name": "Event Rescheduled Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL || 'http://127.0.0.1:8000' }}/api/webhooks/n8n/event-rescheduled",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Webhook-Secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ idempotencyKey: 'wf05-resched-' + ($json.body.eventId || '1') + '-' + ($json.body.newStartDate || ''), eventId: $json.body.eventId, data: { newStartDate: $json.body.newStartDate, newStartTime: $json.body.newStartTime, newTimezone: $json.body.newTimezone } }) }}",
+        "options": {}
+      },
+      "id": "api-call-05",
+      "name": "Recalculate Reminders & Notify Attendees",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [560, 300]
+    }
+  ],
+  "connections": {
+    "Event Rescheduled Webhook": {
+      "main": [[{ "node": "Recalculate Reminders & Notify Attendees", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": true,
+  "settings": { "executionOrder": "v1" }
+}

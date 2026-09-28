@@ -1,0 +1,131 @@
+{
+  "name": "07 — Organizer Follow-up (1-Day & +2-Day Cadence)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "organizer-followup",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-trigger-07",
+      "name": "Organizer Follow-up Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL || 'http://127.0.0.1:8000' }}/api/webhooks/n8n/organizer-followup",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Webhook-Secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ idempotencyKey: 'wf07-org-followup-initial-' + ($json.body.eventId || '1'), eventId: $json.body.eventId }) }}",
+        "options": {}
+      },
+      "id": "api-call-07-initial",
+      "name": "Send Initial Outcome & Repeat Event Inquiry",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "amount": 1,
+        "unit": "days"
+      },
+      "id": "wait-1d-07",
+      "name": "Wait 1 Day If Unanswered",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [740, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL || 'http://127.0.0.1:8000' }}/api/webhooks/n8n/organizer-followup",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Webhook-Secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ idempotencyKey: 'wf07-org-followup-1d-' + ($json.body.eventId || '1'), eventId: $json.body.eventId }) }}",
+        "options": {}
+      },
+      "id": "api-call-07-retry1",
+      "name": "First Follow-up (+1 Day)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [980, 300]
+    },
+    {
+      "parameters": {
+        "amount": 2,
+        "unit": "days"
+      },
+      "id": "wait-2d-07",
+      "name": "Wait Another 2 Days",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1220, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.API_URL || 'http://127.0.0.1:8000' }}/api/webhooks/n8n/organizer-followup",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Webhook-Secret",
+              "value": "={{ $env.N8N_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ idempotencyKey: 'wf07-org-followup-3d-' + ($json.body.eventId || '1'), eventId: $json.body.eventId }) }}",
+        "options": {}
+      },
+      "id": "api-call-07-retry2",
+      "name": "Second Follow-up (+2 Days) & Stop After Max Attempts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1460, 300]
+    }
+  ],
+  "connections": {
+    "Organizer Follow-up Trigger": {
+      "main": [[{ "node": "Send Initial Outcome & Repeat Event Inquiry", "type": "main", "index": 0 }]]
+    },
+    "Send Initial Outcome & Repeat Event Inquiry": {
+      "main": [[{ "node": "Wait 1 Day If Unanswered", "type": "main", "index": 0 }]]
+    },
+    "Wait 1 Day If Unanswered": {
+      "main": [[{ "node": "First Follow-up (+1 Day)", "type": "main", "index": 0 }]]
+    },
+    "First Follow-up (+1 Day)": {
+      "main": [[{ "node": "Wait Another 2 Days", "type": "main", "index": 0 }]]
+    },
+    "Wait Another 2 Days": {
+      "main": [[{ "node": "Second Follow-up (+2 Days) & Stop After Max Attempts", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": true,
+  "settings": { "executionOrder": "v1" }
+}

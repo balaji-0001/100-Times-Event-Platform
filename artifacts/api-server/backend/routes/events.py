@@ -179,30 +179,96 @@ def register_for_event(
     payload: RegistrationInput,
     request: Request,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User | None = Depends(optional_current_user),
 ) -> RegistrationOut:
+    from backend.services.registration_automation import automate_registration
+
     event = load_event(db, id)
-    existing = db.scalar(select(Registration).where(Registration.event_id == id, Registration.user_id == user.id))
-    if existing and existing.status != "cancelled":
-        raise HTTPException(status_code=409, detail="You are already registered for this event")
-    if existing:
-        existing.status = "confirmed"
-        existing.ticket_type = payload.ticket_type
-        registration = existing
+    if (event.lifecycle_state or "").upper() == "CANCELLED" or event.status == "cancelled":
+        raise HTTPException(status_code=400, detail="This event has been cancelled")
+
+    submitted_email = (payload.email or "").strip().lower()
+    target_user = user
+
+    if not target_user:
+        target_user = db.scalar(select(User).where(func.lower(User.email) == submitted_email))
+        if not target_user:
+            target_user = User(
+                name=f"{payload.first_name} {payload.last_name}".strip() or submitted_email.split("@")[0] or "Attendee",
+                email=submitted_email or f"attendee-{int(datetime.now(timezone.utc).timestamp())}@100times.io",
+                password_hash="guest_registration",
+                role="USER",
+                company=payload.company,
+                job_title=payload.job_title,
+                country=payload.country or "India",
+            )
+            db.add(target_user)
+            db.flush()
     else:
-        registration = Registration(event_id=id, user_id=user.id, ticket_type=payload.ticket_type, status="confirmed")
-        db.add(registration)
+        # If logged-in user already registered for this event and is submitting a different attendee email,
+        # resolve or create that attendee's User row so both registrations are stored cleanly.
+        existing_for_current = db.scalar(select(Registration).where(Registration.event_id == id, Registration.user_id == target_user.id))
+        if existing_for_current and submitted_email and submitted_email != (target_user.email or "").lower():
+            other_user = db.scalar(select(User).where(func.lower(User.email) == submitted_email))
+            if not other_user:
+                other_user = User(
+                    name=f"{payload.first_name} {payload.last_name}".strip() or submitted_email.split("@")[0],
+                    email=submitted_email,
+                    password_hash=target_user.password_hash,
+                    role="USER",
+                    company=payload.company,
+                    job_title=payload.job_title,
+                    country=payload.country or "India",
+                )
+                db.add(other_user)
+                db.flush()
+            target_user = other_user
+
+    existing = db.scalar(select(Registration).where(Registration.event_id == id, Registration.user_id == target_user.id))
+    if not existing:
+        active_count = int(
+            db.scalar(
+                select(func.count(Registration.id)).where(
+                    Registration.event_id == id,
+                    Registration.status.in_(["confirmed", "CONFIRMED", "REGISTERED", "ATTENDED"]),
+                )
+            )
+            or 0
+        )
+        if event.capacity is not None and event.capacity > 0 and active_count >= event.capacity:
+            raise HTTPException(status_code=409, detail="Event has reached maximum capacity")
+
     if payload.company:
-        user.company = payload.company
+        target_user.company = payload.company
     if payload.job_title:
-        user.job_title = payload.job_title
+        target_user.job_title = payload.job_title
     if payload.country:
-        user.country = payload.country
-    db.add(Notification(user_id=user.id, title="Registration confirmed", message=f"Your seat for {event.title} is confirmed.", is_read=False))
+        target_user.country = payload.country
+
+    intent_id_param = request.query_params.get("intent_id")
+    parsed_intent_id = int(intent_id_param) if intent_id_param and intent_id_param.isdigit() else None
+
     try:
+        auto_res = automate_registration(
+            db,
+            event=event,
+            user=target_user,
+            ticket_type=payload.ticket_type,
+            attendee_name=f"{payload.first_name} {payload.last_name}".strip(),
+            attendee_email=payload.email,
+            attendee_phone=payload.phone,
+            company=payload.company,
+            job_title=payload.job_title,
+            country=payload.country,
+            intent_id=parsed_intent_id,
+        )
+        registration = auto_res["registration"]
         db.commit()
         db.refresh(registration)
-        db.refresh(user)
+        db.refresh(target_user)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail="Registration could not be created") from exc
@@ -224,7 +290,7 @@ def register_for_event(
         )
         db.commit()
     ticket_code = f"100T-{event.id:04d}-{registration.id:05d}"
-    qr_data = f"100TIMES:PASS:EVENT={event.slug}:REG={ticket_code}:USER={user.email}:TIER={registration.ticket_type}"
+    qr_data = f"100TIMES:PASS:EVENT={event.slug}:REG={ticket_code}:USER={target_user.email}:TIER={registration.ticket_type}"
     venue_name = event.venue.name if event.venue else "Convention Center"
     city_name = event.venue.city.name if event.venue and event.venue.city else ""
     loc_str = f"{city_name}" if city_name else ""
@@ -236,9 +302,9 @@ def register_for_event(
         ticketType=registration.ticket_type,
         registeredAt=registration.registered_at,
         status=registration.status,
-        userName=user.name,
-        company=user.company,
-        jobTitle=user.job_title,
+        userName=registration.attendee_name or target_user.name,
+        company=registration.company or target_user.company,
+        jobTitle=registration.job_title or target_user.job_title,
         ticketCode=ticket_code,
         qrCode=qr_data,
         eventLocation=loc_str,
