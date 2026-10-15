@@ -11,6 +11,8 @@ fabricates a name/email/website that isn't present in the fetched HTML.
 
 import json
 import re
+import time
+from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -19,8 +21,50 @@ EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 LINKEDIN_RE = re.compile(r"https?://(?:www\.)?linkedin\.com/(?:company|in)/[A-Za-z0-9_\-%]+/?")
 USER_AGENT = "100TimesAgentBot/1.0 (+https://100times.in; event/organizer discovery)"
 
+# Below this much visible text (and with no JSON-LD), a page is treated as
+# an unrendered JavaScript shell.
+_THIN_PAGE_TEXT_CHARS = 500
 
-def fetch(url: str) -> str | None:
+# Discovery reads many pages from the same few listing sites; space them out
+# so the agent stays a polite visitor (allevents.in starts refusing bursts).
+_MIN_SECONDS_BETWEEN_REQUESTS = 1.5
+_last_request_at: dict[str, float] = {}
+
+
+def fetch(url: str, render_js: bool = False) -> str | None:
+    """Plain HTTP fetch. With `render_js=True` (Event Discovery Agent only),
+    a failed or thin result is retried in a headless browser — see
+    `browser_fetch.py`; if that fails too, the HTTP result is kept."""
+    if render_js:
+        _wait_for_host(url)
+    html = _http_get(url)
+    if not render_js or (html is not None and not is_thin_page(html)):
+        return html
+
+    from backend.services.social_agent import browser_fetch
+
+    return browser_fetch.render(url) or html
+
+
+def _wait_for_host(url: str) -> None:
+    host = (urlparse(url).netloc or "").lower()
+    last = _last_request_at.get(host)
+    now = time.monotonic()
+    if last is not None and now - last < _MIN_SECONDS_BETWEEN_REQUESTS:
+        time.sleep(_MIN_SECONDS_BETWEEN_REQUESTS - (now - last))
+    _last_request_at[host] = time.monotonic()
+
+
+def is_thin_page(html: str) -> bool:
+    soup = BeautifulSoup(html, "html.parser")
+    if find_json_ld_nodes(soup):
+        return False
+    for tag in soup(["script", "style", "noscript"]):
+        tag.decompose()
+    return len(" ".join(soup.get_text(separator=" ").split())) < _THIN_PAGE_TEXT_CHARS
+
+
+def _http_get(url: str) -> str | None:
     try:
         response = httpx.get(url, timeout=8, follow_redirects=True, headers={"User-Agent": USER_AGENT})
     except httpx.HTTPError:

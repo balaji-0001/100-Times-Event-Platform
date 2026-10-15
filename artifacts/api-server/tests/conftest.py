@@ -15,6 +15,27 @@ from backend.db import Base
 from backend.models import Category, City, Community, Event, Organizer, Venue
 
 
+@pytest.fixture(autouse=True)
+def no_live_listing_pages(monkeypatch):
+    """The Discovery Agent reads real listing sites by default; tests that
+    want listing pages pass them explicitly with fake pages instead."""
+    from backend.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "discovery_listing_urls", "")
+
+
+@pytest.fixture(autouse=True)
+def no_live_web_search(monkeypatch):
+    """Discovery web-searches DuckDuckGo; tests get an empty results page
+    unless they patch `web_search` themselves."""
+    from types import SimpleNamespace
+
+    from backend.services.discovery_agent import web_search
+
+    monkeypatch.setattr(web_search, "_post", lambda query: SimpleNamespace(status_code=200, text="<html></html>"))
+    monkeypatch.setattr(web_search, "_wait_turn", lambda: None)
+
+
 @pytest.fixture()
 def db_session():
     # StaticPool shares one connection across all threads/checkouts — required

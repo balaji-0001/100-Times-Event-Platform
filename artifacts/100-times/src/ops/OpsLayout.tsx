@@ -205,7 +205,7 @@ export function OpsLayout({ children }: { children: ReactNode }) {
           <div className="space-y-3">
             <GlobalSearch />
             <SideNav location={location} />
-            <p className="flex items-center gap-2 px-3 text-[11px] text-muted-foreground"><Sparkles size={12} className="text-accent" /> Agent 2 always waits for approval. Agent 1's automatic scan is off unless you turn it on.</p>
+            <p className="flex items-center gap-2 px-3 text-[11px] text-muted-foreground"><Sparkles size={12} className="text-accent" /> Agent 2 always waits for approval. The discovery automation's scan is off unless you turn it on.</p>
           </div>
           <div className="min-w-0">{children}</div>
         </div>

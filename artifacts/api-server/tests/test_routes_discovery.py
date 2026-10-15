@@ -47,21 +47,18 @@ def test_discovery_routes_reject_non_admin(db_session):
         assert non_admin_client.get("/api/discovery/runs").status_code == 403
 
 
-def test_trigger_run_without_api_key_fails_honestly(client, db_session, monkeypatch):
-    from tests.conftest import FakeAIClient
-
-    monkeypatch.setattr("backend.services.discovery_agent.orchestrator.get_ai_client", lambda: FakeAIClient(configured=False))
-
+def test_trigger_run_needs_no_ai_key(client, db_session):
+    """The automation runs on fixed rules: no AI key, nothing found (tests
+    have no live sites or search), and the run still completes cleanly."""
     response = client.post("/api/discovery/run", json={"cities": ["Pune"], "searchDepth": 1})
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "failed"
+    assert body["status"] == "completed"
     assert body["new_events"] == 0
 
     run = db_session.query(AgentRun).filter(AgentRun.agent_type == "discovery").one()
-    assert run.status == "failed"
+    assert run.status == "completed"
     assert db_session.query(DiscoveredEvent).count() == 0
-
 
 def test_auto_toggle_defaults_off_and_flips_live(client, db_session):
     from backend.core.config import get_settings

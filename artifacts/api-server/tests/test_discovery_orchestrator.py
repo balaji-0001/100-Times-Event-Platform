@@ -7,7 +7,6 @@ first run already stored) — the restartable/idempotent requirement."""
 from backend.models import AgentRun, DiscoveredEvent, DiscoveredOrganizer
 from backend.services.discovery_agent import orchestrator
 from backend.services.discovery_agent.types import CandidateSource, DiscoveryConfig, ExtractedEventCandidate, OrganizerCandidate
-from tests.conftest import FakeAIClient
 
 
 def _fixed_candidate() -> ExtractedEventCandidate:
@@ -36,10 +35,10 @@ def _config() -> DiscoveryConfig:
 
 
 def _patch_pipeline(monkeypatch):
-    monkeypatch.setattr(orchestrator, "get_ai_client", lambda: FakeAIClient(configured=True))
-    monkeypatch.setattr(orchestrator.source_finder, "find_candidate_sources", lambda query, ai_client, max_results: [_fixed_candidate().primary_source])
-    monkeypatch.setattr(orchestrator.page_extractor, "extract_event_from_page", lambda source, ai_client: _fixed_candidate())
-    monkeypatch.setattr(orchestrator.organizer_identifier, "identify_organizer", lambda candidate, ai_client: _fixed_organizer())
+    # Each query surfaces a different page, but every page lists the same event.
+    monkeypatch.setattr(orchestrator.web_search, "search", lambda query, max_results: [f"https://example.test/results/{abs(hash(query))}"])
+    monkeypatch.setattr(orchestrator.page_extractor, "extract_events_from_page", lambda url, max_events, cities: [_fixed_candidate()])
+    monkeypatch.setattr(orchestrator.organizer_identifier, "identify_organizer", lambda candidate: _fixed_organizer())
 
 
 def test_discovery_agent_dedups_within_a_single_run(db_session, monkeypatch):
@@ -67,15 +66,3 @@ def test_discovery_agent_does_not_duplicate_across_runs(db_session, monkeypatch)
     assert second_summary.new_events == 0
     assert second_summary.duplicate_events == 2
     assert db_session.query(DiscoveredEvent).count() == 1
-
-
-def test_discovery_agent_fails_honestly_without_api_key(db_session, monkeypatch):
-    monkeypatch.setattr(orchestrator, "get_ai_client", lambda: FakeAIClient(configured=False))
-
-    summary = orchestrator.run_discovery_agent(db_session, _config())
-
-    assert summary.new_events == 0
-    run = db_session.query(AgentRun).filter(AgentRun.agent_type == "discovery").one()
-    assert run.status == "failed"
-    assert "AI provider is not configured" in run.error
-    assert db_session.query(DiscoveredEvent).count() == 0

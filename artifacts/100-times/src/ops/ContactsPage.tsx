@@ -10,7 +10,7 @@ type Row = { contact: OrganizerContact; organizer: DiscoveredOrganizer };
 
 const TYPE_TONE: Record<string, 'info' | 'good' | 'accent' | 'neutral'> = { email: 'info', phone: 'good', linkedin: 'accent', website: 'neutral' };
 
-/** Every contact channel Agent 1 found, across all organizers — the rows behind the Dashboard's "Contacts found" number. */
+/** Every contact channel the discovery automation found, across all organizers — the rows behind the Dashboard's "Contacts found" number. */
 export function ContactsPage() {
   const organizers = useDiscoveredOrganizers();
   const [q, setQ] = useState(''); const term = useDebounce(q.trim().toLowerCase());
@@ -36,7 +36,7 @@ export function ContactsPage() {
 
   return (
     <div>
-      <PageHeader kicker="Organizer Discovery · Contacts" title="Contacts Found" subtitle={`Every contact channel Agent 1 extracted — ${all.length} across ${organizersWithContacts} organizers — with the exact page each one was found on. Nothing here is guessed; every value was read from a public page.`} />
+      <PageHeader kicker="Organizer Discovery · Contacts" title="Contacts Found" subtitle={`Every contact channel the discovery automation extracted — ${all.length} across ${organizersWithContacts} organizers — with the exact page each one was found on. Nothing here is guessed; every value was read from a public page.`} />
 
       <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <StatCard label="All contacts" value={all.length} />

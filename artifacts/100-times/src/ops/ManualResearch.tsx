@@ -1,4 +1,4 @@
-// Manual trigger for Agent 1. Discovery no longer runs on a timer — every run starts
+// Manual trigger for the discovery automation. Discovery no longer runs on a timer — every run starts
 // here, with its scope (and therefore its API cost) chosen explicitly by an admin.
 import { useState } from 'react';
 import { Link } from 'wouter';
@@ -37,7 +37,7 @@ export function ManualResearchForm() {
         <label>Search queries<input type="number" min={1} max={200} value={depth} onChange={(e) => setDepth(e.target.value)} className={`${inputClass} mt-1`} disabled={run.isPending} /></label>
         <label>Pages per query<input type="number" min={1} max={20} value={perQuery} onChange={(e) => setPerQuery(e.target.value)} className={`${inputClass} mt-1`} disabled={run.isPending} /></label>
       </div>
-      <Notice tone="info">Up to <strong>{pages} pages</strong> will be fetched and read by the AI model, plus {num(depth, 4)} web searches. Every one is a real API call — keep this small while testing. Runs take a few minutes.</Notice>
+      <Notice tone="info">Reads the event-listing sites for each city, then runs <strong>{num(depth, 4)} web searches</strong> and opens up to <strong>{pages} result pages</strong> in a headless browser. No AI and no API costs — searches are spaced out to stay polite, so runs take a few minutes.</Notice>
       <div className="flex items-center gap-2">
         <Btn variant="primary" loading={run.isPending} onClick={start}><Search size={13} /> {run.isPending ? 'Researching…' : 'Run manual research'}</Btn>
         {run.isPending && <span className="text-[11px] text-muted-foreground">Leave this open until it finishes.</span>}
@@ -70,7 +70,7 @@ export function ManualResearchButton({ size = 'md' }: { size?: 'sm' | 'md' }) {
   return (
     <>
       <Btn variant="primary" size={size} onClick={() => setOpen(true)}><Search size={size === 'sm' ? 11 : 13} /> Run manual research</Btn>
-      <Drawer open={open} onClose={() => setOpen(false)} kicker="Organizer Discovery · Agent 1" title="Run manual research" width="max-w-xl">
+      <Drawer open={open} onClose={() => setOpen(false)} kicker="Organizer Discovery · Automation" title="Run manual research" width="max-w-xl">
         <p className="mb-4 text-sm text-muted-foreground">Discovery does not run automatically. Choose the scope for this run and start it; results land in New Discoveries when it finishes.</p>
         <ManualResearchForm />
       </Drawer>

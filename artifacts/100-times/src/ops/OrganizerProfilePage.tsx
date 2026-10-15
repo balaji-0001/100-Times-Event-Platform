@@ -127,7 +127,7 @@ export function OrganizerProfilePage() {
           {activity.length === 0 ? <p className="text-sm text-muted-foreground">No activity recorded for this organizer.</p> : (
             <ol className="divide-y divide-foreground/10 text-sm">
               {activity.map((a) => (
-                <li key={a.id} className="flex items-start gap-4 py-2.5"><span className="w-[7.5rem] shrink-0 font-mono-face text-[10px] leading-5 text-muted-foreground">{fmtDate(a.at)}<br />{fmtTime(a.at)}</span><Badge tone={a.agent === 'discovery' ? 'info' : 'accent'}>{a.agent === 'discovery' ? 'Agent 1' : 'Agent 2'}</Badge><div className="min-w-0"><p className="font-semibold">{a.title}</p>{a.detail && <p className="text-xs text-muted-foreground">{a.detail}</p>}</div></li>
+                <li key={a.id} className="flex items-start gap-4 py-2.5"><span className="w-[7.5rem] shrink-0 font-mono-face text-[10px] leading-5 text-muted-foreground">{fmtDate(a.at)}<br />{fmtTime(a.at)}</span><Badge tone={a.agent === 'discovery' ? 'info' : 'accent'}>{a.agent === 'discovery' ? 'Discovery' : 'Agent 2'}</Badge><div className="min-w-0"><p className="font-semibold">{a.title}</p>{a.detail && <p className="text-xs text-muted-foreground">{a.detail}</p>}</div></li>
               ))}
             </ol>
           )}

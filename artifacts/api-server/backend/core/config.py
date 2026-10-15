@@ -101,6 +101,20 @@ class Settings(BaseSettings):
     discovery_daily_limit: int = 200  # max new DiscoveredEvent rows created per day
     discovery_confidence_threshold: int = 60  # below this -> verification_status=NEEDS_REVIEW
     discovery_scan_interval_minutes: int = 60
+    # Re-open pages that come back empty/thin (JavaScript-rendered sites) in
+    # headless Chromium via Playwright. Needs `playwright install chromium`;
+    # without it discovery silently keeps the plain HTTP result.
+    discovery_browser_fetch: bool = True
+    # Public listing pages read directly from their schema.org data — this
+    # is how discovery finds events with no AI key. `{city}` expands once per
+    # DISCOVERY_TARGET_CITIES entry. Empty = AI web search only.
+    discovery_listing_urls: str = (
+        "https://allevents.in/{city},"
+        "https://www.eventbrite.com/d/india--{city}/events/,"
+        "https://www.meetup.com/find/?location=in--{city}&source=EVENTS,"
+        "https://www.skillboxes.com/events"
+    )
+    discovery_events_per_listing: int = 25
 
     # Background scheduler — makes both agents run continuously without any
     # manual dashboard trigger (n8n's Schedule Trigger workflows remain a

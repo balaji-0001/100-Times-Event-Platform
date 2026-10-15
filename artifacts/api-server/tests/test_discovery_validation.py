@@ -65,3 +65,14 @@ def test_validate_event_needs_review_below_confidence_threshold():
     candidate = ExtractedEventCandidate(name="Low Confidence Event", date=future, extraction_confidence=20)
     status, notes, confidence, parsed = validate_event(candidate, confidence_threshold=60)
     assert status == "NEEDS_REVIEW"
+
+
+def test_try_parse_date_reads_real_world_formats():
+    """Formats seen on real event pages; ranges resolve to their first day."""
+    assert try_parse_date("2026-11-17T09:00:00+05:30") == date(2026, 11, 17)
+    assert try_parse_date("2026-12-03T00:00:00.000+00:00") == date(2026, 12, 3)
+    assert try_parse_date("22nd - 24th Dec 2026") == date(2026, 12, 22)
+    assert try_parse_date("08 - 10 April 2027") == date(2027, 4, 8)
+    assert try_parse_date("August 26-30, 2026") == date(2026, 8, 26)
+    assert try_parse_date("14-16 June 2026") == date(2026, 6, 14)
+    assert try_parse_date("Sept 3 2026") == date(2026, 9, 3)

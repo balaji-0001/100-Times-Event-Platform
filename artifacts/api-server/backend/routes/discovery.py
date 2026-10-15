@@ -3,15 +3,16 @@ run history, and read access to what the agent has found so far.
 
 Every endpoint here requires ADMIN: unlike `acquisition.py`/`outreach.py`
 (which currently have no auth dependency at all — a pre-existing gap, not a
-pattern worth copying), this router can trigger real, paid LLM calls and
+pattern worth copying), this router triggers real web scraping runs and
 exposes scraped personal contact info (emails/phones), so it gets the same
 `require_roles("ADMIN")` gate `routes/dashboard.py` already uses.
 """
 
 from dataclasses import asdict
+from datetime import date
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
@@ -27,6 +28,7 @@ from backend.schemas import (
     DiscoveryAutoToggleRequest,
     DiscoveryRunRequest,
 )
+from backend.services.discovery_agent.export import XLSX_MEDIA_TYPE, build_events_workbook
 from backend.services.discovery_agent.auto_toggle import is_discovery_auto_enabled, set_discovery_auto_enabled
 from backend.services.discovery_agent.orchestrator import config_from_settings, run_discovery_agent
 
@@ -152,3 +154,32 @@ def list_discovered_organizers(
         .limit(limit)
     )
     return [_serialize_organizer(organizer) for organizer in db.execute(stmt).scalars().all()]
+
+
+@router.get("/export.xlsx")
+def export_discovered_events(
+    date_from: date | None = Query(default=None, alias="from"),
+    date_to: date | None = Query(default=None, alias="to"),
+    db: Session = Depends(get_db),
+    _user: User = _admin,
+) -> Response:
+    """Excel download of discovered events (and their organizers) whose
+    event date falls within [from, to]. Either bound may be left out; with
+    no range at all every event is included, undated ones too."""
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="'from' must be on or before 'to'.")
+
+    stmt = select(DiscoveredEvent).options(selectinload(DiscoveredEvent.organizer))
+    if date_from:
+        stmt = stmt.where(DiscoveredEvent.event_date >= date_from)
+    if date_to:
+        stmt = stmt.where(DiscoveredEvent.event_date <= date_to)
+    stmt = stmt.order_by(DiscoveredEvent.event_date.asc().nulls_last(), DiscoveredEvent.id.asc())
+    events = list(db.execute(stmt).scalars().all())
+
+    label = f"{date_from or 'start'}_to_{date_to or 'latest'}" if (date_from or date_to) else "all"
+    return Response(
+        content=build_events_workbook(events),
+        media_type=XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": f'attachment; filename="discovered-events_{label}.xlsx"'},
+    )

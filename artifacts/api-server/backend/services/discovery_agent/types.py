@@ -18,6 +18,8 @@ class DiscoveryConfig:
     sources_per_query: int = 5  # max candidate URLs pulled from each query
     daily_limit: int = 200  # max new DiscoveredEvent rows this run may create
     confidence_threshold: int = 60  # below this, verification_status becomes NEEDS_REVIEW
+    listing_urls: list[str] = field(default_factory=list)  # listing-page templates read without AI; may contain {city}
+    events_per_listing: int = 25  # max events taken from one listing page
 
 
 @dataclass
@@ -54,6 +56,9 @@ class ExtractedEventCandidate:
     primary_source: CandidateSource | None = None
     sources: list[CandidateSource] = field(default_factory=list)
     raw_evidence: dict | None = None
+    # Read from page text by fixed rules (no structured data on the page) —
+    # always held for human review, whatever its confidence.
+    best_effort: bool = False
 
 
 @dataclass

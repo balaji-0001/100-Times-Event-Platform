@@ -37,7 +37,7 @@ export function OrganizersPage() {
 
   return (
     <div>
-      <PageHeader kicker="Organizer Discovery · Organizer database" title="All Organizers" subtitle={`${all.length} organizers extracted by Agent 1, with every contact channel found and their outreach status.`} />
+      <PageHeader kicker="Organizer Discovery · Organizer database" title="All Organizers" subtitle={`${all.length} organizers found by the discovery automation, with every contact channel found and their outreach status.`} />
       <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
         <h2 className="font-display text-xl font-bold">{rows.length} organizer{rows.length === 1 ? '' : 's'}</h2>
         <SearchBox value={q} onChange={setQ} placeholder="Search name, email, phone, website, city…" />

@@ -10,6 +10,7 @@ from datetime import date, datetime
 
 from email_validator import EmailNotValidError, validate_email
 
+from backend.services.discovery_agent.text_extractor import parse_written_date
 from backend.services.discovery_agent.types import ExtractedEventCandidate
 
 _DATE_FORMATS = ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%B %d, %Y", "%b %d, %Y", "%d %B %Y", "%d %b %Y")
@@ -24,7 +25,8 @@ def try_parse_date(raw: str | None) -> date | None:
             return datetime.strptime(raw, fmt).date()
         except ValueError:
             continue
-    return None
+    # ISO datetimes ("2026-11-17T09:00:00+05:30") and written ranges ("22nd - 24th Dec 2026").
+    return parse_written_date(raw)
 
 
 def validate_email_syntax(email: str | None) -> bool:
@@ -64,7 +66,10 @@ def validate_event(candidate: ExtractedEventCandidate, confidence_threshold: int
         notes.append("No venue or city found — location could not be confirmed.")
     confidence = max(0, min(confidence, 100))
 
-    if confidence < confidence_threshold or parsed_date is None:
+    if candidate.best_effort:
+        notes.append("Read from the page text by fixed rules (the page has no structured event data) — check every field.")
+
+    if confidence < confidence_threshold or parsed_date is None or candidate.best_effort:
         status = "NEEDS_REVIEW"
     else:
         status = "VERIFIED"

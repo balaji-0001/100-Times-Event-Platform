@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useSearch } from 'wouter';
-import { RotateCcw } from 'lucide-react';
-import { type DiscoveredEvent, messagesForEvent, organizerById, useDiscoveredEvents, useDiscoveredOrganizers, useOutreachMessages } from './api';
+import { Download, RotateCcw } from 'lucide-react';
+import { type DiscoveredEvent, messagesForEvent, organizerById, useDiscoveredEvents, useDiscoveredOrganizers, useDownloadDiscoveredEvents, useOutreachMessages } from './api';
 import { AdminTable, Badge, Btn, ConfidenceBar, ErrorState, EmptyState, LoadingState, NA, PageHeader, Pager, SearchBox, SelectFilter, StatCard, cell, cellMuted, fmtDate, useDebounce, usePagination, verificationTone } from './ui';
 import { EventDrawer, sourceTypeLabel } from './EventDrawer';
 import { ManualResearchButton } from './ManualResearch';
@@ -13,6 +13,7 @@ export function DiscoveryPage({ mode }: { mode: 'new' | 'events' }) {
   const events = useDiscoveredEvents();
   const organizers = useDiscoveredOrganizers();
   const messages = useOutreachMessages();
+  const download = useDownloadDiscoveredEvents();
   const [, setLocation] = useLocation();
   const search = useSearch();
   const selectedId = Number(new URLSearchParams(search).get('event')) || null;
@@ -66,10 +67,18 @@ export function DiscoveryPage({ mode }: { mode: 'new' | 'events' }) {
   return (
     <div>
       <PageHeader
-        kicker={mode === 'new' ? 'Organizer Discovery · Agent 1' : 'Organizer Discovery · Events found'}
+        kicker={mode === 'new' ? 'Organizer Discovery · Automation' : 'Organizer Discovery · Events found'}
         title={mode === 'new' ? 'Organizer Discovery' : 'Events Found'}
-        subtitle={mode === 'new' ? 'Discover events across India and extract verified organizer information.' : `Every event Agent 1 has discovered — ${all.length} so far — with the organizer, source and verification data behind each one.`}
-        actions={mode === 'new' && <ManualResearchButton />}
+        subtitle={mode === 'new' ? 'Discover events across India and extract verified organizer information.' : `Every event the discovery automation has found — ${all.length} so far — with the organizer, source and verification data behind each one.`}
+        actions={mode === 'new' ? <ManualResearchButton /> : (
+          <div className="flex flex-col items-end gap-1">
+            <Btn variant="primary" loading={download.isPending} disabled={!!eventFrom && !!eventTo && eventFrom > eventTo} onClick={() => download.mutate({ from: eventFrom, to: eventTo })}>
+              <Download size={13} /> Download Excel
+            </Btn>
+            <span className="text-[10px] text-muted-foreground">{eventFrom || eventTo ? `Event date ${eventFrom ? fmtDate(eventFrom) : '…'} – ${eventTo ? fmtDate(eventTo) : '…'}` : 'All events · set an event date range below to narrow it'}</span>
+            {download.isError && <span className="text-[10px] text-red-600 dark:text-red-400">Download failed — {download.error instanceof Error ? download.error.message : 'try again'}</span>}
+          </div>
+        )}
       />
 
       {mode === 'new' && (

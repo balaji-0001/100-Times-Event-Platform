@@ -59,7 +59,7 @@ export function DashboardPage() {
 
   return (
     <div>
-      <PageHeader kicker="100Times Operations" title="Discover event organizers and grow the 100Times event network." subtitle="Agent 1 finds events and the organizers behind them — automatic scanning is off by default, flip the switch below to let it run on its own. Agent 2 invites those organizers to list on 100Times — every email is approved by a person before it is sent." />
+      <PageHeader kicker="100Times Operations" title="Discover event organizers and grow the 100Times event network." subtitle="The discovery automation finds events and the organizers behind them — automatic scanning is off by default, flip the switch below to let it run on its own. Agent 2 invites those organizers to list on 100Times — every email is approved by a person before it is sent." />
 
       {(stats.data?.emailProviderStatus === 'NOT_CONFIGURED' || latestFailed) && (
         <div className="mt-6 space-y-2">
@@ -71,7 +71,7 @@ export function DashboardPage() {
       <div className="mt-8 grid gap-6 xl:grid-cols-2">
         <Panel className="p-6">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2"><CalendarSearch size={16} className="text-accent" /><Kicker>Organizer Discovery — Agent 1</Kicker></div>
+            <div className="flex items-center gap-2"><CalendarSearch size={16} className="text-accent" /><Kicker>Organizer Discovery — Automation</Kicker></div>
             <div className="flex items-center gap-3">
               <ManualResearchButton size="sm" />
               <Link href="/admin/discovery" className="inline-flex items-center gap-1 font-mono-face text-[10px] uppercase tracking-wider text-accent hover:underline">View discoveries <ArrowRight size={11} /></Link>
@@ -115,7 +115,7 @@ export function DashboardPage() {
             </div>
             {venueRelevant.length > 0 && (
               <p className="mt-4 text-sm text-muted-foreground">
-                <span className="font-bold text-foreground">{venueCaptured} of {venueRelevant.length}</span> offline/hybrid events have a venue captured by Agent 1.
+                <span className="font-bold text-foreground">{venueCaptured} of {venueRelevant.length}</span> offline/hybrid events have a venue captured by the discovery automation.
               </p>
             )}
             {venueMissing.length > 0 && (
@@ -146,7 +146,7 @@ export function DashboardPage() {
             {activity.map((a) => (
               <li key={a.id} className="flex items-start gap-4 py-3 text-sm">
                 <span className="w-[7.5rem] shrink-0 font-mono-face text-[10px] leading-5 text-muted-foreground">{fmtDate(a.at)}<br />{fmtTime(a.at)}</span>
-                <Badge tone={a.agent === 'discovery' ? 'info' : 'accent'}>{a.agent === 'discovery' ? 'Agent 1' : 'Agent 2'}</Badge>
+                <Badge tone={a.agent === 'discovery' ? 'info' : 'accent'}>{a.agent === 'discovery' ? 'Discovery' : 'Agent 2'}</Badge>
                 <div className="min-w-0 flex-1">
                   {a.href ? <Link href={a.href} className={cx('font-semibold hover:underline', a.tone === 'danger' && 'text-red-700 dark:text-red-300')}>{a.title}</Link> : <span className="font-semibold">{a.title}</span>}
                   {a.detail && <p className="truncate text-xs text-muted-foreground">{a.detail}</p>}

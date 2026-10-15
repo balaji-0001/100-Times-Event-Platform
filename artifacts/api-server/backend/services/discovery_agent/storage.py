@@ -101,7 +101,10 @@ def persist_event(
         summary.duplicate_events += 1
         return None
 
-    organizer_row = get_or_create_organizer(db, organizer, summary) if organizer and organizer.found else None
+    # A named organizer is kept even without an email (listing platforms
+    # like Meetup name organizers but hide contacts). Outreach is unaffected:
+    # it only picks events whose organizer_status is FOUND, i.e. with an email.
+    organizer_row = get_or_create_organizer(db, organizer, summary) if organizer and (organizer.found or organizer.name) else None
 
     if verification_status == "NEEDS_REVIEW":
         summary.events_needing_review += 1
