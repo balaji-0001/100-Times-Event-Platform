@@ -4,7 +4,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.models import Category, City, Event, Organizer, Registration, Review, SavedEvent, Venue
-from backend.schemas import CategoryOut, CityOut, EventCard, EventDetail, OrganizerOut, ReviewOut, VenueOut
+from backend.schemas import CategoryOut, CityOut, EventCard, OrganizerOut, ReviewOut, VenueOut
 
 
 def event_card(db: Session, event: Event, user_id: int | None = None) -> EventCard:

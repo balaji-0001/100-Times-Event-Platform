@@ -137,12 +137,12 @@ export function TrustReviewPage() {
                           ? 'good'
                           : item.status === 'NEEDS_REVIEW'
                           ? 'warn'
-                          : 'bad'
+                          : 'danger'
                       }
                     >
                       {item.status}
                     </Badge>
-                    <Badge tone={item.confidence === 'HIGH' ? 'good' : item.confidence === 'MEDIUM' ? 'warn' : 'bad'}>
+                    <Badge tone={item.confidence === 'HIGH' ? 'good' : item.confidence === 'MEDIUM' ? 'warn' : 'danger'}>
                       CONFIDENCE: {item.confidence}
                     </Badge>
                     <span className="rounded-full bg-muted px-2.5 py-0.5 font-mono-face text-xs font-bold">

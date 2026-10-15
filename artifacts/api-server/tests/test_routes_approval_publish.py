@@ -15,8 +15,13 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from backend.db import get_db
-from backend.models import AcquisitionOpportunity, Discussion
+from backend.dependencies import get_current_user
+from backend.models import AcquisitionOpportunity, Discussion, User
 from backend.routes import acquisition as acquisition_routes
+
+
+def _admin_user() -> User:
+    return User(id=1, name="Admin", email="admin@100times.test", password_hash="x", role="ADMIN")
 
 
 @pytest.fixture()
@@ -24,7 +29,15 @@ def client(db_session):
     app = FastAPI()
     app.include_router(acquisition_routes.router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db_session
+    app.dependency_overrides[get_current_user] = _admin_user
     return TestClient(app)
+
+
+def test_acquisition_routes_require_authentication():
+    app = FastAPI()
+    app.include_router(acquisition_routes.router, prefix="/api")
+    with TestClient(app) as unauth:
+        assert unauth.get("/api/acquisition/connectors/status").status_code == 401
 
 
 def _make_opportunity(db_session, seeded_catalog, platform="telegram", external_id="telegram_123_456") -> AcquisitionOpportunity:

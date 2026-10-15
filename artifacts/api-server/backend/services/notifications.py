@@ -14,7 +14,7 @@ from urllib.parse import quote
 
 from sqlalchemy.orm import Session
 
-from backend.models import Event, Notification, User
+from backend.models import Event, Notification
 from backend.services.audit import record_audit_log
 from backend.services.social_agent.outreach.senders import get_email_provider
 

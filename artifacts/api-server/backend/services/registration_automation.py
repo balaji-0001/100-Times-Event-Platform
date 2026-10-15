@@ -17,7 +17,6 @@ from sqlalchemy.orm import Session
 
 from backend.core.config import get_settings
 from backend.models import (
-    AttendeeFeedback,
     AutomationRun,
     Event,
     EventMatch,

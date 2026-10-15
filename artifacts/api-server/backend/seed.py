@@ -8,13 +8,10 @@ from sqlalchemy import select
 from backend.core.security import hash_password
 from backend.db import SessionLocal
 from backend.models import (
-    AcquisitionOpportunity,
-    AgentAction,
     Category,
     City,
     Community,
     Connection,
-    Discussion,
     Event,
     Message,
     Notification,

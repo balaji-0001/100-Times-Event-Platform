@@ -788,4 +788,56 @@ class AgentRunOut(APIModel):
     error: str | None = None
 
 
+# --- SMTP Email Configuration & Outbox ---
+
+class SmtpConfigOut(APIModel):
+    configured: bool
+    status: str
+    provider: str
+    host: str
+    port: int
+    username: str
+    from_email: str = Field(alias="fromEmail")
+    use_tls: bool = Field(alias="useTls")
+    has_password: bool = Field(alias="hasPassword")
+
+
+class SmtpConfigRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    host: str
+    port: int = 587
+    username: str | None = None
+    password: str | None = None
+    from_email: str = Field(alias="fromEmail")
+    use_tls: bool = Field(default=True, alias="useTls")
+
+
+class SmtpTestRequest(BaseModel):
+    recipient: str
+    subject: str | None = None
+    body: str | None = None
+
+
+class SmtpTestOut(APIModel):
+    success: bool
+    message: str
+    message_id: str | None = Field(default=None, alias="messageId")
+    provider: str
+    bounced: bool = False
+
+
+class OutboxItemOut(APIModel):
+    id: str
+    timestamp: str
+    recipient: str
+    subject: str
+    body: str
+    html: str | None = None
+    provider: str
+    status: str
+    message_id: str | None = Field(default=None, alias="messageId")
+    error: str | None = None
+
+
 

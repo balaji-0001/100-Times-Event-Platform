@@ -179,6 +179,58 @@ export const APPROVABLE_STATUSES: OutreachStatus[] = ['PENDING_APPROVAL', 'FOLLO
 export const TERMINAL_STATUSES: OutreachStatus[] = ['COMPLETED', 'REJECTED'];
 
 // ---------------------------------------------------------------------------
+// SMTP Delivery & Outbox Types
+// ---------------------------------------------------------------------------
+
+export interface SmtpConfig {
+  configured: boolean;
+  status: 'REAL' | 'NOT_CONFIGURED';
+  provider: string;
+  host: string;
+  port: number;
+  username: string;
+  fromEmail: string;
+  useTls: boolean;
+  hasPassword: boolean;
+}
+
+export interface SmtpConfigRequest {
+  host: string;
+  port: number;
+  username?: string;
+  password?: string;
+  fromEmail: string;
+  useTls: boolean;
+}
+
+export interface SmtpTestRequest {
+  recipient: string;
+  subject?: string;
+  body?: string;
+}
+
+export interface SmtpTestResult {
+  success: boolean;
+  message: string;
+  messageId?: string;
+  provider: string;
+  bounced: boolean;
+}
+
+export interface OutboxItem {
+  id: string;
+  timestamp: string;
+  recipient: string;
+  subject: string;
+  body: string;
+  html?: string | null;
+  provider: string;
+  status: string;
+  messageId?: string | null;
+  error?: string | null;
+}
+
+// ---------------------------------------------------------------------------
 // Query keys
 // ---------------------------------------------------------------------------
 
@@ -191,6 +243,8 @@ export const keys = {
   discoveryRuns: ['ops', 'runs', 'discovery'] as const,
   outreachRuns: ['ops', 'runs', 'outreach'] as const,
   discoveryAuto: ['ops', 'discovery-auto'] as const,
+  smtpConfig: ['ops', 'smtp-config'] as const,
+  emailOutbox: ['ops', 'email-outbox'] as const,
 };
 
 // ---------------------------------------------------------------------------
@@ -310,6 +364,24 @@ export function useRunDiscovery() {
   });
 }
 
+/** Excel file of discovered events (and their organizers) with an event date in [from, to]; either bound may be blank. */
+export function useDownloadDiscoveredEvents() {
+  return useMutation({
+    mutationFn: async ({ from, to }: { from: string; to: string }) => {
+      const params = new URLSearchParams();
+      if (from) params.set('from', from);
+      if (to) params.set('to', to);
+      const blob = await customFetch<Blob>(`/api/discovery/export.xlsx${params.size ? `?${params}` : ''}`, { responseType: 'blob' });
+      const label = from || to ? `${from || 'start'}_to_${to || 'latest'}` : 'all';
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `discovered-events_${label}.xlsx`;
+      link.click();
+      URL.revokeObjectURL(link.href);
+    },
+  });
+}
+
 export function useRunOutreachBatch() {
   const invalidate = useInvalidate();
   return useMutation({
@@ -324,6 +396,53 @@ export function useProcessFollowups() {
   return useMutation({
     mutationFn: () => customFetch<Record<string, number>>('/api/acquisition/outreach/process-followups', { method: 'POST' }),
     onSuccess: () => invalidate(keys.outreach, keys.outreachStats),
+  });
+}
+
+export function useSmtpConfig() {
+  return useQuery({
+    queryKey: keys.smtpConfig,
+    queryFn: () => customFetch<SmtpConfig>('/api/acquisition/outreach/smtp/config'),
+  });
+}
+
+export function useSaveSmtpConfig() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (body: SmtpConfigRequest) =>
+      customFetch<SmtpConfig>('/api/acquisition/outreach/smtp/config', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => invalidate(keys.smtpConfig, keys.outreachStats),
+  });
+}
+
+export function useTestSmtp() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (body: SmtpTestRequest) =>
+      customFetch<SmtpTestResult>('/api/acquisition/outreach/smtp/test', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => invalidate(keys.emailOutbox),
+  });
+}
+
+export function useEmailOutbox() {
+  return useQuery({
+    queryKey: keys.emailOutbox,
+    queryFn: () => customFetch<OutboxItem[]>('/api/acquisition/outreach/smtp/outbox'),
+    refetchInterval: 5000,
+  });
+}
+
+export function useClearEmailOutbox() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: () => customFetch<{ status: string }>('/api/acquisition/outreach/smtp/outbox/clear', { method: 'POST' }),
+    onSuccess: () => invalidate(keys.emailOutbox),
   });
 }
 

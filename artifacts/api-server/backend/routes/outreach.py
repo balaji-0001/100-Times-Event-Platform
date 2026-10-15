@@ -32,12 +32,18 @@ from backend.schemas import (
     OutreachMessageOut,
     OutreachRunRequest,
     OutreachStatsOut,
+    OutboxItemOut,
+    SmtpConfigOut,
+    SmtpConfigRequest,
+    SmtpTestOut,
+    SmtpTestRequest,
 )
+from backend.services.smtp_config import get_smtp_info, save_smtp_settings, send_test_email
 from backend.services.social_agent import state_machine
 from backend.services.social_agent.outreach import suppression
 from backend.services.social_agent.outreach.followup import process_followups
 from backend.services.social_agent.outreach.orchestrator import run_organizer_outreach, run_outreach_agent, send_outreach_message
-from backend.services.social_agent.outreach.senders import provider_status
+from backend.services.social_agent.outreach.senders import clear_outbox, get_outbox, provider_status
 from backend.services.social_agent.outreach.types import OutreachRunConfig
 from backend.services.social_agent.pipeline import event_extraction, normalize
 
@@ -248,3 +254,53 @@ def run_outreach_manual(payload: OutreachRunRequest, db: Session = Depends(get_d
 @router.post("/process-followups")
 def run_process_followups(db: Session = Depends(get_db), _user: User = _admin) -> dict[str, Any]:
     return process_followups(db)
+
+
+# ---------------------------------------------------------------------------
+# SMTP Email Delivery & Outbox Endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.get("/smtp/config", response_model=SmtpConfigOut)
+def get_smtp_configuration(_user: User = _admin) -> SmtpConfigOut:
+    """Return active SMTP configuration and provider readiness status."""
+    return SmtpConfigOut.model_validate(get_smtp_info())
+
+
+@router.post("/smtp/config", response_model=SmtpConfigOut)
+def update_smtp_configuration(payload: SmtpConfigRequest, _user: User = _admin) -> SmtpConfigOut:
+    """Save SMTP configuration to environment and update active email provider."""
+    info = save_smtp_settings(
+        host=payload.host,
+        port=payload.port,
+        username=payload.username,
+        password=payload.password,
+        from_email=payload.from_email,
+        use_tls=payload.use_tls,
+    )
+    return SmtpConfigOut.model_validate(info)
+
+
+@router.post("/smtp/test", response_model=SmtpTestOut)
+def test_smtp_delivery(payload: SmtpTestRequest, _user: User = _admin) -> SmtpTestOut:
+    """Send an immediate test email to verify credentials and SMTP connectivity."""
+    res = send_test_email(
+        recipient=payload.recipient,
+        subject=payload.subject or "Test Email from 100 TIMES",
+        body=payload.body,
+    )
+    return SmtpTestOut.model_validate(res)
+
+
+@router.get("/smtp/outbox", response_model=list[OutboxItemOut])
+def list_email_outbox(limit: int = Query(default=50, ge=1, le=200), _user: User = _admin) -> list[OutboxItemOut]:
+    """Retrieve recent outgoing email log (real SMTP sends and mock-logged emails)."""
+    items = get_outbox(limit=limit)
+    return [OutboxItemOut.model_validate(item) for item in items]
+
+
+@router.post("/smtp/outbox/clear")
+def clear_email_outbox_log(_user: User = _admin) -> dict[str, str]:
+    """Clear in-memory outbox log."""
+    clear_outbox()
+    return {"status": "cleared"}

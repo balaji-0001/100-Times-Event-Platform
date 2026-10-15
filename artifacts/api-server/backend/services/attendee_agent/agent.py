@@ -22,13 +22,9 @@ from backend.models import (
     AgentSetting,
     Attendee,
     AttendeeIntent,
-    Category,
-    City,
-    Discussion,
     Event,
     EventMatch,
     PlatformRateLimit,
-    Registration,
     Venue,
 )
 from backend.services.audit import record_audit_log

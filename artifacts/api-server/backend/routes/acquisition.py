@@ -2,19 +2,19 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from backend.core.config import get_settings
 from backend.db import get_db
+from backend.dependencies import require_roles
 from backend.models import (
     AcquisitionOpportunity,
     AcquisitionReferralEvent,
     AgentAction,
     Community,
     Discussion,
-    Event,
     PipelineExecution,
     PlatformRateLimit,
 )
@@ -45,10 +45,10 @@ from backend.services.acquisition_agent import AgentOrchestrator
 from backend.services.social_agent.connectors import CONNECTOR_REGISTRY
 from backend.services.social_agent.orchestrator import SocialAgentOrchestrator
 from backend.services.social_agent.pipeline import content_generation, discovery_pipeline, policy_check
-from backend.services.social_agent.publishers import PlatformPublisher, get_publisher
+from backend.services.social_agent.publishers import get_publisher
 from backend.services.social_agent.state_machine import InvalidTransitionError, transition_opportunity
 
-router = APIRouter(prefix="/acquisition", tags=["acquisition"])
+router = APIRouter(prefix="/acquisition", tags=["acquisition"], dependencies=[Depends(require_roles("ADMIN"))])
 
 
 def serialize_opportunity(op: AcquisitionOpportunity) -> AcquisitionOpportunityOut:

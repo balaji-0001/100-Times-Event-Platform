@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from backend.db import get_db
 from backend.dependencies import get_current_user
-from backend.models import Connection, Event, Message, Notification, Registration, User
+from backend.models import Connection, Message, Notification, Registration, User
 from backend.schemas import (
     AttendeeProfileOut,
     ConnectionCreate,

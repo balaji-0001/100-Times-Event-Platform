@@ -1,13 +1,11 @@
 import { type FormEvent, type ReactNode, useMemo, useState, useEffect, useRef } from 'react';
-import { createPortal } from 'react-dom';
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowDownRight, ArrowLeft, ArrowRight, Bell, CalendarDays, CalendarPlus, Check, CheckCheck,
+  ArrowDownRight, ArrowLeft, ArrowRight, Bell, CalendarDays, CalendarPlus, Check,
   Compass, Download, ExternalLink, Filter, Heart, LayoutDashboard,
-  LineChart, ListFilter, Loader2, LockKeyhole, LogOut, MapPin, Menu, MessageSquare, Plus, Printer, Edit3, ChevronDown, ChevronUp, AlertCircle, Eye, EyeOff,
-  QrCode, Search, Send, Settings2, Share2, ShieldCheck, Sparkles, Star, Ticket, Trash2,
+  LineChart, ListFilter, Loader2, LockKeyhole, MapPin, Menu, MessageSquare, Plus, Printer,
+  QrCode, Search, Send, Settings2, ShieldCheck, Sparkles, Star, Ticket, Trash2,
   TrendingUp, UserCheck, UserPlus, UserRound, Users, X, Zap,
-  Copy, ShieldAlert, Bot, ThumbsUp, ThumbsDown, CheckCircle2, Globe, Play, RefreshCw,
 } from 'lucide-react';
 import {
   getGetCategoryQueryKey, getGetCityQueryKey, getGetDashboardQueryKey,
@@ -372,6 +370,37 @@ function useUpdateAdminUserRole() {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin', 'users'] });
+    },
+  });
+}
+
+export interface AdminReview {
+  id: number;
+  author: string;
+  rating: number;
+  title: string;
+  comment: string;
+  eventId: number;
+  eventTitle: string;
+  createdAt: string | null;
+}
+
+function useGetAdminReviews() {
+  return useQuery({
+    queryKey: ['admin', 'reviews'],
+    queryFn: () => customFetch<AdminReview[]>('/api/admin/reviews'),
+  });
+}
+
+function useDeleteAdminReview() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      customFetch<{ status: string; message: string }>(`/api/admin/reviews/${id}`, {
+        method: 'DELETE',
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'reviews'] });
     },
   });
 }
@@ -3229,6 +3258,589 @@ function CreateEventPage() {
   );
 }
 
+const ADMIN_NAV = [
+  { view: 'overview', label: 'Overview', href: '/admin' },
+  { view: 'events', label: 'Events', href: '/admin/events' },
+  { view: 'users', label: 'Users', href: '/admin/users' },
+  { view: 'organizers', label: 'Organizers', href: '/admin/organizers' },
+  { view: 'categories', label: 'Categories', href: '/admin/categories' },
+  { view: 'venues', label: 'Venues', href: '/admin/venues' },
+  { view: 'reviews', label: 'Reviews', href: '/admin/reviews' },
+];
+
+function AdminEventsWorkspace() {
+  const query = useGetAdminEvents();
+  const updateStatus = useUpdateAdminEventStatus();
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'published' | 'draft' | 'pending'>('all');
+
+  if (query.isLoading) return <LoadingState label="Loading platform events" />;
+  if (query.isError) return <ErrorState retry={() => query.refetch()} />;
+
+  const events = (query.data ?? []).filter((e) => {
+    const matchesSearch = !search || e.title.toLowerCase().includes(search.toLowerCase()) || e.organizer.toLowerCase().includes(search.toLowerCase()) || e.category.toLowerCase().includes(search.toLowerCase());
+    const matchesStatus = statusFilter === 'all' || e.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
+
+  return (
+    <div className="mt-8 space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative max-w-sm flex-1">
+          <Search className="absolute left-3.5 top-3.5 text-muted-foreground" size={16} />
+          <input
+            type="text"
+            placeholder="Search events, organizers, categories..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full rounded-full border border-foreground/15 bg-card py-2.5 pl-10 pr-4 text-sm focus:border-accent focus:outline-none"
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          {(['all', 'published', 'draft', 'pending'] as const).map((s) => (
+            <button
+              key={s}
+              onClick={() => setStatusFilter(s)}
+              className={`rounded-full px-3.5 py-1.5 text-xs font-semibold capitalize transition ${
+                statusFilter === s ? 'bg-primary text-primary-foreground' : 'border border-foreground/15 bg-card text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-foreground/10 bg-card">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-foreground/10 bg-muted/30 font-mono-face text-[11px] uppercase tracking-wider text-muted-foreground">
+                <th className="px-6 py-3.5">Event</th>
+                <th className="px-6 py-3.5">Category</th>
+                <th className="px-6 py-3.5">Date & Time</th>
+                <th className="px-6 py-3.5">Format & Price</th>
+                <th className="px-6 py-3.5">Status</th>
+                <th className="px-6 py-3.5 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-foreground/10">
+              {events.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-6 py-12 text-center text-muted-foreground">
+                    No events matching filter criteria.
+                  </td>
+                </tr>
+              ) : (
+                events.map((e) => (
+                  <tr key={e.id} className="transition hover:bg-muted/10">
+                    <td className="px-6 py-4">
+                      <div className="font-semibold text-foreground">
+                        <Link href={`/events/${e.slug}`} className="inline-flex items-center gap-1.5 hover:text-accent">
+                          {e.title} <ExternalLink size={12} className="opacity-60" />
+                        </Link>
+                      </div>
+                      <div className="mt-0.5 text-xs text-muted-foreground">{e.organizer}</div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className="rounded-md bg-muted px-2.5 py-1 text-xs font-medium text-foreground">{e.category}</span>
+                    </td>
+                    <td className="px-6 py-4 text-xs text-muted-foreground">
+                      <div>{String(e.startDate)}</div>
+                      <div>{e.startTime}</div>
+                    </td>
+                    <td className="px-6 py-4 text-xs">
+                      <span className="capitalize text-foreground">{e.format}</span>
+                      <div className="text-muted-foreground">{Number(e.price) === 0 ? 'Free' : `₹${e.price}`}</div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span
+                        className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${
+                          e.status === 'published'
+                            ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                            : e.status === 'pending'
+                            ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                            : 'bg-zinc-500/15 text-zinc-600 dark:text-zinc-400'
+                        }`}
+                      >
+                        {e.status}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <div className="inline-flex items-center gap-2">
+                        {e.status !== 'published' && (
+                          <button
+                            disabled={updateStatus.isPending}
+                            onClick={() => updateStatus.mutate({ id: e.id, status: 'published' })}
+                            className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"
+                          >
+                            Publish
+                          </button>
+                        )}
+                        {e.status !== 'draft' && (
+                          <button
+                            disabled={updateStatus.isPending}
+                            onClick={() => updateStatus.mutate({ id: e.id, status: 'draft' })}
+                            className="rounded-lg border border-foreground/15 bg-card px-3 py-1.5 text-xs font-semibold text-muted-foreground transition hover:text-foreground disabled:opacity-50"
+                          >
+                            Draft
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="border-t border-foreground/10 px-6 py-3 font-mono-face text-xs text-muted-foreground">
+          Showing {events.length} of {query.data?.length ?? 0} events
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AdminUsersWorkspace() {
+  const query = useGetAdminUsers();
+  const updateRole = useUpdateAdminUserRole();
+  const [search, setSearch] = useState('');
+  const [roleFilter, setRoleFilter] = useState<'all' | 'USER' | 'ORGANIZER' | 'ADMIN'>('all');
+
+  if (query.isLoading) return <LoadingState label="Loading platform users" />;
+  if (query.isError) return <ErrorState retry={() => query.refetch()} />;
+
+  const users = (query.data ?? []).filter((u) => {
+    const matchesSearch = !search || u.name.toLowerCase().includes(search.toLowerCase()) || u.email.toLowerCase().includes(search.toLowerCase());
+    const matchesRole = roleFilter === 'all' || u.role === roleFilter;
+    return matchesSearch && matchesRole;
+  });
+
+  return (
+    <div className="mt-8 space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative max-w-sm flex-1">
+          <Search className="absolute left-3.5 top-3.5 text-muted-foreground" size={16} />
+          <input
+            type="text"
+            placeholder="Search users by name, email..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full rounded-full border border-foreground/15 bg-card py-2.5 pl-10 pr-4 text-sm focus:border-accent focus:outline-none"
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          {(['all', 'USER', 'ORGANIZER', 'ADMIN'] as const).map((r) => (
+            <button
+              key={r}
+              onClick={() => setRoleFilter(r)}
+              className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                roleFilter === r ? 'bg-primary text-primary-foreground' : 'border border-foreground/15 bg-card text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {r === 'all' ? 'All Roles' : r}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-foreground/10 bg-card">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-foreground/10 bg-muted/30 font-mono-face text-[11px] uppercase tracking-wider text-muted-foreground">
+                <th className="px-6 py-3.5">ID</th>
+                <th className="px-6 py-3.5">User</th>
+                <th className="px-6 py-3.5">Email</th>
+                <th className="px-6 py-3.5">Current Role</th>
+                <th className="px-6 py-3.5 text-right">Assign Role</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-foreground/10">
+              {users.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-12 text-center text-muted-foreground">
+                    No users matching search filter.
+                  </td>
+                </tr>
+              ) : (
+                users.map((u) => (
+                  <tr key={u.id} className="transition hover:bg-muted/10">
+                    <td className="px-6 py-4 font-mono-face text-xs text-muted-foreground">#{u.id}</td>
+                    <td className="px-6 py-4">
+                      <div className="font-semibold text-foreground">{u.name}</div>
+                    </td>
+                    <td className="px-6 py-4 font-mono-face text-xs text-muted-foreground">{u.email}</td>
+                    <td className="px-6 py-4">
+                      <span
+                        className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${
+                          u.role === 'ADMIN'
+                            ? 'bg-purple-500/15 text-purple-600 dark:text-purple-400'
+                            : u.role === 'ORGANIZER'
+                            ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400'
+                            : 'bg-zinc-500/15 text-zinc-600 dark:text-zinc-400'
+                        }`}
+                      >
+                        {u.role}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <select
+                        value={u.role}
+                        disabled={updateRole.isPending}
+                        onChange={(e) => updateRole.mutate({ id: u.id, role: e.target.value as 'USER' | 'ORGANIZER' | 'ADMIN' })}
+                        className="rounded-lg border border-foreground/15 bg-background px-3 py-1.5 text-xs font-medium focus:border-accent focus:outline-none"
+                      >
+                        <option value="USER">USER</option>
+                        <option value="ORGANIZER">ORGANIZER</option>
+                        <option value="ADMIN">ADMIN</option>
+                      </select>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="border-t border-foreground/10 px-6 py-3 font-mono-face text-xs text-muted-foreground">
+          Showing {users.length} of {query.data?.length ?? 0} users
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AdminOrganizersWorkspace() {
+  const query = useListOrganizers();
+  const [search, setSearch] = useState('');
+
+  if (query.isLoading) return <LoadingState label="Loading platform organizers" />;
+  if (query.isError) return <ErrorState retry={() => query.refetch()} />;
+
+  const organizers = (query.data ?? []).filter((o) => {
+    return !search || o.name.toLowerCase().includes(search.toLowerCase()) || o.slug.toLowerCase().includes(search.toLowerCase());
+  });
+
+  return (
+    <div className="mt-8 space-y-6">
+      <div className="relative max-w-sm">
+        <Search className="absolute left-3.5 top-3.5 text-muted-foreground" size={16} />
+        <input
+          type="text"
+          placeholder="Search organizers..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-full rounded-full border border-foreground/15 bg-card py-2.5 pl-10 pr-4 text-sm focus:border-accent focus:outline-none"
+        />
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-foreground/10 bg-card">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-foreground/10 bg-muted/30 font-mono-face text-[11px] uppercase tracking-wider text-muted-foreground">
+                <th className="px-6 py-3.5">Organizer</th>
+                <th className="px-6 py-3.5">Slug</th>
+                <th className="px-6 py-3.5">Rating</th>
+                <th className="px-6 py-3.5">Events</th>
+                <th className="px-6 py-3.5 text-right">View</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-foreground/10">
+              {organizers.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-12 text-center text-muted-foreground">
+                    No organizers found.
+                  </td>
+                </tr>
+              ) : (
+                organizers.map((o) => (
+                  <tr key={o.id} className="transition hover:bg-muted/10">
+                    <td className="px-6 py-4">
+                      <div className="font-semibold text-foreground">{o.name}</div>
+                      {o.description && <div className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">{o.description}</div>}
+                    </td>
+                    <td className="px-6 py-4 font-mono-face text-xs text-muted-foreground">{o.slug}</td>
+                    <td className="px-6 py-4 text-xs">
+                      <div className="flex items-center gap-1 text-amber-500 font-semibold">
+                        <Star size={12} fill="currentColor" /> {o.rating > 0 ? o.rating.toFixed(1) : 'New'}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-xs font-mono-face text-muted-foreground">
+                      <span className="rounded-md bg-muted px-2 py-0.5 text-foreground">{o.eventCount ?? 0} events</span>
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <Link href={`/organizers/${o.slug}`} className="inline-flex items-center gap-1 text-xs font-semibold text-accent hover:underline">
+                        Details <ArrowRight size={12} />
+                      </Link>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="border-t border-foreground/10 px-6 py-3 font-mono-face text-xs text-muted-foreground">
+          Showing {organizers.length} of {query.data?.length ?? 0} organizers
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AdminCategoriesWorkspace() {
+  const query = useListCategories();
+  const [search, setSearch] = useState('');
+
+  if (query.isLoading) return <LoadingState label="Loading categories" />;
+  if (query.isError) return <ErrorState retry={() => query.refetch()} />;
+
+  const categories = (query.data ?? []).filter((c) => {
+    return !search || c.name.toLowerCase().includes(search.toLowerCase()) || c.slug.toLowerCase().includes(search.toLowerCase());
+  });
+
+  return (
+    <div className="mt-8 space-y-6">
+      <div className="relative max-w-sm">
+        <Search className="absolute left-3.5 top-3.5 text-muted-foreground" size={16} />
+        <input
+          type="text"
+          placeholder="Search categories..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-full rounded-full border border-foreground/15 bg-card py-2.5 pl-10 pr-4 text-sm focus:border-accent focus:outline-none"
+        />
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-foreground/10 bg-card">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-foreground/10 bg-muted/30 font-mono-face text-[11px] uppercase tracking-wider text-muted-foreground">
+                <th className="px-6 py-3.5">Category</th>
+                <th className="px-6 py-3.5">Slug</th>
+                <th className="px-6 py-3.5">Description</th>
+                <th className="px-6 py-3.5 text-right">View</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-foreground/10">
+              {categories.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-6 py-12 text-center text-muted-foreground">
+                    No categories found.
+                  </td>
+                </tr>
+              ) : (
+                categories.map((c) => (
+                  <tr key={c.id} className="transition hover:bg-muted/10">
+                    <td className="px-6 py-4 font-semibold text-foreground">{c.name}</td>
+                    <td className="px-6 py-4 font-mono-face text-xs text-muted-foreground">{c.slug}</td>
+                    <td className="px-6 py-4 text-xs text-muted-foreground">{c.description || '—'}</td>
+                    <td className="px-6 py-4 text-right">
+                      <Link href={`/categories/${c.slug}`} className="inline-flex items-center gap-1 text-xs font-semibold text-accent hover:underline">
+                        Explore <ArrowRight size={12} />
+                      </Link>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="border-t border-foreground/10 px-6 py-3 font-mono-face text-xs text-muted-foreground">
+          Showing {categories.length} of {query.data?.length ?? 0} categories
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AdminVenuesWorkspace() {
+  const query = useListVenues();
+  const [search, setSearch] = useState('');
+
+  if (query.isLoading) return <LoadingState label="Loading venues" />;
+  if (query.isError) return <ErrorState retry={() => query.refetch()} />;
+
+  const venues = (query.data ?? []).filter((v) => {
+    return !search || v.name.toLowerCase().includes(search.toLowerCase()) || (v.address && v.address.toLowerCase().includes(search.toLowerCase()));
+  });
+
+  return (
+    <div className="mt-8 space-y-6">
+      <div className="relative max-w-sm">
+        <Search className="absolute left-3.5 top-3.5 text-muted-foreground" size={16} />
+        <input
+          type="text"
+          placeholder="Search venues by name, address..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-full rounded-full border border-foreground/15 bg-card py-2.5 pl-10 pr-4 text-sm focus:border-accent focus:outline-none"
+        />
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-foreground/10 bg-card">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-foreground/10 bg-muted/30 font-mono-face text-[11px] uppercase tracking-wider text-muted-foreground">
+                <th className="px-6 py-3.5">Venue</th>
+                <th className="px-6 py-3.5">Slug</th>
+                <th className="px-6 py-3.5">Address</th>
+                <th className="px-6 py-3.5 text-right">View</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-foreground/10">
+              {venues.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-6 py-12 text-center text-muted-foreground">
+                    No venues found.
+                  </td>
+                </tr>
+              ) : (
+                venues.map((v) => (
+                  <tr key={v.id} className="transition hover:bg-muted/10">
+                    <td className="px-6 py-4 font-semibold text-foreground">{v.name}</td>
+                    <td className="px-6 py-4 font-mono-face text-xs text-muted-foreground">{v.slug}</td>
+                    <td className="px-6 py-4 text-xs text-muted-foreground">{v.address || '—'}</td>
+                    <td className="px-6 py-4 text-right">
+                      <Link href={`/venues/${v.slug}`} className="inline-flex items-center gap-1 text-xs font-semibold text-accent hover:underline">
+                        Details <ArrowRight size={12} />
+                      </Link>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="border-t border-foreground/10 px-6 py-3 font-mono-face text-xs text-muted-foreground">
+          Showing {venues.length} of {query.data?.length ?? 0} venues
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AdminReviewsWorkspace() {
+  const query = useGetAdminReviews();
+  const deleteReview = useDeleteAdminReview();
+  const [search, setSearch] = useState('');
+  const [ratingFilter, setRatingFilter] = useState<number | 0>(0);
+
+  if (query.isLoading) return <LoadingState label="Loading reviews" />;
+  if (query.isError) return <ErrorState retry={() => query.refetch()} />;
+
+  const reviews = (query.data ?? []).filter((r) => {
+    const matchesSearch = !search || r.author.toLowerCase().includes(search.toLowerCase()) || r.title.toLowerCase().includes(search.toLowerCase()) || r.comment.toLowerCase().includes(search.toLowerCase()) || r.eventTitle.toLowerCase().includes(search.toLowerCase());
+    const matchesRating = ratingFilter === 0 || r.rating === ratingFilter;
+    return matchesSearch && matchesRating;
+  });
+
+  return (
+    <div className="mt-8 space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative max-w-sm flex-1">
+          <Search className="absolute left-3.5 top-3.5 text-muted-foreground" size={16} />
+          <input
+            type="text"
+            placeholder="Search reviews by author, event, comments..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full rounded-full border border-foreground/15 bg-card py-2.5 pl-10 pr-4 text-sm focus:border-accent focus:outline-none"
+          />
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => setRatingFilter(0)}
+            className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+              ratingFilter === 0 ? 'bg-primary text-primary-foreground' : 'border border-foreground/15 bg-card text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            All Ratings
+          </button>
+          {[5, 4, 3, 2, 1].map((stars) => (
+            <button
+              key={stars}
+              onClick={() => setRatingFilter(stars)}
+              className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                ratingFilter === stars ? 'bg-primary text-primary-foreground' : 'border border-foreground/15 bg-card text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {stars} ★
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-foreground/10 bg-card">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-foreground/10 bg-muted/30 font-mono-face text-[11px] uppercase tracking-wider text-muted-foreground">
+                <th className="px-6 py-3.5">Reviewer</th>
+                <th className="px-6 py-3.5">Event</th>
+                <th className="px-6 py-3.5">Rating</th>
+                <th className="px-6 py-3.5">Title & Comment</th>
+                <th className="px-6 py-3.5 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-foreground/10">
+              {reviews.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-12 text-center text-muted-foreground">
+                    No reviews found.
+                  </td>
+                </tr>
+              ) : (
+                reviews.map((r) => (
+                  <tr key={r.id} className="transition hover:bg-muted/10">
+                    <td className="px-6 py-4 font-semibold text-foreground">{r.author}</td>
+                    <td className="px-6 py-4 text-xs font-medium text-accent">
+                      <Link href={`/events/${r.eventId}`} className="hover:underline">
+                        {r.eventTitle}
+                      </Link>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-0.5 text-amber-500">
+                        {Array.from({ length: r.rating }).map((_, i) => (
+                          <Star key={i} size={13} fill="currentColor" />
+                        ))}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-xs">
+                      <div className="font-semibold text-foreground">{r.title}</div>
+                      <div className="mt-0.5 text-muted-foreground line-clamp-2">{r.comment}</div>
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <button
+                        disabled={deleteReview.isPending}
+                        onClick={() => {
+                          if (window.confirm('Are you sure you want to delete this review?')) {
+                            deleteReview.mutate(r.id);
+                          }
+                        }}
+                        className="rounded-lg p-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition disabled:opacity-50"
+                        title="Delete Review"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="border-t border-foreground/10 px-6 py-3 font-mono-face text-xs text-muted-foreground">
+          Showing {reviews.length} of {query.data?.length ?? 0} reviews
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AdminPage({ view = 'overview' }: { view?: string }) {
   const query = useGetAdminDashboard();
   if (query.isLoading) return <LoadingState label="Loading admin console" />;
@@ -3251,18 +3863,42 @@ function AdminPage({ view = 'overview' }: { view?: string }) {
         </div>
         <ShieldCheck className="hidden text-accent sm:block" size={30} />
       </div>
-      <div className="mt-10 grid gap-3 sm:grid-cols-4">
+
+      <div className="mt-6 flex flex-wrap items-center gap-2 border-b border-foreground/10 pb-4">
+        {ADMIN_NAV.map((tab) => (
+          <Link
+            key={tab.view}
+            href={tab.href}
+            className={`rounded-full px-4 py-2 text-xs font-semibold transition ${
+              view === tab.view
+                ? 'bg-accent text-accent-foreground font-bold'
+                : 'border border-foreground/15 bg-card text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            {tab.label}
+          </Link>
+        ))}
+        <Link
+          href="/admin/ops"
+          className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent/10 px-4 py-2 text-xs font-semibold text-accent hover:bg-accent hover:text-accent-foreground transition"
+        >
+          Operations Console <ArrowRight size={12} />
+        </Link>
+      </div>
+
+      <div className="mt-8 grid gap-3 sm:grid-cols-4">
         {cards.map(([label, value, Icon]) => (
           <Metric key={label as string} label={label as string} value={value as number} icon={Icon as typeof Heart} />
         ))}
       </div>
-      {view === 'overview' ? (
+
+      {view === 'overview' && (
         <div className="mt-12 grid gap-5 lg:grid-cols-2">
           <div className="rounded-2xl border border-foreground/10 bg-card p-6">
             <div className="flex items-center justify-between">
               <p className="font-mono-face text-[10px] uppercase tracking-[.15em] text-accent">Popular categories</p>
-              <Link href="/admin" className="font-mono-face text-[10px] text-accent hover:underline flex items-center gap-1">
-                Operations console <ArrowRight size={10} />
+              <Link href="/admin/categories" className="font-mono-face text-[10px] text-accent hover:underline flex items-center gap-1">
+                View all categories <ArrowRight size={10} />
               </Link>
             </div>
             <div className="mt-5 space-y-3">
@@ -3274,9 +3910,13 @@ function AdminPage({ view = 'overview' }: { view?: string }) {
             </div>
           </div>
         </div>
-      ) : (
-        <EmptyState title={`The ${view} workspace is ready.`} body="Connect the next moderation workflow here when your operations team is ready." />
       )}
+      {view === 'events' && <AdminEventsWorkspace />}
+      {view === 'users' && <AdminUsersWorkspace />}
+      {view === 'organizers' && <AdminOrganizersWorkspace />}
+      {view === 'categories' && <AdminCategoriesWorkspace />}
+      {view === 'venues' && <AdminVenuesWorkspace />}
+      {view === 'reviews' && <AdminReviewsWorkspace />}
     </div>
   );
 }

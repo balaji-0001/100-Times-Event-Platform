@@ -1,12 +1,11 @@
 import re
-from typing import Any
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from backend.db import get_db
 from backend.dependencies import get_current_user, optional_current_user
-from backend.models import Category, City, Connection, Event, Registration, SavedEvent, ScheduleItem, Speaker, User, Venue
+from backend.models import City, Connection, Event, Registration, SavedEvent, User, Venue
 from backend.schemas import (
     AIConciergeRequest,
     AIConciergeResponse,
@@ -14,7 +13,6 @@ from backend.schemas import (
     AIEventMatch,
     AIPeerMatch,
     AttendeeProfileOut,
-    EventCard,
     PersonalizedRecommendationsOut,
 )
 from backend.serializers import event_card

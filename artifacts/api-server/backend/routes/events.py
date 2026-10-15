@@ -9,14 +9,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from backend.db import get_db
-from backend.dependencies import get_current_user, optional_current_user, require_roles
-from backend.models import AcquisitionReferralEvent, Category, City, Event, Notification, Registration, Review, SavedEvent, Speaker, User, Venue
+from backend.dependencies import get_current_user, optional_current_user
+from backend.models import AcquisitionReferralEvent, Category, City, Event, Registration, Review, SavedEvent, User, Venue
 from backend.services.social_agent.attribution import attribute_registration
 from backend.schemas import (
     ActionResult,
-    EventCard,
     EventDetail,
-    EventInput,
     EventList,
     RegistrationInput,
     RegistrationOut,

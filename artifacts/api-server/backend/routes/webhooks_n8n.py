@@ -12,18 +12,18 @@ Provides secured, idempotent webhook endpoints for all 8 mandatory n8n workflows
 - POST /api/webhooks/n8n/reminders-dispatch
 """
 
-from datetime import date, datetime, timezone
+from datetime import date
 import hmac
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.core.config import get_settings
 from backend.db import get_db
-from backend.models import Event, Organizer, Registration, User
+from backend.models import Event, Registration, User
 from backend.services.notifications import send_templated_notification
 from backend.services.registration_automation import (
     automate_registration,

@@ -1,4 +1,3 @@
-import os
 import sys
 from pathlib import Path
 
@@ -72,7 +71,7 @@ async def lifespan(_: FastAPI):
 
 
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 _FAVICON_PNG = _STATIC_DIR / "favicon.png"

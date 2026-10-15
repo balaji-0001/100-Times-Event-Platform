@@ -54,6 +54,10 @@ class SendResult:
     message: str = ""
     bounced: bool = False
 
+    @property
+    def ok(self) -> bool:
+        return self.success
+
 
 @dataclass
 class OutreachRunConfig:

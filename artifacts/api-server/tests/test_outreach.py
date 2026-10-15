@@ -5,7 +5,6 @@ the full orchestrator flow end to end against the in-memory DB."""
 from datetime import datetime, timedelta, timezone
 
 import httpx
-import pytest
 
 from backend.models import DiscoveredEvent, DiscoveredOrganizer, OutreachMessage
 from backend.services.social_agent.outreach import duplicate_check, event_verification, message_generator, organizer_finder

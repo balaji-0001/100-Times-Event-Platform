@@ -1,4 +1,7 @@
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -302,3 +305,127 @@ def admin_dashboard(db: Session = Depends(get_db), user: User = Depends(require_
 
     categories = db.scalars(select(Category).order_by(Category.name).limit(5)).all()
     return AdminDashboard(users=total(User), events=total(Event), organizers=total(Organizer), registrations=total(Registration), reviews=total(Review), userGrowth=[total(User)] * 7, eventGrowth=[total(Event)] * 7, popularCategories=[item.name for item in categories])
+
+
+class EventStatusUpdate(BaseModel):
+    status: Literal["draft", "published", "pending"]
+
+
+class UserRoleUpdate(BaseModel):
+    role: Literal["USER", "ORGANIZER", "ADMIN"]
+
+
+@router.get("/admin/events", response_model=list[EventCard])
+def get_admin_events(
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("ADMIN")),
+) -> list[EventCard]:
+    events = db.scalars(
+        select(Event)
+        .options(
+            selectinload(Event.category),
+            selectinload(Event.venue),
+            selectinload(Event.organizer),
+            selectinload(Event.registrations),
+        )
+        .order_by(desc(Event.start_date))
+        .limit(100)
+    ).all()
+    return [event_card(db, e) for e in events]
+
+
+@router.patch("/admin/events/{id}/status", response_model=EventCard)
+def update_admin_event_status(
+    id: int,
+    payload: EventStatusUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("ADMIN")),
+) -> EventCard:
+    event = db.get(Event, id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    event.status = payload.status
+    if payload.status == "published":
+        event.lifecycle_state = "PUBLISHED"
+    elif payload.status == "draft":
+        event.lifecycle_state = "DRAFT"
+    db.commit()
+    db.refresh(event)
+    return event_card(db, event)
+
+
+@router.get("/admin/users", response_model=list[UserOut])
+def get_admin_users(
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("ADMIN")),
+) -> list[UserOut]:
+    users = db.scalars(select(User).order_by(User.id)).all()
+    return [
+        UserOut(
+            id=u.id,
+            name=u.name,
+            email=u.email,
+            role=u.role,
+            country=u.country,
+        )
+        for u in users
+    ]
+
+
+@router.patch("/admin/users/{id}/role", response_model=UserOut)
+def update_admin_user_role(
+    id: int,
+    payload: UserRoleUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("ADMIN")),
+) -> UserOut:
+    target_user = db.get(User, id)
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    target_user.role = payload.role
+    db.commit()
+    db.refresh(target_user)
+    return UserOut(
+        id=target_user.id,
+        name=target_user.name,
+        email=target_user.email,
+        role=target_user.role,
+        country=target_user.country,
+    )
+
+
+@router.get("/admin/reviews")
+def get_admin_reviews(
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("ADMIN")),
+) -> list[dict]:
+    reviews = db.scalars(select(Review).order_by(desc(Review.created_at)).limit(100)).all()
+    out = []
+    for r in reviews:
+        evt = db.get(Event, r.event_id)
+        u = db.get(User, r.user_id)
+        out.append({
+            "id": r.id,
+            "author": u.name if u else "Anonymous",
+            "rating": r.rating,
+            "title": r.title,
+            "comment": r.comment,
+            "eventId": r.event_id,
+            "eventTitle": evt.title if evt else "Unknown Event",
+            "createdAt": r.created_at.isoformat() if r.created_at else None,
+        })
+    return out
+
+
+@router.delete("/admin/reviews/{id}")
+def delete_admin_review(
+    id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("ADMIN")),
+):
+    review = db.get(Review, id)
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+    db.delete(review)
+    db.commit()
+    return {"status": "ok", "message": "Review deleted"}
