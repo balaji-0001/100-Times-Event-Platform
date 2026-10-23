@@ -8,14 +8,14 @@ from tests.conftest import FakeAIClient
 HIGH_INTENT_RESPONSE = {
     "is_event_related": True,
     "intent_type": "EVENT_SEARCH",
-    "event_category": ["Artificial Intelligence"],
+    "event_category": ["Pharmaceuticals"],
     "event_type": ["Hackathon"],
     "location": {"city": "Pune", "state": "", "country": ""},
     "date_range": {"start": "2026-10-01", "end": ""},
     "budget": {"min": None, "max": None, "currency": None},
     "urgency": "HIGH",
     "explicit_event_request": True,
-    "reason": "Explicit request for an AI hackathon in Pune",
+    "reason": "Explicit request for a Pharma hackathon in Pune",
 }
 
 LOW_INTENT_RESPONSE = {

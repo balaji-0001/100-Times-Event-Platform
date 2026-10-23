@@ -26,6 +26,13 @@ PLATFORM_HOST_HINTS = (
     "highape.com",
     "explara.com",
     "unstop.com",
+    "linkedin.com",
+    "facebook.com",
+    "fb.com",
+    "twitter.com",
+    "x.com",
+    "instagram.com",
+    "threads.net",
 )
 
 

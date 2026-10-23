@@ -33,11 +33,38 @@ class User(Base):
     bio: Mapped[str | None] = mapped_column(Text)
     profile_image: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    roles_list: Mapped[list[str] | None] = mapped_column(JSON, default=list)
     registrations: Mapped[list["Registration"]] = relationship(back_populates="user")
     saved_events: Mapped[list["SavedEvent"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     reviews: Mapped[list["Review"]] = relationship(back_populates="user")
     notifications: Mapped[list["Notification"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     schedule_items: Mapped[list["ScheduleItem"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+
+    @property
+    def roles(self) -> list[str]:
+        assigned = set(self.roles_list or [])
+        primary = (self.role or "USER").upper()
+        if primary == "ADMIN":
+            assigned.update(["admin", "organiser", "organizer", "attendee", "user"])
+        elif primary in ("ORGANIZER", "ORGANISER"):
+            assigned.update(["organiser", "organizer", "attendee", "user"])
+        else:
+            assigned.update(["attendee", "user"])
+        return sorted(list(assigned))
+
+    def has_role(self, *target_roles: str) -> bool:
+        user_roles = {r.lower() for r in self.roles}
+        target_set = {r.lower() for r in target_roles}
+        if "organizer" in target_set:
+            target_set.add("organiser")
+        if "organiser" in target_set:
+            target_set.add("organizer")
+        if "user" in target_set:
+            target_set.add("attendee")
+        if "attendee" in target_set:
+            target_set.add("user")
+        return bool(user_roles & target_set)
 
 
 class Category(Base):
@@ -145,6 +172,7 @@ class Event(Base):
     registrations: Mapped[list["Registration"]] = relationship(back_populates="event")
     saved_by: Mapped[list["SavedEvent"]] = relationship(back_populates="event", cascade="all, delete-orphan")
     reviews: Mapped[list["Review"]] = relationship(back_populates="event", cascade="all, delete-orphan")
+    promotion_jobs: Mapped[list["EventPromotionJob"]] = relationship(back_populates="event", cascade="all, delete-orphan")
 
 
 class Speaker(Base):
@@ -257,6 +285,47 @@ class ScheduleItem(Base):
     user: Mapped[User] = relationship("User", back_populates="schedule_items")
     event: Mapped["Event"] = relationship("Event")
     __table_args__ = (UniqueConstraint("user_id", "event_id", "session_title", name="schedule_items_user_event_session_idx"),)
+
+
+class DiscoveredCommunity(Base):
+    __tablename__ = "discovered_communities"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    platform: Mapped[str] = mapped_column(String(50), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    canonical_url: Mapped[str] = mapped_column(Text, nullable=False)
+    invite_url: Mapped[str | None] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(Text)
+    category: Mapped[str | None] = mapped_column(Text)
+    subcategory: Mapped[str | None] = mapped_column(Text)
+    topics: Mapped[list[str] | None] = mapped_column(JSON, default=list)
+    language: Mapped[str | None] = mapped_column(String(20))
+    city: Mapped[str | None] = mapped_column(Text)
+    state: Mapped[str | None] = mapped_column(Text)
+    country: Mapped[str | None] = mapped_column(Text)
+    member_count: Mapped[int | None] = mapped_column(Integer)
+    rules_text: Mapped[str | None] = mapped_column(Text)
+    promotion_allowed: Mapped[bool | None] = mapped_column(Boolean)
+    automation_allowed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    risk_level: Mapped[str] = mapped_column(String(20), default="unknown", nullable=False)
+    confidence_score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    discovery_status: Mapped[str] = mapped_column(String(30), default="NEW", nullable=False)
+    verification_notes: Mapped[list[str] | None] = mapped_column(JSON, default=list)
+    approval_status: Mapped[str | None] = mapped_column(String(40), default="NEW")
+    connection_status: Mapped[str | None] = mapped_column(String(40), default="NOT_CONNECTED")
+    discovered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+
+class CommunitySource(Base):
+    __tablename__ = "community_sources"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    discovered_community_id: Mapped[int] = mapped_column(ForeignKey("discovered_communities.id", ondelete="CASCADE"), nullable=False)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    source_type: Mapped[str | None] = mapped_column(String(50))
+    extracted_fields: Mapped[dict | None] = mapped_column(JSON)
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
 
 
 class Community(Base):
@@ -857,6 +926,17 @@ class AgentMessage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
 
 
+class AutomationRequest(Base):
+    __tablename__ = "automation_requests"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), default="NEW", nullable=False)
+    requested_by: Mapped[str | None] = mapped_column(String(120))
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class AutomationRun(Base):
     """Idempotent n8n / automation workflow execution record."""
 
@@ -945,3 +1025,94 @@ class AuditLog(Base):
     metadata_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, index=True, nullable=False)
 
+
+
+class EmailVerificationToken(Base):
+    __tablename__ = "email_verification_tokens"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+
+class AgentExecutionMetric(Base):
+    __tablename__ = "agent_execution_metrics"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    workflow_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    agent_name: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="SUCCESS", nullable=False)
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    estimated_cost: Mapped[Decimal] = mapped_column(Numeric(10, 5), default=Decimal("0.00000"), nullable=False)
+    model_name: Mapped[str | None] = mapped_column(String(64))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    meta_json: Mapped[dict | None] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False, index=True)
+
+
+class GuardrailLog(Base):
+    __tablename__ = "guardrail_logs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    workflow_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    agent_name: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    decision: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    rule_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_snippet: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False, index=True)
+
+
+class EventPromotionJob(Base):
+    __tablename__ = "event_promotion_jobs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), nullable=False)
+    platform: Mapped[str] = mapped_column(String(50), nullable=False)
+    destination_ref: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(50), default="PENDING_APPROVAL", nullable=False)
+    is_dry_run: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    title: Mapped[str | None] = mapped_column(Text)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    media_urls: Mapped[list[str] | None] = mapped_column(JSON, default=list)
+    utm_params: Mapped[dict | None] = mapped_column(JSON, default=dict)
+    tracking_url: Mapped[str | None] = mapped_column(Text)
+    external_post_id: Mapped[str | None] = mapped_column(Text)
+    published_url: Mapped[str | None] = mapped_column(Text)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    max_retries: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    approval_required: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    approved_by: Mapped[str | None] = mapped_column(Text)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    event: Mapped["Event"] = relationship(back_populates="promotion_jobs")
+
+
+class PlatformPromotionSetting(Base):
+    __tablename__ = "platform_promotion_settings"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    platform: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    auto_publish: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    dry_run: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    default_destination: Mapped[str | None] = mapped_column(Text)
+    rate_limit_per_day: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
+    custom_prompt_template: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)

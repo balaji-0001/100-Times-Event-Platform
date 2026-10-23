@@ -31,7 +31,28 @@ class UserOut(APIModel):
     name: str
     email: EmailStr
     role: Literal["USER", "ORGANIZER", "ADMIN"]
+    roles: list[str] = Field(default_factory=list)
+    email_verified: bool = Field(default=True, alias="emailVerified")
     country: str | None = None
+    company: str | None = None
+
+
+class ForgotPasswordInput(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordInput(BaseModel):
+    token: str = Field(min_length=16, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128, alias="newPassword")
+
+
+class VerifyEmailInput(BaseModel):
+    token: str = Field(min_length=16, max_length=128)
+
+
+class DeleteAccountInput(BaseModel):
+    confirmation: str = Field(min_length=1)
+    password: str = Field(min_length=8, max_length=128)
 
 
 class Session(APIModel):
@@ -70,6 +91,12 @@ class CityOut(APIModel):
     country: str
     image: str = ""
     event_count: int = Field(alias="eventCount")
+
+
+class CountryOut(APIModel):
+    name: str
+    code: str | None = None
+    event_count: int = Field(default=0, alias="eventCount")
 
 
 class OrganizerOut(APIModel):
@@ -425,6 +452,8 @@ class CommunityOut(APIModel):
     automation_allowed: bool = Field(alias="automationAllowed")
     risk_level: str = Field(alias="riskLevel")
     quality_score: int = Field(alias="qualityScore")
+    platform_ref: str | None = Field(default=None, alias="platformRef")
+    discovered_community_id: int | None = Field(default=None, alias="discoveredCommunityId")
     last_checked: datetime | None = Field(default=None, alias="lastChecked")
     created_at: datetime = Field(alias="createdAt")
 
@@ -435,6 +464,10 @@ class CommunityUpdateInput(BaseModel):
     automation_allowed: bool | None = Field(default=None, alias="automationAllowed")
     risk_level: str | None = Field(default=None, alias="riskLevel")
     rules_text: str | None = Field(default=None, alias="rulesText")
+    # Set once a human has connected the bot and looked up its real chat/channel id —
+    # "telegram_<chat_id>" or "discord_<guild_id>_<channel_id>". Required before a
+    # standalone community-promotion post can ever be published to this destination.
+    platform_ref: str | None = Field(default=None, alias="platformRef")
 
 
 class ExtractedIntent(APIModel):
@@ -482,9 +515,27 @@ class MatchingEventSummary(APIModel):
     score_breakdown: dict[str, int] = Field(alias="scoreBreakdown", default_factory=dict)
 
 
+class PromotedEventSummary(APIModel):
+    id: int
+    title: str
+    slug: str
+
+
+class TargetCommunitySummary(APIModel):
+    id: int
+    name: str
+    platform: str
+    connected: bool  # whether platform_ref is set — i.e. actually publishable, not just approved
+
+
 class AcquisitionOpportunityOut(APIModel):
     id: int
-    discussion: DiscussionOut
+    # discussion_reply | community_promotion
+    source_kind: str = Field(default="discussion_reply", alias="sourceKind")
+    discussion: DiscussionOut | None = None
+    promoted_event: PromotedEventSummary | None = Field(default=None, alias="promotedEvent")
+    target_community: TargetCommunitySummary | None = Field(default=None, alias="targetCommunity")
+    match_explanation: str | None = Field(default=None, alias="matchExplanation")
     matching_events: list[MatchingEventSummary] = Field(alias="matchingEvents", default_factory=list)
     relevance_score: int = Field(alias="relevanceScore")
     generated_response: str = Field(alias="generatedResponse")
@@ -758,23 +809,222 @@ class DiscoveryRunRequest(BaseModel):
 
     cities: list[str] | None = None
     states: list[str] | None = None
+    countries: list[str] | None = None
+    country: str | None = None
     categories: list[str] | None = None
     search_depth: int | None = Field(default=None, alias="searchDepth", ge=1, le=200)
     sources_per_query: int | None = Field(default=None, alias="sourcesPerQuery", ge=1, le=20)
     daily_limit: int | None = Field(default=None, alias="dailyLimit", ge=1)
     confidence_threshold: int | None = Field(default=None, alias="confidenceThreshold", ge=0, le=100)
+    require_organizer_email: bool | None = Field(default=None, alias="requireOrganizerEmail")
+    date_from: str | None = Field(default=None, alias="dateFrom")
+    date_to: str | None = Field(default=None, alias="dateTo")
 
 
-class DiscoveryAutoStatusOut(APIModel):
-    """Live state of the discovery-scan on/off switch — see
-    `services/discovery_agent/auto_toggle.py`."""
+# --- Community Discovery Agent ("Agent 5") ---
 
+class CommunitySourceOut(APIModel):
+    id: int
+    source_url: str = Field(alias="sourceUrl")
+    source_type: str = Field(alias="sourceType")
+    fetched_at: datetime = Field(alias="fetchedAt")
+
+
+class DiscoveredCommunityOut(APIModel):
+    id: int
+    platform: str
+    name: str
+    canonical_url: str = Field(alias="canonicalUrl")
+    invite_url: str | None = Field(default=None, alias="inviteUrl")
+    description: str | None = None
+    category: str | None = None
+    subcategory: str | None = None
+    topics: list[str] = Field(default_factory=list)
+    language: str | None = None
+    city: str | None = None
+    state: str | None = None
+    country: str | None = None
+    member_count: int | None = Field(default=None, alias="memberCount")
+    rules_text: str | None = Field(default=None, alias="rulesText")
+    promotion_allowed: bool | None = Field(default=None, alias="promotionAllowed")
+    automation_allowed: bool = Field(default=False, alias="automationAllowed")
+    risk_level: str = Field(default="unknown", alias="riskLevel")
+    confidence_score: int = Field(default=0, alias="confidenceScore")
+    discovery_status: str = Field(default="NEW", alias="discoveryStatus")
+    verification_notes: list[str] = Field(default_factory=list, alias="verificationNotes")
+    approval_status: str = Field(default="DISCOVERED", alias="approvalStatus")
+    rejection_reason: str | None = Field(default=None, alias="rejectionReason")
+    connection_status: str = Field(default="NOT_CONNECTED", alias="connectionStatus")
+    community_id: int | None = Field(default=None, alias="communityId")
+    discovered_at: datetime = Field(alias="discoveredAt")
+    last_checked_at: datetime | None = Field(default=None, alias="lastCheckedAt")
+    sources: list[CommunitySourceOut] = Field(default_factory=list)
+
+
+class CommunityDiscoveryRunRequest(BaseModel):
+    """Optional per-run overrides for a manually-triggered community scan —
+    any field left unset falls back to the configured settings. Mirrors
+    `DiscoveryRunRequest`."""
+
+    cities: list[str] | None = None
+    states: list[str] | None = None
+    countries: list[str] | None = None
+    country: str | None = None
+    categories: list[str] | None = None
+    search_depth: int | None = Field(default=None, alias="searchDepth", ge=1, le=200)
+    sources_per_query: int | None = Field(default=None, alias="sourcesPerQuery", ge=1, le=20)
+    daily_limit: int | None = Field(default=None, alias="dailyLimit", ge=1)
+    confidence_threshold: int | None = Field(default=None, alias="confidenceThreshold", ge=0, le=100)
+    require_organizer_email: bool | None = Field(default=None, alias="requireOrganizerEmail")
+    date_from: str | None = Field(default=None, alias="dateFrom")
+    date_to: str | None = Field(default=None, alias="dateTo")
+    seed_urls: list[str] | None = Field(default=None, alias="seedUrls")
+
+
+class CommunityDiscoveryAutoStatusOut(APIModel):
     enabled: bool
     interval_minutes: int = Field(alias="intervalMinutes")
 
 
-class DiscoveryAutoToggleRequest(BaseModel):
+class CommunityDiscoveryAutoToggleRequest(BaseModel):
     enabled: bool
+
+
+class CommunityActionRequest(BaseModel):
+    action: Literal["approve", "reject", "mark_connection_required", "mark_connected", "mark_permission_missing", "mark_promotion_restricted"]
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class CommunityDiscoveryStatsOut(APIModel):
+    communities_total: int = Field(alias="communitiesTotal")
+    needs_review_total: int = Field(alias="needsReviewTotal")
+    approved_total: int = Field(alias="approvedTotal")
+    connected_total: int = Field(alias="connectedTotal")
+    telegram_total: int = Field(alias="telegramTotal")
+    discord_total: int = Field(alias="discordTotal")
+
+
+# --- Agent 4 extension: Community Promotion ---
+
+class CommunityPromotionAutoStatusOut(APIModel):
+    enabled: bool
+    interval_minutes: int = Field(alias="intervalMinutes")
+
+
+class CommunityPromotionAutoToggleRequest(BaseModel):
+    enabled: bool
+
+
+class CommunityPromotionRunRequest(BaseModel):
+    max_candidates: int | None = Field(default=None, alias="maxCandidates", ge=1, le=200)
+
+
+class VenueMissingEventOut(APIModel):
+    id: int
+    name: str | None = None
+    city: str | None = None
+
+
+class DiscoveryStatsOut(APIModel):
+    """True database counts — never derived by counting a capped list
+    client-side. The `/events` and `/organizers` list endpoints cap at 200
+    rows for the browsing table; once discovery finds more than that, any
+    stat computed from `.length` on that list silently stops growing even
+    though more keeps being found. These numbers always reflect the real
+    total, at any scale."""
+
+    events_total: int = Field(alias="eventsTotal")
+    organizers_total: int = Field(alias="organizersTotal")
+    contacts_total: int = Field(alias="contactsTotal")
+    organizers_with_email_total: int = Field(alias="organizersWithEmailTotal")
+    needs_review_total: int = Field(alias="needsReviewTotal")
+    new_events_total: int = Field(alias="newEventsTotal")
+    online_total: int = Field(alias="onlineTotal")
+    offline_total: int = Field(alias="offlineTotal")
+    hybrid_total: int = Field(alias="hybridTotal")
+    format_unknown_total: int = Field(alias="formatUnknownTotal")
+    rejected_total: int = Field(default=0, alias="rejectedTotal")
+    accepted_total: int = Field(default=0, alias="acceptedTotal")
+    missing_organizer_email_total: int = Field(default=0, alias="missingOrganizerEmailTotal")
+    venue_missing_total: int = Field(alias="venueMissingTotal")
+    venue_missing_sample: list[VenueMissingEventOut] = Field(default_factory=list, alias="venueMissingSample")
+
+
+class DiscoveryAutoStatusOut(APIModel):
+    """Live state of the discovery-scan on/off switch and scope settings — see
+    `services/discovery_agent/auto_toggle.py`."""
+
+    enabled: bool
+    interval_minutes: int = Field(alias="intervalMinutes")
+    country: str | None = None
+    countries: list[str] = Field(default_factory=list)
+    cities: list[str] = Field(default_factory=list)
+    states: list[str] = Field(default_factory=list)
+    categories: list[str] = Field(default_factory=list)
+    search_depth: int | None = Field(default=None, alias="searchDepth")
+    daily_limit: int | None = Field(default=None, alias="dailyLimit")
+
+
+class DiscoveryAutoToggleRequest(BaseModel):
+    enabled: bool | None = None
+    country: str | None = None
+    countries: list[str] | None = None
+    cities: list[str] | None = None
+    states: list[str] | None = None
+    categories: list[str] | None = None
+    search_depth: int | None = Field(default=None, alias="searchDepth")
+    daily_limit: int | None = Field(default=None, alias="dailyLimit")
+
+
+class OutreachAutoStatusOut(APIModel):
+    """Live state of Agent 2's on/off switch (drafting + follow-up sweep) and
+    scope/cadence settings — see `services/social_agent/outreach/auto_toggle.py`."""
+
+    enabled: bool
+    draft_interval_minutes: int = Field(alias="draftIntervalMinutes")
+    followup_interval_minutes: int = Field(alias="followupIntervalMinutes")
+    country: str | None = None
+    countries: list[str] = Field(default_factory=list)
+    cities: list[str] = Field(default_factory=list)
+    states: list[str] = Field(default_factory=list)
+    categories: list[str] = Field(default_factory=list)
+    max_candidates: int = Field(default=20, alias="maxCandidates")
+    daily_limit: int = Field(default=100, alias="dailyLimit")
+    followup_wait_days: int = Field(default=2, alias="followupWaitDays")
+    max_followup_attempts: int = Field(default=3, alias="maxFollowupAttempts")
+    sender_name: str | None = Field(default="100 TIMES Partnerships", alias="senderName")
+    template_style: str | None = Field(default="invitational", alias="templateStyle")
+
+
+class OutreachAutoToggleRequest(BaseModel):
+    enabled: bool | None = None
+    country: str | None = None
+    countries: list[str] | None = None
+    cities: list[str] | None = None
+    states: list[str] | None = None
+    categories: list[str] | None = None
+    max_candidates: int | None = Field(default=None, alias="maxCandidates")
+    daily_limit: int | None = Field(default=None, alias="dailyLimit")
+    followup_wait_days: int | None = Field(default=None, alias="followupWaitDays")
+    max_followup_attempts: int | None = Field(default=None, alias="maxFollowupAttempts")
+    sender_name: str | None = Field(default=None, alias="senderName")
+    template_style: str | None = Field(default=None, alias="templateStyle")
+    draft_interval_minutes: int | None = Field(default=None, alias="draftIntervalMinutes")
+    followup_interval_minutes: int | None = Field(default=None, alias="followupIntervalMinutes")
+
+
+class AutomationRequestOut(APIModel):
+    id: int
+    description: str
+    status: str
+    requested_by: str | None = Field(default=None, alias="requestedBy")
+    note: str | None = None
+    created_at: datetime = Field(alias="createdAt")
+    updated_at: datetime = Field(alias="updatedAt")
+
+
+class AutomationRequestCreate(BaseModel):
+    description: str = Field(min_length=10, max_length=2000)
 
 
 class AgentRunOut(APIModel):
@@ -841,3 +1091,29 @@ class OutboxItemOut(APIModel):
 
 
 
+
+
+class AgentExecutionMetricOut(APIModel):
+    id: int
+    workflow_id: str = Field(alias="workflowId")
+    agent_name: str = Field(alias="agentName")
+    status: str
+    duration_ms: int = Field(alias="durationMs")
+    prompt_tokens: int = Field(alias="promptTokens")
+    completion_tokens: int = Field(alias="completionTokens")
+    total_tokens: int = Field(alias="totalTokens")
+    estimated_cost: float = Field(alias="estimatedCost")
+    model_name: str | None = Field(default=None, alias="modelName")
+    error_message: str | None = Field(default=None, alias="errorMessage")
+    created_at: datetime = Field(alias="createdAt")
+
+
+class GuardrailLogOut(APIModel):
+    id: int
+    workflow_id: str | None = Field(default=None, alias="workflowId")
+    agent_name: str = Field(alias="agentName")
+    decision: str
+    reason: str
+    rule_name: str = Field(alias="ruleName")
+    input_snippet: str | None = Field(default=None, alias="inputSnippet")
+    created_at: datetime = Field(alias="createdAt")

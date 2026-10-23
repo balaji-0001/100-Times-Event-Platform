@@ -49,7 +49,17 @@ def optional_current_user(
 
 def require_roles(*roles: str) -> Callable:
     def dependency(user: User = Depends(get_current_user)) -> User:
-        if user.role not in roles:
+        # Check either has_role (supporting multi-roles and case-insensitivity) or direct role matching
+        has_permission = False
+        if hasattr(user, "has_role"):
+            has_permission = user.has_role(*roles)
+        if not has_permission and user.role in roles:
+            has_permission = True
+        # Also check uppercase/lowercase
+        if not has_permission and any(r.upper() == (user.role or "").upper() for r in roles):
+            has_permission = True
+
+        if not has_permission:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
         return user
 

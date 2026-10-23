@@ -125,15 +125,25 @@ class IntentDetectionAgent:
                 break
 
         # 2. Category
-        detected_category = "Technology"
-        if any(w in tokens for w in ["ai", "artificial", "intelligence", "llm", "gpt", "deepseek", "machine", "learning", "data"]):
-            detected_category = "Artificial Intelligence"
-        elif any(w in tokens for w in ["design", "ui", "ux", "creative", "product", "figma"]):
-            detected_category = "Design"
-        elif any(w in tokens for w in ["startup", "business", "founder", "operators", "strategy", "venture", "investor", "pitch"]):
-            detected_category = "Business & Strategy"
-        elif any(w in tokens for w in ["art", "culture", "exhibition", "gallery", "music"]):
-            detected_category = "Art & Culture"
+        detected_category = "Pharmaceuticals"
+        category_keywords = {
+            "Pharmaceuticals": ["pharma", "pharmaceutical", "drug", "clinical", "vaccine", "biopharma", "biotech"],
+            "Healthcare": ["healthcare", "hospital", "health", "healthtech", "telehealth", "clinic", "wellness", "medical science", "medicine", "biomedical", "genomics", "pathology", "oncology", "neurology", "surgery"],
+            "Energy and Power Generation": ["energy", "power generation", "renewable", "solar", "wind", "clean energy", "electricity", "grid"],
+            "Telecommunications": ["telecom", "telecommunication", "5g", "6g", "wireless", "broadband", "optical fiber", "network", "satellite"],
+            "Construction": ["construction", "infrastructure", "civil engineering", "builder", "cement", "concrete", "architecture"],
+            "Mining": ["mining", "mineral", "ore", "coal", "gold", "drilling", "metallurgy", "geology"],
+            "Finance": ["finance", "fintech", "banking", "investment", "wealth", "insurance", "trading", "venture capital"],
+            "Packaging": ["packaging", "packtech", "corrugated", "carton", "bottling", "labeling"],
+            "Transport and Logistics": ["transport", "logistics", "supply chain", "freight", "cargo", "shipping", "railway", "aviation", "warehouse"],
+            "Oil and Gas": ["oil and gas", "petroleum", "refinery", "pipeline", "crude oil", "natural gas", "petrochemical"],
+            "Textiles": ["textile", "fabric", "garment", "apparel", "spinning", "weaving", "yarn", "cotton"],
+            "Manufacturing": ["manufacturing", "industrial", "industry 4.0", "machinery", "automation", "robotics", "factory"],
+        }
+        for cat_name, kws in category_keywords.items():
+            if any(w in tokens or w in combined for w in kws):
+                detected_category = cat_name
+                break
 
         # 3. Event Type
         detected_type = "Conference"
@@ -286,7 +296,7 @@ class EventMatchingEngine:
                 "startDate": str(ev.start_date),
                 "price": float(ev.price),
                 "relevanceScore": score,
-                "category": ev.category.name if ev.category else "Technology",
+                "category": ev.category.name if ev.category else "Pharmaceuticals",
                 "matchReasons": reasons[:3] or ["Curated community match"],
                 "scoreBreakdown": breakdown,
             })

@@ -83,7 +83,7 @@ export function OrganizerProfilePage() {
       <Panel className="mt-6 p-6">
         <Section title={`Events by this organizer (${orgEvents.length})`}>
           {orgEvents.length === 0 ? <p className="text-sm text-muted-foreground">No events are linked to this organizer.</p> : (
-            <AdminTable columns={['Event', 'Category', 'Date', 'City', 'Status', 'Discovered', '']} minWidth={800}>
+            <AdminTable columns={['Event', 'Sector', 'Date', 'City', 'Status', 'Discovered', '']} minWidth={800}>
               {orgEvents.map((e) => (
                 <tr key={e.id} className="cursor-pointer hover:bg-muted/20" onClick={() => setOpenEvent(e)}>
                   <td className={cell}><span className="block max-w-[320px] truncate font-semibold">{e.name ?? NA}</span></td>

@@ -160,7 +160,7 @@ def test_page_without_structured_data_or_event_links_falls_back_to_best_effort(m
 
 def _config(**overrides) -> DiscoveryConfig:
     values = dict(cities=["Bengaluru"], states=[], categories=["Technology"], search_depth=2, sources_per_query=3,
-                  daily_limit=200, confidence_threshold=60, listing_urls=[], events_per_listing=10)
+                  daily_limit=200, confidence_threshold=60, listing_urls=[], events_per_listing=10, require_organizer_email=False)
     values.update(overrides)
     return DiscoveryConfig(**values)
 
@@ -321,3 +321,42 @@ def test_structured_data_html_entities_are_decoded(monkeypatch):
 
     assert event.name == "Chaos & Joy!"
     assert event.venue == "Rock & Roll Hall"
+
+
+def test_run_categorizes_every_stored_event(db_session, monkeypatch):
+    listing = "https://allevents.in/bangalore"
+    nodes = [
+        {"@type": "Event", "name": "Global Pharma Innovations Summit", "url": "https://allevents.in/bangalore/pharma/1", "startDate": f"{NEXT_YEAR}-10-16",
+         "location": {"name": "Palace Grounds", "address": {"addressLocality": "Bengaluru"}}},
+        {"@type": "Event", "name": "5G Networks & Telecommunications Meetup", "url": "https://allevents.in/bangalore/telecom/2", "startDate": f"{NEXT_YEAR}-10-24",
+         "location": {"name": "EPAM", "address": {"addressLocality": "Bengaluru"}}},
+    ]
+    _serve(monkeypatch, {listing: "<html><head>" + "".join(_ld(n) for n in nodes) + "</head></html>"})
+    _no_organizer(monkeypatch)
+
+    orchestrator.run_discovery_agent(db_session, _config(listing_urls=["https://allevents.in/{city}"], search_depth=0))
+
+    stored = {e.name: (e.category, e.subcategory) for e in db_session.query(DiscoveredEvent).all()}
+    assert stored == {
+        "Global Pharma Innovations Summit": ("Pharmaceuticals", "Summit"),
+        "5G Networks & Telecommunications Meetup": ("Telecommunications", "Meetup"),
+    }
+
+
+@pytest.mark.parametrize("url, title", [
+    ("https://allevents.in/pages/event-manager-app", "Manage your events with ease"),
+    ("https://www.knowafest.com/events/page/2?country=India", "Explore events."),
+    ("https://exhibition.org.in/exhibition-in-delhi/upcoming/all/india", "Plan Your Exhibition"),
+    ("https://example.in/some-event", "Plan Your Exhibition"),
+    ("https://example.in/events/upcoming", "Robotics Summit"),
+])
+def test_best_effort_skips_marketing_and_listing_pages(url, title):
+    html = f"<html><h1>{title}</h1><p>25 October {NEXT_YEAR}</p></html>"
+
+    assert text_extractor.extract_best_effort(_source(url), html, cities=[]) is None
+
+
+def test_best_effort_keeps_real_titles_that_start_with_a_verb():
+    html = f"<html><h1>Discover the Manchester MBA Information Session</h1><p>15 October {NEXT_YEAR}</p></html>"
+
+    assert text_extractor.extract_best_effort(_source("https://example.in/mba-session"), html, cities=[]) is not None

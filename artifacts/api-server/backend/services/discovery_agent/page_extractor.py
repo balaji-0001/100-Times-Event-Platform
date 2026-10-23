@@ -16,6 +16,7 @@ from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
+from backend.services.discovery_agent.country_utils import infer_country
 from backend.services.discovery_agent.format_normalize import normalize_event_format
 from backend.services.discovery_agent.platforms import is_platform_url, same_host
 from backend.services.discovery_agent.text_extractor import extract_best_effort
@@ -58,15 +59,22 @@ def _event_from_node(source: CandidateSource, node: dict) -> ExtractedEventCandi
     name = node["name"]
 
     location = node.get("location")
-    venue = city = state = None
+    venue = city = state = country = None
     if isinstance(location, dict):
         venue = location.get("name") if isinstance(location.get("name"), str) else None
         address = location.get("address")
         if isinstance(address, dict):
             city = address.get("addressLocality")
             state = address.get("addressRegion")
+            addr_country = address.get("addressCountry")
+            if isinstance(addr_country, dict):
+                country = addr_country.get("name")
+            elif isinstance(addr_country, str):
+                country = addr_country
         elif isinstance(address, str):
             venue = venue or address
+
+    resolved_country = infer_country(country, city=city, state=state, url=source.url, default="Worldwide")
 
     offers = node.get("offers")
     ticket_url = None
@@ -92,7 +100,7 @@ def _event_from_node(source: CandidateSource, node: dict) -> ExtractedEventCandi
         venue=venue,
         city=city,
         state=state,
-        country="India",
+        country=resolved_country,
         url=source.url,
         ticket_url=ticket_url,
         event_format=event_format,
@@ -104,9 +112,10 @@ def _event_from_node(source: CandidateSource, node: dict) -> ExtractedEventCandi
     )
 
 
-def extract_event_from_page(source: CandidateSource, cities: list[str] | None = None) -> ExtractedEventCandidate | None:
+def extract_event_from_page(source: CandidateSource, cities: list[str] | None = None, render_js: bool | None = None) -> ExtractedEventCandidate | None:
     """One event page: its structured data, else the best-effort reader."""
-    html = fetch(source.url, render_js=browser_fetch_enabled())
+    use_js = browser_fetch_enabled() if render_js is None else render_js
+    html = fetch(source.url, render_js=use_js)
     if not html:
         return None
     from_structured = _from_json_ld(source, BeautifulSoup(html, "html.parser"))
@@ -163,7 +172,8 @@ def extract_events_from_page(page_url: str, max_events: int, cities: list[str] |
 
     links = _event_page_links(soup, page_url)
     if len(links) >= _MIN_LISTING_LINKS:
-        events = [event for event in (extract_event_from_page(_source_for(url), cities) for url in links[:max_events]) if event is not None]
+        sublink_cap = min(max_events, 6)
+        events = [event for event in (extract_event_from_page(_source_for(url), cities, render_js=False) for url in links[:sublink_cap]) if event is not None]
         if events:
             return events
 

@@ -173,6 +173,7 @@ def _config(**overrides) -> DiscoveryConfig:
         cities=["Mumbai"], states=[], categories=["Technology"], search_depth=1, sources_per_query=1,
         daily_limit=200, confidence_threshold=60,
         listing_urls=["https://allevents.in/{city}"], events_per_listing=10,
+        require_organizer_email=False,
     )
     values.update(overrides)
     return DiscoveryConfig(**values)

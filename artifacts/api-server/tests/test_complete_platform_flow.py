@@ -273,9 +273,9 @@ def test_trust_agent_duplicate_detection(db_session, seeded_catalog):
     organizer = existing_event.organizer
 
     duplicate_event = Event(
-        title="AI Builders Hackathon",  # Exact duplicate title
-        slug="ai-builders-hackathon-second-submission",
-        description="Duplicate entry for the hands-on AI hackathon.",
+        title=existing_event.title,  # Exact duplicate title
+        slug="pharma-innovations-second-submission",
+        description="Duplicate entry for the pharmaceuticals summit.",
         event_type="Hackathon",
         start_date=existing_event.start_date,
         end_date=existing_event.end_date,
@@ -345,10 +345,10 @@ def test_attendee_agent_intent_extraction_and_matching(db_session, seeded_catalo
     published_event = seeded_catalog["event"]
 
     # Natural language query
-    user_query = "Looking for an AI hackathon in Pune next week"
+    user_query = "Looking for a pharmaceuticals conference in Pune next week"
     extracted = extract_attendee_intent(user_query)
 
-    assert extracted.category.lower() in ("ai", "artificial intelligence", "technology")
+    assert extracted.category.lower() == "pharmaceuticals"
     assert extracted.location.lower() == "pune"
     assert extracted.confidence > 0.5
 

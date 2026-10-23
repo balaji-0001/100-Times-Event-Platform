@@ -1,8 +1,10 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { Link, Redirect, useLocation } from 'wouter';
-import { Activity, CalendarSearch, LayoutDashboard, Mail, Search, Settings2, Sparkles, X } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { Activity, CalendarSearch, LayoutDashboard, Mail, Search, Settings2, Share2, Sparkles, Zap, X, ShieldCheck } from 'lucide-react';
+import { customFetch } from '@workspace/api-client-react';
 import { useDebounce, cx, Kicker, LoadingState, StatusBadge, Badge } from './ui';
-import { useDiscoveredEvents, useDiscoveredOrganizers, useMe, useOutreachMessages } from './api';
+import { keys, useDiscoveredEvents, useDiscoveredOrganizers, useMe, useOutreachMessages } from './api';
 
 const TOKEN_KEY = '100-times-auth-token';
 
@@ -12,22 +14,55 @@ const TOKEN_KEY = '100-times-auth-token';
 // ---------------------------------------------------------------------------
 
 function RequireAdmin({ children }: { children: ReactNode }) {
-  const hasToken = typeof window !== 'undefined' && Boolean(localStorage.getItem(TOKEN_KEY));
+  const [hasToken] = useState(() => typeof window !== 'undefined' && Boolean(localStorage.getItem(TOKEN_KEY)));
   const me = useMe(hasToken);
 
-  if (!hasToken) return <Redirect to="/login" />;
-  if (me.isLoading) return <div className="mx-auto max-w-[1440px] px-5 py-16 lg:px-10"><LoadingState label="Checking your access" /></div>;
-  if (me.isError) {
-    localStorage.removeItem(TOKEN_KEY);
-    return <Redirect to="/login" />;
-  }
-  if (me.data?.role !== 'ADMIN') {
+  if (!hasToken) {
     return (
       <div className="mx-auto max-w-xl px-5 py-32 text-center">
-        <Kicker>Admin only</Kicker>
-        <h1 className="mt-4 font-display text-4xl font-extrabold tracking-[-.06em]">This console is for 100Times admins.</h1>
-        <p className="mt-3 text-sm text-muted-foreground">You are signed in as {me.data?.email} ({me.data?.role.toLowerCase()}). Ask an admin to upgrade your role.</p>
-        <Link href="/" className="mt-8 inline-block rounded-full bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground">Back to 100Times</Link>
+        <Kicker>Admin Console</Kicker>
+        <h1 className="mt-4 font-display text-4xl font-extrabold tracking-[-.06em]">Administrator Access Required</h1>
+        <p className="mt-3 text-sm text-muted-foreground">Sign in with an authorized administrator account to access platform operations.</p>
+        <div className="mt-6 flex justify-center">
+          <Link href="/login?redirect=/admin" className="rounded-full bg-primary px-6 py-3 text-sm font-bold text-primary-foreground hover:bg-accent">
+            Sign In as Admin
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  if (me.isLoading) {
+    return (
+      <div className="mx-auto max-w-[1440px] px-5 py-24 lg:px-10 text-center">
+        <LoadingState label="Verifying administrator credentials..." />
+      </div>
+    );
+  }
+
+  if (me.isError || me.data?.role !== 'ADMIN') {
+    return (
+      <div className="mx-auto max-w-xl px-5 py-32 text-center">
+        <Kicker>Restricted Area</Kicker>
+        <h1 className="mt-4 font-display text-4xl font-extrabold tracking-[-.06em]">Access Denied</h1>
+        <p className="mt-3 text-sm text-muted-foreground">
+          You are signed in as <strong>{me.data?.email}</strong>. This operational console is restricted to verified administrators.
+        </p>
+        <div className="mt-6 flex flex-wrap justify-center gap-3">
+          <Link href="/dashboard" className="rounded-full bg-primary px-6 py-3 text-sm font-bold text-primary-foreground hover:bg-accent">
+            Return to Dashboard
+          </Link>
+          <Link
+            href="/login?redirect=/admin"
+            onClick={() => {
+              localStorage.removeItem(TOKEN_KEY);
+              window.dispatchEvent(new Event('auth-change'));
+            }}
+            className="rounded-full border border-foreground/15 px-6 py-3 text-sm font-semibold hover:border-accent hover:text-accent"
+          >
+            Sign in with Another Account
+          </Link>
+        </div>
       </div>
     );
   }
@@ -60,8 +95,11 @@ const NAV: NavGroup[] = [
       { label: 'Follow-ups', href: '/admin/outreach/follow-ups' },
     ],
   },
-  { title: 'Trust Review (Agent 3)', icon: Sparkles, href: '/admin/trust-review', items: [] },
+  { title: 'Social Event Promotion', icon: Share2, href: '/admin/social-promotions', items: [] },
+  { title: 'Trust Agent', icon: Sparkles, href: '/admin/trust-review', items: [] },
   { title: 'Attendee Agent', icon: CalendarSearch, href: '/admin/attendee-agent', items: [] },
+  { title: 'Automations', icon: Zap, href: '/admin/automations', items: [] },
+  { title: 'Observability', icon: Activity, href: '/admin/observability', items: [] },
   { title: 'n8n Workflows', icon: Activity, href: '/admin/workflows', items: [] },
   { title: 'Audit & System Logs', icon: Activity, href: '/admin/audit-logs', items: [] },
   { title: 'Agent Activity', icon: Activity, href: '/admin/activity', items: [] },
@@ -151,7 +189,7 @@ function GlobalSearch() {
           <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-foreground/10 bg-card shadow-2xl">
             <div className="flex items-center gap-3 border-b border-foreground/10 px-4">
               <Search size={16} className="text-muted-foreground" />
-              <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Event name, organizer, email, phone, city, state, category…" className="h-12 flex-1 bg-transparent text-sm outline-none" />
+              <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Event name, organizer, email, phone, city, state, sector…" className="h-12 flex-1 bg-transparent text-sm outline-none" />
               <button onClick={() => setOpen(false)} className="rounded-full p-1.5 hover:bg-muted"><X size={14} /></button>
             </div>
             <div className="max-h-[60vh] overflow-y-auto p-2">

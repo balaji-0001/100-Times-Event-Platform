@@ -11,10 +11,10 @@ from backend.services.acquisition_agent import EventMatchingEngine
 def test_exact_category_and_location_match_scores_high(db_session, seeded_catalog):
     score, matches = EventMatchingEngine.match_events(
         db_session,
-        {"event_category": "Artificial Intelligence", "location": "Pune", "event_type": "Hackathon", "budget": "free_or_paid"},
+        {"event_category": "Pharmaceuticals", "location": "Pune", "event_type": "Hackathon", "budget": "free_or_paid"},
     )
     assert score >= 80
-    assert matches[0]["title"] == "AI Builders Hackathon"
+    assert matches[0]["title"] == "Global Pharma Innovations Summit"
     breakdown = matches[0]["scoreBreakdown"]
     assert breakdown["categoryMatch"] > 90
     assert breakdown["locationMatch"] > 90
@@ -22,8 +22,8 @@ def test_exact_category_and_location_match_scores_high(db_session, seeded_catalo
 
 def test_past_events_are_excluded_by_stage_a_filter(db_session, seeded_catalog):
     past_event = Event(
-        title="Old AI Meetup",
-        slug="old-ai-meetup",
+        title="Old Pharma Meetup",
+        slug="old-pharma-meetup",
         description="already happened",
         event_type="Meetup",
         start_date=date.today() - timedelta(days=10),
@@ -39,10 +39,10 @@ def test_past_events_are_excluded_by_stage_a_filter(db_session, seeded_catalog):
     db_session.commit()
 
     _, matches = EventMatchingEngine.match_events(
-        db_session, {"event_category": "Artificial Intelligence", "location": "Pune", "event_type": "Hackathon"}
+        db_session, {"event_category": "Pharmaceuticals", "location": "Pune", "event_type": "Hackathon"}
     )
     titles = [m["title"] for m in matches]
-    assert "Old AI Meetup" not in titles
+    assert "Old Pharma Meetup" not in titles
 
 
 def test_no_hint_at_all_still_returns_events_with_baseline_score(db_session, seeded_catalog):
@@ -53,8 +53,8 @@ def test_no_hint_at_all_still_returns_events_with_baseline_score(db_session, see
 
 def test_free_budget_hint_excludes_paid_events(db_session, seeded_catalog):
     paid_event = Event(
-        title="Paid AI Summit",
-        slug="paid-ai-summit",
+        title="Paid Pharma Summit",
+        slug="paid-pharma-summit",
         description="ticketed",
         event_type="Hackathon",
         start_date=date.today() + timedelta(days=20),
@@ -70,19 +70,19 @@ def test_free_budget_hint_excludes_paid_events(db_session, seeded_catalog):
     db_session.commit()
 
     _, matches = EventMatchingEngine.match_events(
-        db_session, {"event_category": "Artificial Intelligence", "location": "Pune", "event_type": "Hackathon", "budget": "free"}
+        db_session, {"event_category": "Pharmaceuticals", "location": "Pune", "event_type": "Hackathon", "budget": "free"}
     )
     top = matches[0]
-    assert top["title"] == "AI Builders Hackathon"  # the free one still wins on budgetMatch
+    assert top["title"] == "Global Pharma Innovations Summit"  # the free one still wins on budgetMatch
 
 
 def test_multiple_strong_matches_all_returned_ranked(db_session, seeded_catalog):
-    # Add two more AI/Pune events so three events all plausibly score >= 80.
+    # Add two more Pharma/Pune events so three events all plausibly score >= 80.
     for i, days_out in enumerate((21, 28), start=1):
         db_session.add(Event(
-            title=f"AI Builders Hackathon Round {i + 1}",
-            slug=f"ai-builders-hackathon-round-{i + 1}",
-            description="Another hands-on AI hackathon.",
+            title=f"Global Pharma Innovations Summit Round {i + 1}",
+            slug=f"pharma-summit-round-{i + 1}",
+            description="Another hands-on pharma conference.",
             event_type="Hackathon",
             start_date=date.today() + timedelta(days=days_out),
             end_date=date.today() + timedelta(days=days_out + 1),
@@ -97,7 +97,7 @@ def test_multiple_strong_matches_all_returned_ranked(db_session, seeded_catalog)
 
     score, matches = EventMatchingEngine.match_events(
         db_session,
-        {"event_category": "Artificial Intelligence", "location": "Pune", "event_type": "Hackathon", "budget": "free_or_paid"},
+        {"event_category": "Pharmaceuticals", "location": "Pune", "event_type": "Hackathon", "budget": "free_or_paid"},
     )
 
     assert score >= 80

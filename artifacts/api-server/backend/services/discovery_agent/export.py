@@ -29,6 +29,7 @@ _EVENT_COLUMNS = (
     ("State", lambda e: e.state),
     ("Format", lambda e: e.event_format),
     ("Category", lambda e: e.category),
+    ("Type", lambda e: e.subcategory),
     ("Event link", lambda e: e.url),
     ("Ticket link", lambda e: e.ticket_url),
     ("Verification", lambda e: e.verification_status),

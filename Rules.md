@@ -10,6 +10,9 @@
 1. **Preserve Existing Pipelines:** Never break or overwrite existing Organizer Discovery (`DiscoveredEvent`), Contact Enrichment (`OrganizerLead`), Outreach (`OutreachMessage`), or Attribution (`/api/attribution/*`) flows.
 2. **Single Authentication System:** Always use the unified JWT + HTTP-only cookie authentication (`backend/routes/auth.py`). Never introduce duplicate auth tables or competing session middlewares.
 3. **Non-Destructive Schema Evolution:** All database schema additions must be backward-compatible (`NULL`-safe or sensible defaults) and registered in `sync_schema_columns()` (`backend/db.py`) using isolated per-statement transaction blocks (`with eng.begin() as conn:`) so PostgreSQL never aborts subsequent alterations if a column already exists.
+4. **Mandatory Contact Qualification Rule (Phone or Email):** An event must **never be considered valid, actionable, or approved** unless it possesses at least one direct organizer contact channel: **either an organizer email OR an organizer phone number** (`bool(organizer_phone or organizer_email)`). Events with neither contact detail must be disqualified and excluded from discovery pipelines, outreach batches, attendee matching, and publication.
+5. **Strict 12-Sector Category Enforcement:** All events, discovery queries, categorizers, and UI filters across the platform must strictly conform to the 12 approved sectors (Pharmaceuticals, Healthcare, Energy and Power Generation, Telecommunications, Construction, Mining, Finance, Packaging, Transport and Logistics, Oil and Gas, Textiles, Manufacturing). Medical Science is folded into Healthcare; Hospitality Management is deprecated.
+6. **Community Discovery Agent (Agent 5) Sector Integrity Rule:** The Community Discovery Agent must only discover, categorize, and store communities belonging to the 12 approved platform sectors. Any community candidate categorized as 'Other' or outside the 12 approved sectors must be strictly skipped and excluded from persistence. Search queries must balance queries round-robin across all 12 platform sectors.
 
 ---
 
@@ -19,6 +22,7 @@
    - `confidence == "HIGH"`
    - `score >= TRUST_AUTO_PUBLISH_MIN_SCORE` (default `78`)
    - `missing_fields` is empty
+   - Valid organizer contact (email OR phone) is present
    - Zero critical scam/prohibited/duplicate warnings exist.
 2. **Conservative Fallback:** Whenever evidence is incomplete, external URLs are unverifiable, or organizer identity is unverified, the Trust Agent must default to `NEEDS_REVIEW` (`MEDIUM` or `LOW` confidence) and route the submission to `/admin/trust-review`.
 3. **Duplicate Detection Thresholds:** Events matching an existing `Event` or `DiscoveredEvent` on normalized title (`>= 0.86` similarity) within the same city and date window must be flagged as `DUPLICATE` (`DuplicateCandidate`) and held for human inspection.

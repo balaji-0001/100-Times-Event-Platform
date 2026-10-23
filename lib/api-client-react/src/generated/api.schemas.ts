@@ -397,6 +397,7 @@ pageSize?: PageSizeParameter;
 q?: SearchParameter;
 category?: CategoryParameter;
 city?: CityParameter;
+country?: string;
 eventType?: EventTypeParameter;
 date?: DateRangeParameter;
 format?: FormatParameter;

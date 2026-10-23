@@ -4,13 +4,11 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from backend.core.config import get_settings
-from backend.db import Base
+from backend.db import Base, _engine_url
 from backend import models  # noqa: F401
 
 config = context.config
-database_url = get_settings().database_url.replace("postgres://", "postgresql+psycopg://", 1).replace(
-    "postgresql://", "postgresql+psycopg://", 1
-)
+database_url = _engine_url()
 config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 if config.config_file_name:
     fileConfig(config.config_file_name)

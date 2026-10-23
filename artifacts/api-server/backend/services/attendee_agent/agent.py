@@ -49,20 +49,25 @@ KNOWN_CITIES = (
 )
 
 KNOWN_CATEGORIES = {
-    "AI": ("ai", "artificial intelligence", "llm", "machine learning", "genai", "deep learning"),
-    "Technology": ("tech", "developer", "software", "cloud", "cybersecurity", "devops", "coding"),
-    "Startup": ("startup", "founder", "venture", "pitch", "vc", "entrepreneur"),
-    "Business": ("business", "leadership", "b2b", "enterprise", "management", "saas"),
-    "Finance": ("fintech", "finance", "crypto", "investing", "wealth", "banking"),
-    "Design": ("design", "ux", "ui", "product design", "creative"),
-    "Healthcare": ("health", "biotech", "medtech", "pharma", "wellness"),
+    "Pharmaceuticals": ("pharma", "pharmaceutical", "drug", "clinical", "vaccine", "biopharma", "generic drug", "biotech"),
+    "Healthcare": ("healthcare", "hospital", "health", "healthtech", "telehealth", "patient care", "nursing", "digital health", "clinic", "wellness", "medical science", "medicine", "biomedical", "genomics", "pathology", "cardiology", "oncology", "neurology", "surgery", "life science"),
+    "Energy and Power Generation": ("energy", "power generation", "renewable", "solar", "wind", "thermal", "clean energy", "electricity", "grid", "battery storage"),
+    "Telecommunications": ("telecom", "telecommunication", "5g", "6g", "wireless", "broadband", "optical fiber", "network", "satellite", "cellular"),
+    "Construction": ("construction", "infrastructure", "civil engineering", "builder", "contech", "cement", "concrete", "smart cities", "architecture"),
+    "Mining": ("mining", "mineral", "extraction", "ore", "coal", "gold", "iron ore", "quarry", "drilling", "metallurgy", "geology"),
+    "Finance": ("finance", "fintech", "banking", "invest", "investment", "capital markets", "wealth", "asset management", "insurance", "trading"),
+    "Packaging": ("packaging", "packtech", "corrugated", "carton", "bottling", "labeling", "sustainable packaging", "blister pack"),
+    "Transport and Logistics": ("transport", "logistics", "supply chain", "freight", "cargo", "shipping", "railway", "aviation", "maritime", "warehouse"),
+    "Oil and Gas": ("oil and gas", "petroleum", "upstream", "downstream", "refinery", "pipeline", "crude oil", "natural gas", "petrochemical"),
+    "Textiles": ("textile", "fabric", "garment", "apparel", "spinning", "weaving", "yarn", "cotton", "technical textile"),
+    "Manufacturing": ("manufacturing", "industrial", "industry 4.0", "machinery", "automation", "robotics", "tooling", "factory", "precision engineering"),
 }
 
 KNOWN_EVENT_TYPES = ("conference", "meetup", "workshop", "summit", "hackathon", "exhibition", "webinar", "networking")
 
 
 class ExtractedIntentResult(BaseModel):
-    category: str = "Technology"
+    category: str = "Pharmaceuticals"
     location: str = "India"
     time_range: str = "upcoming"
     event_type: str = "conference"
@@ -138,7 +143,7 @@ def extract_attendee_intent(raw_text: str) -> ExtractedIntentResult:
             detected_city = "Bengaluru" if city.lower() == "bangalore" else city
             break
 
-    detected_category = "Technology"
+    detected_category = "Pharmaceuticals"
     inferred: list[str] = []
     for cat_name, terms in KNOWN_CATEGORIES.items():
         for t in terms:

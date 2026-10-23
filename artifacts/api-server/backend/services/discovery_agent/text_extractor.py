@@ -10,6 +10,7 @@ from datetime import date, timedelta
 
 from bs4 import BeautifulSoup
 
+from backend.services.discovery_agent.country_utils import infer_country
 from backend.services.discovery_agent.types import CandidateSource, ExtractedEventCandidate
 
 _MONTHS = {
@@ -36,6 +37,15 @@ _LISTING_TITLE = re.compile(
     re.IGNORECASE,
 )
 
+# Calls to action on marketing pages ("Explore events.", "Plan your exhibition").
+_CALL_TO_ACTION_TITLE = re.compile(
+    r"^\s*(explore|browse|find|discover|search|manage|plan|create|book|sell|host|list|organi[sz]e)\b.*\b(your|events?)\b",
+    re.IGNORECASE,
+)
+
+# Listing, pagination and app pages, judged by their URL.
+_LISTING_URL = re.compile(r"/(page|pages|upcoming|search|category|categories|tag|tags)(/|$)|[?&]page=", re.IGNORECASE)
+
 # Navigation words that a "Location:" label sometimes points at (breadcrumbs).
 _NOT_A_VENUE = {"home", "menu", "contact", "about", "events", "n/a", "na", "tba", "tbd"}
 
@@ -47,7 +57,7 @@ _MAX_DAYS_AHEAD = 540
 def extract_best_effort(source: CandidateSource, html: str, cities: list[str], today: date | None = None) -> ExtractedEventCandidate | None:
     soup = BeautifulSoup(html, "html.parser")
     title = _title(soup)
-    if not title or _LISTING_TITLE.search(title):
+    if not title or _LISTING_TITLE.search(title) or _CALL_TO_ACTION_TITLE.search(title) or _LISTING_URL.search(source.url):
         return None
 
     for tag in soup(["script", "style", "noscript"]):
@@ -62,12 +72,15 @@ def extract_best_effort(source: CandidateSource, html: str, cities: list[str], t
     if venue and venue.lower().strip(" .") in _NOT_A_VENUE:
         venue = None
 
+    found_city = _find_city(" ".join(filter(None, [title, venue, text])), cities)
+    inferred_country = infer_country(city=found_city, url=source.url, default="Worldwide")
+
     return ExtractedEventCandidate(
         name=title,
         date=event_date.isoformat(),
         venue=venue,
-        city=_find_city(" ".join(filter(None, [title, venue, text])), cities),
-        country="India",
+        city=found_city,
+        country=inferred_country,
         url=source.url,
         extraction_confidence=30,
         primary_source=source,

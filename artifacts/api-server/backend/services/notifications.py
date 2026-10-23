@@ -19,6 +19,24 @@ from backend.services.audit import record_audit_log
 from backend.services.social_agent.outreach.senders import get_email_provider
 
 TEMPLATES: dict[str, dict[str, str]] = {
+    "email_verification": {
+        "title": "Verify your 100 TIMES email address",
+        "subject": "Verify your email address for 100 TIMES",
+        "body": (
+            "Hi {name},\n\nPlease verify your email address by clicking the link below:\n\n"
+            "{verification_link}\n\n"
+            "This link will expire in 24 hours. If you did not sign up for 100 TIMES, you can safely ignore this message."
+        ),
+    },
+    "password_reset": {
+        "title": "Reset your 100 TIMES password",
+        "subject": "100 TIMES Password Reset Request",
+        "body": (
+            "Hi {name},\n\nWe received a request to reset your password. Click the link below to set a new password:\n\n"
+            "{reset_link}\n\n"
+            "This link will expire in 1 hour. If you did not request a password reset, you can safely ignore this message."
+        ),
+    },
     "welcome": {
         "title": "Welcome to 100 TIMES, {name}!",
         "subject": "Welcome to 100 TIMES — Your Event & Community Hub",

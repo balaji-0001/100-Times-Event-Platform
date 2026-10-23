@@ -79,7 +79,7 @@ export function TrustReviewPage() {
     },
   });
 
-  if (reviewsQuery.isLoading) return <LoadingState label="Loading Trust Agent (Agent 3) reviews" />;
+  if (reviewsQuery.isLoading) return <LoadingState label="Loading Trust Agent reviews" />;
 
   const reviews = reviewsQuery.data ?? [];
 
@@ -87,7 +87,7 @@ export function TrustReviewPage() {
     <div className="space-y-6">
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
-          <Kicker>Trust Agent · Agent 3</Kicker>
+          <Kicker>Trust Agent</Kicker>
           <h1 className="mt-2 font-display text-3xl font-extrabold tracking-tight">
             Trust & Safety Review Queue
           </h1>
@@ -117,7 +117,7 @@ export function TrustReviewPage() {
           <ShieldCheck className="mx-auto text-accent" size={32} />
           <p className="mt-3 font-display text-xl font-bold">No Trust Agent reviews in this filter.</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Events submitted by organizers are automatically evaluated by Trust Agent (Agent 3) and logged here.
+            Events submitted by organizers are automatically evaluated by Trust Agent and logged here.
           </p>
         </div>
       ) : (

@@ -53,14 +53,18 @@ def seed() -> None:
     db = SessionLocal()
     try:
         categories_data = [
-            ("Artificial Intelligence", "artificial-intelligence", "The people and systems shaping intelligent technology.", "sparkles"),
-            ("Data Science", "data-science", "From raw signals to decisions that move organizations forward.", "chart"),
-            ("Information Technology", "information-technology", "Infrastructure, software, and the future of digital work.", "code"),
-            ("Business & Finance", "business-finance", "Sharper strategies for modern operators and market makers.", "briefcase"),
-            ("Healthcare", "healthcare", "Practical innovation for better health outcomes.", "heart"),
-            ("Education", "education", "The classrooms and tools redefining learning.", "graduation-cap"),
-            ("Manufacturing", "manufacturing", "Where advanced production meets human ingenuity.", "factory"),
-            ("Marketing", "marketing", "Ideas and experiments that earn attention.", "megaphone"),
+            ("Pharmaceuticals", "pharmaceuticals", "Pharmaceutical companies, drug manufacturing, research, and industry developments.", "pill"),
+            ("Healthcare", "healthcare", "Hospitals, healthcare providers, medical technology, and healthcare management.", "heart"),
+            ("Energy and Power Generation", "energy-and-power-generation", "Conventional and renewable energy, power generation, and sector developments.", "zap"),
+            ("Telecommunications", "telecommunications", "Telecom networks, operators, equipment, enterprise IT, and communications technology.", "radio"),
+            ("Construction", "construction", "Construction, infrastructure projects, industry trends, and construction technology.", "hard-hat"),
+            ("Mining", "mining", "Mining operations, mineral extraction, projects, equipment, and industry news.", "mountain"),
+            ("Finance", "finance", "Financial-sector news, business developments, products, and services.", "briefcase"),
+            ("Packaging", "packaging", "Packaging materials, machinery, manufacturers, suppliers, and industry innovations.", "package"),
+            ("Transport and Logistics", "transport-and-logistics", "Railways, road transport, aviation, shipping, ports, and logistics.", "truck"),
+            ("Oil and Gas", "oil-and-gas", "Oil and gas industry news, operations, technology, and business developments.", "flame"),
+            ("Textiles", "textiles", "Textile industry news and developments, including businesses and professionals across the textile value chain.", "scissors"),
+            ("Manufacturing", "manufacturing", "Manufacturing industry news, industrial operations, technology, and business developments.", "factory"),
         ]
         categories = [
             get_or_create(db, Category, {"slug": slug}, {"name": name, "description": description, "icon": icon})
@@ -95,23 +99,23 @@ def seed() -> None:
             for index, (name, slug, address, city, capacity) in enumerate(venues_data)
         ]
         speaker_data = [
-            ("Anika Rao", "anika-rao", "VP, Applied Intelligence", "Northstar Labs", ["AI strategy", "Responsible innovation"]),
-            ("Rohan Mehta", "rohan-mehta", "Founder & CEO", "Arcwell", ["Climate tech", "Venture building"]),
-            ("Maya Fernandez", "maya-fernandez", "Director of Product", "Lumen Health", ["Health systems", "Product leadership"]),
+            ("Anika Rao", "anika-rao", "VP, Clinical Research", "Northstar Pharma", ["Drug Development", "Pharma Innovation"]),
+            ("Rohan Mehta", "rohan-mehta", "Managing Director", "Arcwell Energy", ["Power Generation", "Renewable Infrastructure"]),
+            ("Maya Fernandez", "maya-fernandez", "Chief Medical Officer", "Lumen Health", ["Health Systems", "Clinical Quality"]),
         ]
         speakers = [
             get_or_create(db, Speaker, {"slug": slug}, {"name": name, "title": title, "company": company, "expertise": expertise, "biography": "A generous, practical voice for people building more useful technology and resilient organizations.", "image": image(IMAGE_IDS[index % len(IMAGE_IDS)])})
             for index, (name, slug, title, company, expertise) in enumerate(speaker_data)
         ]
-        demo_user = get_or_create(db, User, {"email": "demo@100times.in"}, {"name": "Aarav Mehta", "job_title": "Product Architect", "company": "Voxel Labs", "bio": "Designing interfaces and software systems for the physical world.", "password_hash": hash_password("DemoPass123!"), "role": "USER", "country": "India"})
+        demo_user = get_or_create(db, User, {"email": "demo@100times.in"}, {"name": "Aarav Mehta", "job_title": "Operations Director", "company": "Voxel Labs", "bio": "Industrial operations and technology leader.", "password_hash": hash_password("DemoPass123!"), "role": "USER", "country": "India"})
         get_or_create(db, User, {"email": "organizer@100times.in"}, {"name": "Orbit Organizer", "job_title": "Head of Programming", "company": "Orbit Collective", "bio": "Curator of conferences and spatial experiences.", "password_hash": hash_password("OrganizerPass123!"), "role": "ORGANIZER", "country": "India"})
-        get_or_create(db, User, {"email": "admin@100times.in"}, {"name": "Platform Admin", "job_title": "Operations Lead", "company": "100 TIMES", "bio": "Platform stewardship and catalog quality.", "password_hash": hash_password("AdminPass123!"), "role": "ADMIN", "country": "India"})
+        get_or_create(db, User, {"email": "balajiibalu09@gmail.com"}, {"name": "Platform Admin", "job_title": "Operations Lead", "company": "100 TIMES", "bio": "Platform stewardship and catalog quality.", "password_hash": hash_password("AdminPass123!"), "role": "ADMIN", "country": "India"})
 
         attendees_data = [
-            ("Priya Sharma", "priya@figma-community.org", "Principal Product Designer", "Studio Motif", "Crafting design systems and typography-first web software.", "India"),
-            ("Dev Patel", "dev@postman-ai.io", "Staff AI Engineer", "VectorWorks", "Large language model infrastructure and latency optimization.", "India"),
-            ("Tara Sen", "tara@razor-tech.co", "VP Engineering", "Kite FinTech", "High-throughput payment networks and distributed databases.", "Singapore"),
-            ("Marcus Vance", "marcus@pentastudio.uk", "Creative Director", "Form & Signal", "Brand identity and spatial exhibition design.", "United Kingdom"),
+            ("Priya Sharma", "priya@pharma-today.org", "Lead Formulation Scientist", "Pharma Core", "Formulation research and sterile injectables.", "India"),
+            ("Dev Patel", "dev@powerinfo.io", "Energy Systems Engineer", "GridWorks", "High-voltage transmission and power grid dispatch.", "India"),
+            ("Tara Sen", "tara@worldfinance.co", "VP Investments", "Kite Capital", "Capital markets and asset management.", "Singapore"),
+            ("Marcus Vance", "marcus@transportadvance.uk", "Logistics Director", "Cargo Signal", "Intermodal freight and automated supply chains.", "United Kingdom"),
         ]
         attendee_users = [
             get_or_create(db, User, {"email": email}, {"name": name, "job_title": title, "company": comp, "bio": bio, "country": country, "password_hash": hash_password("AttendeePass123!"), "role": "USER"})
@@ -119,12 +123,18 @@ def seed() -> None:
         ]
 
         titles = [
-            ("Future of Intelligence Forum", 0, "Conference"), ("Data in Motion", 1, "Summit"),
-            ("Digital India Builders Week", 2, "Conference"), ("Good Growth Exchange", 3, "Networking"),
-            ("Care Without Borders", 4, "Summit"), ("The Learning Futures Lab", 5, "Workshop"),
-            ("Industrial Next Asia", 6, "Trade show"), ("Signals & Stories", 7, "Workshop"),
-            ("Climate Capital Assembly", 3, "Conference"), ("Product Craft London", 2, "Workshop"),
-            ("AI for Everyone", 0, "Conference"), ("Modern Operator Roundtable", 3, "Networking"),
+            ("Global Pharma Innovations Summit", 0, "Conference"),
+            ("Healthcare Quality Conclave", 1, "Summit"),
+            ("Energy & Power Generation Expo", 2, "Exhibition"),
+            ("NextGen Telecommunications Forum", 3, "Conference"),
+            ("Infrastructure & Construction Conclave", 4, "Summit"),
+            ("Future of Mining & Minerals Summit", 5, "Summit"),
+            ("Global Finance & Investment Summit", 6, "Conference"),
+            ("Sustainable Packaging Expo", 7, "Exhibition"),
+            ("Transport & Logistics World", 8, "Trade show"),
+            ("Oil & Gas Technology Conclave", 9, "Conference"),
+            ("Global Textile Innovations Fair", 10, "Exhibition"),
+            ("Advanced Manufacturing Expo", 11, "Trade show"),
         ]
         existing_count = int(db.scalar(select(__import__("sqlalchemy", fromlist=["func"]).func.count(Event.id))) or 0)
         for index in range(existing_count, 100):

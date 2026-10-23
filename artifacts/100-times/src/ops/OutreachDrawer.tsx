@@ -81,7 +81,7 @@ export function OutreachDrawer({ message: m, onClose }: { message: OutreachMessa
           ['Event', val(m.event.name)],
           ['Date', val(m.event.date)],
           ['City', [m.event.city, m.event.state].filter(Boolean).join(', ') || NA],
-          ['Category', val(m.event.category)],
+          ['Sector', val(m.event.category)],
           ['Event URL', <ExtLink href={m.event.url} />],
           ['Registration URL', <ExtLink href={m.event.ticketUrl} />],
         ]} />

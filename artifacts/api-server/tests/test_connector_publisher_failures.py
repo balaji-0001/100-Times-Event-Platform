@@ -114,3 +114,77 @@ def test_discord_publisher_rejects_malformed_target_ref():
 
     assert result.success is False
     assert "guild/channel/message reference" in result.message.lower()
+
+
+# --- Telegram: honest published_url fallback for chats with no public link format ---
+
+
+def test_publish_post_to_public_channel_returns_message_specific_link(monkeypatch):
+    publisher = _fake_live_publisher(monkeypatch)
+
+    class FakeResponse:
+        def json(self):
+            return {"ok": True, "result": {"message_id": 42, "chat": {"id": -1001, "type": "channel", "username": "mychannel"}}}
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: FakeResponse())
+
+    result = publisher.publish_post("hello", "telegram_-1001")
+
+    assert result.success is True
+    assert result.published_url == "https://t.me/mychannel/42"
+
+
+def test_publish_post_to_supergroup_returns_message_specific_link(monkeypatch):
+    publisher = _fake_live_publisher(monkeypatch)
+
+    class FakeResponse:
+        def json(self):
+            return {"ok": True, "result": {"message_id": 7, "chat": {"id": -1001234567890, "type": "supergroup"}}}
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: FakeResponse())
+
+    result = publisher.publish_post("hello", "telegram_-1001234567890")
+
+    assert result.success is True
+    assert result.published_url == "https://t.me/c/1234567890/7"
+
+
+def test_publish_post_to_private_chat_falls_back_to_bot_conversation_link(monkeypatch):
+    """A private 1:1 chat has no per-message public URL — Telegram simply
+    doesn't support one — so the honest next-best thing is a real link to
+    the actual conversation (the bot's own t.me link), not a blank field."""
+    publisher = _fake_live_publisher(monkeypatch)
+    calls = {"n": 0}
+
+    def fake_post(url, **kwargs):
+        calls["n"] += 1
+        class R:
+            def json(self):
+                if "getMe" in url:
+                    return {"ok": True, "result": {"username": "HundredTimesAgentBot"}}
+                return {"ok": True, "result": {"message_id": 3, "chat": {"id": 1327001890, "type": "private", "first_name": "Balaji"}}}
+        return R()
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    result = publisher.publish_post("hello", "telegram_1327001890")
+
+    assert result.success is True
+    assert result.published_url == "https://t.me/HundredTimesAgentBot"
+
+
+def test_publish_post_to_basic_group_with_no_username_has_no_link(monkeypatch):
+    """A non-super, unlinked basic group has no public link format at all —
+    this must stay honestly `None`, never a guessed/fabricated URL."""
+    publisher = _fake_live_publisher(monkeypatch)
+
+    class FakeResponse:
+        def json(self):
+            return {"ok": True, "result": {"message_id": 5, "chat": {"id": -555, "type": "group"}}}
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: FakeResponse())
+
+    result = publisher.publish_post("hello", "telegram_-555")
+
+    assert result.success is True
+    assert result.published_url is None

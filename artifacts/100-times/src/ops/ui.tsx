@@ -102,19 +102,25 @@ export function DL({ rows }: { rows: Array<[label: string, value: ReactNode]> })
 
 export function ExtLink({ href, children, className }: { href?: string | null; children?: ReactNode; className?: string }) {
   if (!href) return <span className="text-muted-foreground">{NA}</span>;
+  const trimmed = href.trim();
+  const isSafe = /^https?:\/\//i.test(trimmed) || /^mailto:/i.test(trimmed);
+  if (!isSafe) {
+    return <span className={cx('text-muted-foreground break-all', className)}>{children ?? href}</span>;
+  }
   return (
-    <a href={href} target="_blank" rel="noopener noreferrer" className={cx('inline-flex max-w-full items-center gap-1 break-all text-accent hover:underline', className)}>
+    <a href={trimmed} target="_blank" rel="noopener noreferrer" className={cx('inline-flex max-w-full items-center gap-1 break-all text-accent hover:underline', className)}>
       <span className="truncate">{children ?? href}</span>
       <ExternalLink size={12} className="shrink-0" />
     </a>
   );
 }
 
-export function Notice({ tone = 'warn', children }: { tone?: 'warn' | 'info' | 'danger'; children: ReactNode }) {
+export function Notice({ tone = 'warn', children }: { tone?: 'warn' | 'info' | 'danger' | 'good'; children: ReactNode }) {
   const styles = {
     warn: 'border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-300',
     info: 'border-foreground/15 bg-muted/50 text-foreground/80',
     danger: 'border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300',
+    good: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
   }[tone];
   return <div className={cx('flex gap-2 rounded-lg border p-3 text-xs leading-relaxed', styles)}><AlertCircle size={14} className="mt-0.5 shrink-0" /><div>{children}</div></div>;
 }

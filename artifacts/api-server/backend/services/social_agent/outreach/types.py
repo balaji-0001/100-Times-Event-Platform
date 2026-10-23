@@ -3,7 +3,7 @@ dataclasses (not DB models), mirroring the `Signal`/`PublishResult` pattern
 already used by connectors/publishers in `services/social_agent/types.py`.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -67,6 +67,12 @@ class OutreachRunConfig:
 
     max_candidates: int = 20
     verification_statuses: tuple[str, ...] = ("VERIFIED", "NEEDS_REVIEW")
+    countries: list[str] = field(default_factory=list)
+    states: list[str] = field(default_factory=list)
+    cities: list[str] = field(default_factory=list)
+    categories: list[str] = field(default_factory=list)
+    sender_name: str | None = None
+    template_style: str | None = None
 
 
 @dataclass

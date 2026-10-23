@@ -1,8 +1,8 @@
 import { type FormEvent, type ReactNode, useMemo, useState, useEffect, useRef } from 'react';
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowDownRight, ArrowLeft, ArrowRight, Bell, CalendarDays, CalendarPlus, Check,
-  Compass, Download, ExternalLink, Filter, Heart, LayoutDashboard,
+  AlertTriangle, ArrowDownRight, ArrowLeft, ArrowRight, Bell, CalendarDays, CalendarPlus, Check,
+  Compass, Download, ExternalLink, Filter, Globe, Heart, LayoutDashboard,
   LineChart, ListFilter, Loader2, LockKeyhole, MapPin, Menu, MessageSquare, Plus, Printer,
   QrCode, Search, Send, Settings2, ShieldCheck, Sparkles, Star, Ticket, Trash2,
   TrendingUp, UserCheck, UserPlus, UserRound, Users, X, Zap,
@@ -26,6 +26,7 @@ import type {
 } from '@workspace/api-client-react';
 import { Link, Redirect, Route, Switch, Router as WouterRouter, useLocation, useParams } from 'wouter';
 import { ErrorBoundary } from '@/components/error-boundary';
+import { CountrySelect } from '@/components/CountrySelect';
 import { OpsLayout } from '@/ops/OpsLayout';
 import { DashboardPage as OpsDashboardPage } from '@/ops/DashboardPage';
 import { DiscoveryPage } from '@/ops/DiscoveryPage';
@@ -36,9 +37,23 @@ import { OutreachPage } from '@/ops/OutreachPage';
 import { ActivityPage } from '@/ops/ActivityPage';
 import { SettingsPage } from '@/ops/SettingsPage';
 import { TrustReviewPage } from '@/ops/TrustReviewPage';
+import { AutomationsPage } from '@/ops/AutomationsPage';
+import { CommunityDiscoveryPage } from '@/ops/CommunityDiscoveryPage';
+import { CommunityPromotionPage } from '@/ops/CommunityPromotionPage';
+import { SocialPromotionsPage } from '@/ops/SocialPromotionsPage';
 import { AttendeeAgentPage } from '@/ops/AttendeeAgentPage';
 import { WorkflowsLogsPage } from '@/ops/WorkflowsLogsPage';
 import { OrganizerStudioPage } from '@/organizer/OrganizerStudio';
+import { ObservabilityPage } from '@/ops/ObservabilityPage';
+import {
+  PrivacyPolicyPage,
+  TermsOfServicePage,
+  VerifyEmailPage,
+  ResetPasswordPage,
+  DeleteAccountModal,
+  EmailVerificationBanner,
+} from '@/components/AccountSecurityPages';
+import { keys, useMe } from '@/ops/api';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import '@/index.css';
@@ -291,9 +306,10 @@ function useLogout() {
   const qc = useQueryClient();
   const [, setLocation] = useLocation();
   return useMutation({
-    mutationFn: () => customFetch<{ status: string; message: string }>('/api/auth/logout', { method: 'POST' }),
+    mutationFn: () => customFetch<{ status: string; message: string }>('/api/auth/logout', { method: 'POST' }).catch(() => ({ status: 'ok', message: 'Logged out' })),
     onSettled: () => {
       localStorage.removeItem('100-times-auth-token');
+      window.dispatchEvent(new Event('auth-change'));
       qc.clear();
       setLocation('/login');
     },
@@ -848,22 +864,37 @@ function ChatDrawer({
 // ---------------------------------------------------------------------------
 
 const fallbackEvents: EventCard[] = [
-  { id: 101, title: 'The Design of Everything', slug: 'the-design-of-everything', eventType: 'Conference', category: 'Design', categorySlug: 'design', startDate: '2025-02-12', endDate: '2025-02-14', startTime: '09:00', location: 'Bengaluru', venue: 'NIMHANS Convention Centre', organizer: 'Kyoorius', image: '', rating: 4.8, attendeeCount: 840, price: 4200, format: 'in-person', isSaved: false, status: 'published' },
-  { id: 102, title: 'India Energy Week', slug: 'india-energy-week', eventType: 'Trade show', category: 'Energy', categorySlug: 'energy', startDate: '2025-02-11', endDate: '2025-02-14', startTime: '10:00', location: 'New Delhi', venue: 'Yashobhoomi', organizer: 'DMG Events', image: '', rating: 4.6, attendeeCount: 1200, price: 0, format: 'in-person', isSaved: true, status: 'published' },
-  { id: 103, title: 'Future of Work: Mumbai', slug: 'future-of-work-mumbai', eventType: 'Summit', category: 'Business', categorySlug: 'business', startDate: '2025-03-05', endDate: '2025-03-05', startTime: '08:30', location: 'Mumbai', venue: 'Taj Lands End', organizer: 'The Ken', image: '', rating: 4.9, attendeeCount: 330, price: 1800, format: 'in-person', isSaved: false, status: 'published' },
-  { id: 104, title: 'Objects of Desire', slug: 'objects-of-desire', eventType: 'Exhibition', category: 'Art & Culture', categorySlug: 'art-culture', startDate: '2025-02-20', endDate: '2025-03-02', startTime: '11:00', location: 'New Delhi', venue: 'Kiran Nadar Museum of Art', organizer: 'India Art Fair', image: '', rating: 4.7, attendeeCount: 560, price: 300, format: 'in-person', isSaved: false, status: 'published' },
+  { id: 101, title: 'Global Pharma Innovations Summit', slug: 'global-pharma-innovations-summit', eventType: 'Conference', category: 'Pharmaceuticals', categorySlug: 'pharmaceuticals', startDate: '2026-03-12', endDate: '2026-03-14', startTime: '09:00', location: 'Hyderabad, India', venue: 'HITEX Exhibition Centre', organizer: 'World Pharma Today', image: '', rating: 4.8, attendeeCount: 840, price: 4200, format: 'in-person', isSaved: false, status: 'published' },
+  { id: 102, title: 'India Energy & Power Week', slug: 'india-energy-power-week', eventType: 'Trade show', category: 'Energy and Power Generation', categorySlug: 'energy-and-power-generation', startDate: '2026-03-11', endDate: '2026-03-14', startTime: '10:00', location: 'New Delhi, India', venue: 'Yashobhoomi', organizer: 'Power Info Today', image: '', rating: 4.6, attendeeCount: 1200, price: 0, format: 'in-person', isSaved: true, status: 'published' },
+  { id: 103, title: 'Healthcare & Medical Tech Expo', slug: 'healthcare-medical-tech-expo', eventType: 'Summit', category: 'Healthcare', categorySlug: 'healthcare', startDate: '2026-04-05', endDate: '2026-04-05', startTime: '08:30', location: 'Mumbai, India', venue: 'Jio World Convention Centre', organizer: 'HHM Global', image: '', rating: 4.9, attendeeCount: 730, price: 1800, format: 'in-person', isSaved: false, status: 'published' },
+  { id: 104, title: 'National Manufacturing & Industry 4.0 Expo', slug: 'national-manufacturing-industry-expo', eventType: 'Exhibition', category: 'Manufacturing', categorySlug: 'manufacturing', startDate: '2026-04-20', endDate: '2026-04-22', startTime: '11:00', location: 'Bengaluru, India', venue: 'KTPO Convention Centre', organizer: 'Manufacturing Informs', image: '', rating: 4.7, attendeeCount: 1560, price: 500, format: 'in-person', isSaved: false, status: 'published' },
+  { id: 105, title: 'World AI & Financial Tech Summit', slug: 'world-ai-fintech-summit-ny', eventType: 'Summit', category: 'Finance', categorySlug: 'finance', startDate: '2026-05-15', endDate: '2026-05-17', startTime: '09:00', location: 'New York, United States', venue: 'Javits Center', organizer: 'World Finance Informs', image: '', rating: 4.9, attendeeCount: 2400, price: 8500, format: 'in-person', isSaved: false, status: 'published' },
+  { id: 106, title: 'European Telecom & Cloud Congress', slug: 'european-telecom-cloud-congress', eventType: 'Congress', category: 'Telecommunications', categorySlug: 'telecommunications', startDate: '2026-06-10', endDate: '2026-06-12', startTime: '09:30', location: 'London, United Kingdom', venue: 'ExCeL London', organizer: 'Tele Info Today', image: '', rating: 4.7, attendeeCount: 1850, price: 6200, format: 'in-person', isSaved: false, status: 'published' },
+  { id: 107, title: 'Global Clean Energy & Sustainable Power Expo', slug: 'global-clean-energy-expo-berlin', eventType: 'Expo', category: 'Energy and Power Generation', categorySlug: 'energy-and-power-generation', startDate: '2026-07-08', endDate: '2026-07-10', startTime: '10:00', location: 'Berlin, Germany', venue: 'Messe Berlin', organizer: 'Power Info Today', image: '', rating: 4.8, attendeeCount: 3100, price: 3400, format: 'in-person', isSaved: false, status: 'published' },
+  { id: 108, title: 'Asia-Pacific Transport & Smart Logistics Conclave', slug: 'apac-transport-logistics-singapore', eventType: 'Conclave', category: 'Transport and Logistics', categorySlug: 'transport-and-logistics', startDate: '2026-08-22', endDate: '2026-08-24', startTime: '09:00', location: 'Singapore', venue: 'Marina Bay Sands Expo', organizer: 'Transport Advancement', image: '', rating: 4.85, attendeeCount: 1950, price: 5100, format: 'in-person', isSaved: false, status: 'published' },
+  { id: 109, title: 'Dubai Global Fintech & Web3 Summit', slug: 'dubai-global-fintech-summit', eventType: 'Summit', category: 'Finance', categorySlug: 'finance', startDate: '2026-09-18', endDate: '2026-09-20', startTime: '09:00', location: 'Dubai, UAE', venue: 'Dubai World Trade Centre', organizer: 'World Finance Informs', image: '', rating: 4.92, attendeeCount: 3500, price: 4500, format: 'in-person', isSaved: false, status: 'published' },
+  { id: 110, title: 'Middle East Energy & Smart Infrastructure Expo', slug: 'middle-east-energy-smart-infrastructure-dubai', eventType: 'Expo', category: 'Energy and Power Generation', categorySlug: 'energy-and-power-generation', startDate: '2026-10-12', endDate: '2026-10-14', startTime: '10:00', location: 'Dubai, United Arab Emirates', venue: 'Madinat Jumeirah Conference Centre', organizer: 'Power Info Today', image: '', rating: 4.88, attendeeCount: 2800, price: 3200, format: 'in-person', isSaved: false, status: 'published' },
 ];
 const fallbackCategories: Category[] = [
-  { id: 1, name: 'Design & Creative', slug: 'design', description: 'Ideas, craft, culture, and the people making what is next.', icon: '✦', eventCount: 128 },
-  { id: 2, name: 'Business & Strategy', slug: 'business', description: 'Sharp rooms for ambitious operators and clear thinkers.', icon: '↗', eventCount: 94 },
-  { id: 3, name: 'Technology', slug: 'technology', description: 'Build the future with the people closest to the work.', icon: '⌘', eventCount: 186 },
-  { id: 4, name: 'Art & Culture', slug: 'art-culture', description: 'Exhibitions, conversations, and new ways of seeing.', icon: '◌', eventCount: 73 },
+  { id: 1, name: 'Pharmaceuticals', slug: 'pharmaceuticals', description: 'Pharmaceutical companies, drug manufacturing, research, and industry developments.', icon: '💊', eventCount: 142 },
+  { id: 2, name: 'Healthcare', slug: 'healthcare', description: 'Hospitals, healthcare providers, medical technology, and healthcare management.', icon: '🩺', eventCount: 128 },
+  { id: 3, name: 'Energy and Power Generation', slug: 'energy-and-power-generation', description: 'Conventional and renewable energy, power generation, and sector developments.', icon: '⚡', eventCount: 114 },
+  { id: 4, name: 'Telecommunications', slug: 'telecommunications', description: 'Telecom networks, operators, equipment, enterprise IT, and communications technology.', icon: '📡', eventCount: 105 },
+  { id: 5, name: 'Construction', slug: 'construction', description: 'Construction, infrastructure projects, industry trends, and construction technology.', icon: '🏗️', eventCount: 88 },
+  { id: 6, name: 'Mining', slug: 'mining', description: 'Mining operations, mineral extraction, projects, equipment, and industry news.', icon: '⛏️', eventCount: 64 },
+  { id: 7, name: 'Finance', slug: 'finance', description: 'Financial-sector news, business developments, products, and services.', icon: '💼', eventCount: 172 },
+  { id: 8, name: 'Packaging', slug: 'packaging', description: 'Packaging materials, machinery, manufacturers, suppliers, and industry innovations.', icon: '📦', eventCount: 79 },
+  { id: 9, name: 'Transport and Logistics', slug: 'transport-and-logistics', description: 'Railways, road transport, aviation, shipping, ports, and logistics.', icon: '🚚', eventCount: 120 },
+  { id: 10, name: 'Oil and Gas', slug: 'oil-and-gas', description: 'Oil and gas industry news, operations, technology, and business developments.', icon: '🛢️', eventCount: 85 },
+  { id: 11, name: 'Textiles', slug: 'textiles', description: 'Textile industry news and developments, including businesses and professionals across the textile value chain.', icon: '🧵', eventCount: 71 },
+  { id: 12, name: 'Manufacturing', slug: 'manufacturing', description: 'Manufacturing industry news, industrial operations, technology, and business developments.', icon: '🏭', eventCount: 154 },
 ];
 const fallbackCities: City[] = [
   { id: 1, name: 'Bengaluru', slug: 'bengaluru', country: 'India', image: '', eventCount: 218 },
   { id: 2, name: 'Mumbai', slug: 'mumbai', country: 'India', image: '', eventCount: 164 },
   { id: 3, name: 'New Delhi', slug: 'new-delhi', country: 'India', image: '', eventCount: 143 },
-  { id: 4, name: 'Singapore', slug: 'singapore', country: 'Singapore', image: '', eventCount: 87 },
+  { id: 4, name: 'Dubai', slug: 'dubai', country: 'United Arab Emirates', image: '', eventCount: 95 },
+  { id: 5, name: 'Singapore', slug: 'singapore', country: 'Singapore', image: '', eventCount: 87 },
 ];
 
 const cx = (...values: Array<string | false | null | undefined>) => values.filter(Boolean).join(' ');
@@ -1269,27 +1300,49 @@ function Logo() {
 function Header() {
   const [open, setOpen] = useState(false);
   const [location] = useLocation();
-  const nav = [['Explore', '/events'], ['Categories', '/categories'], ['Cities', '/cities'], ['Organizers', '/organizers'], ['Venues', '/venues']];
+  const logout = useLogout();
+
+  const [hasToken, setHasToken] = useState(() =>
+    typeof window !== 'undefined' ? Boolean(localStorage.getItem('100-times-auth-token')) : false
+  );
+
+  useEffect(() => {
+    const handleAuthChange = () => {
+      setHasToken(typeof window !== 'undefined' && Boolean(localStorage.getItem('100-times-auth-token')));
+    };
+    window.addEventListener('auth-change', handleAuthChange);
+    window.addEventListener('storage', handleAuthChange);
+    return () => {
+      window.removeEventListener('auth-change', handleAuthChange);
+      window.removeEventListener('storage', handleAuthChange);
+    };
+  }, []);
+
+  const me = useMe(hasToken);
+  const isLoggedIn = hasToken && Boolean(me.data) && !me.isError;
+  const isAdmin = isLoggedIn && me.data?.role === 'ADMIN';
+  const isOrganiser = isLoggedIn && (me.data?.role === 'ORGANIZER' || me.data?.roles?.includes('organiser') || me.data?.roles?.includes('organizer'));
+  const isMultiRole = isOrganiser && (me.data?.roles?.includes('attendee') || me.data?.role === 'ORGANIZER' || me.data?.role === 'ADMIN');
+
+  const nav = [
+    ['Explore', '/events'],
+    ['Sectors', '/categories'],
+    ['Cities', '/cities'],
+    ['Organizers', '/organizers'],
+    ['Venues', '/venues'],
+  ];
   return (
     <header className="sticky top-0 z-40 border-b border-foreground/10 bg-background/90 backdrop-blur-xl">
       <div className="mx-auto flex h-[72px] max-w-[1440px] items-center justify-between px-5 lg:px-10">
         <Logo />
-        <nav className="hidden items-center gap-7 md:flex">
+        <nav className="hidden items-center gap-6 md:flex">
           {nav.map(([label, href]) => (
-            <Link key={href} href={href} data-testid={`link-nav-${label.toLowerCase()}`} className={cx('text-sm font-medium transition-colors hover:text-accent', location.startsWith(href) && 'text-accent')}>
+            <Link key={href} href={href} data-testid={`link-nav-${label.toLowerCase()}`} className={cx('text-sm font-medium transition-colors hover:text-accent', location.startsWith(href) && 'text-accent font-semibold')}>
               {label}
             </Link>
           ))}
         </nav>
         <div className="flex items-center gap-2">
-          <Link
-            href="/admin"
-            className="button-press hidden items-center gap-1.5 rounded-full border border-foreground/15 bg-background px-3 py-1.5 text-xs font-semibold text-foreground hover:border-accent hover:text-accent lg:flex"
-            data-testid="link-header-admin"
-          >
-            <ShieldCheck size={14} className="text-accent" />
-            <span>Admin</span>
-          </Link>
           <button
             onClick={() => window.dispatchEvent(new CustomEvent('open-ai-concierge'))}
             className="button-press flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent/10 px-3.5 py-1.5 text-xs font-bold text-accent hover:bg-accent hover:text-accent-foreground"
@@ -1299,15 +1352,95 @@ function Header() {
             <span>AI Assistant</span>
             <kbd className="hidden rounded bg-accent/20 px-1 py-0.2 font-mono-face text-[9px] text-accent lg:inline-block">Ctrl K</kbd>
           </button>
-          <Link href="/dashboard" className="hidden rounded-full p-2.5 text-muted-foreground hover:bg-muted hover:text-foreground sm:block" data-testid="link-dashboard">
+          <Link
+            href={isLoggedIn ? (me.data?.role === 'ADMIN' ? '/admin' : me.data?.role === 'ORGANIZER' ? '/organizer' : '/dashboard') : '/login?redirect=/dashboard'}
+            className="hidden rounded-full p-2.5 text-muted-foreground hover:bg-muted hover:text-foreground sm:block"
+            title={isLoggedIn ? `Signed in as ${me.data?.name || me.data?.email} (${me.data?.role})` : 'Sign in to Attendee Dashboard'}
+            data-testid="link-dashboard"
+          >
             <UserRound size={18} />
           </Link>
-          <Link href="/organizer" className="hidden rounded-full border border-foreground/15 px-4 py-2 text-sm font-semibold hover:border-accent hover:text-accent lg:block" data-testid="link-organizer-portal">
+          <Link
+            href={isLoggedIn ? (isOrganiser ? '/organizer/events/create' : '/organizer') : '/register?role=organiser&redirect=/organizer/events/create'}
+            className="hidden rounded-full border border-foreground/15 px-4 py-2 text-sm font-semibold hover:border-accent hover:text-accent lg:block"
+            data-testid="link-organizer-portal"
+          >
             List an event
           </Link>
-          <Link href="/login" className="button-press rounded-full bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-accent" data-testid="link-login">
-            Sign in
-          </Link>
+
+          {/* Authentication & User Controls: Grouped near Sign out */}
+          {isLoggedIn ? (
+            <div className="flex items-center gap-2">
+              {isAdmin && (
+                <>
+                  <Link
+                    href="/admin"
+                    className={cx(
+                      'button-press flex items-center gap-1.5 rounded-full border border-foreground/15 px-3 py-1.5 text-xs font-semibold hover:border-accent hover:text-accent',
+                      location.startsWith('/admin') ? 'border-accent bg-accent/15 text-accent font-bold' : 'text-foreground'
+                    )}
+                    data-testid="link-header-admin"
+                    title="Open Administrator Console"
+                  >
+                    <ShieldCheck size={14} className="text-accent" />
+                    <span>Admin</span>
+                  </Link>
+                  <Link
+                    href="/admin/settings"
+                    className={cx(
+                      'button-press flex items-center justify-center rounded-full border border-foreground/15 p-2 text-xs font-semibold hover:border-accent hover:text-accent',
+                      location.startsWith('/admin/settings') ? 'border-accent bg-accent/15 text-accent' : 'text-muted-foreground'
+                    )}
+                    title="System & Agent Settings"
+                    data-testid="link-header-settings"
+                  >
+                    <Settings2 size={15} />
+                  </Link>
+                </>
+              )}
+
+              {isMultiRole && (
+                location.startsWith('/organizer') ? (
+                  <Link
+                    href="/dashboard"
+                    className="hidden sm:inline-flex items-center gap-1 rounded-full border border-accent/40 bg-accent/10 px-2.5 py-1 text-xs font-semibold text-accent hover:bg-accent hover:text-accent-foreground"
+                    data-testid="button-switch-to-attendee"
+                  >
+                    Attendee Hub
+                  </Link>
+                ) : location.startsWith('/dashboard') ? (
+                  <Link
+                    href="/organizer"
+                    className="hidden sm:inline-flex items-center gap-1 rounded-full border border-accent/40 bg-accent/10 px-2.5 py-1 text-xs font-semibold text-accent hover:bg-accent hover:text-accent-foreground"
+                    data-testid="button-switch-to-organizer"
+                  >
+                    Organiser Desk
+                  </Link>
+                ) : null
+              )}
+
+              <span className="hidden items-center gap-1.5 rounded-full bg-accent/10 border border-accent/25 px-2.5 py-1 text-xs font-semibold text-accent xl:inline-flex">
+                <span className="max-w-[110px] truncate">{me.data?.name || me.data?.email?.split('@')[0]}</span>
+                <span className="rounded-full bg-accent text-accent-foreground px-1.5 py-0.2 text-[9px] font-bold">
+                  {me.data?.role === 'ADMIN' ? 'Admin' : me.data?.role === 'ORGANIZER' ? 'Organizer' : 'Attendee'}
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={() => logout.mutate()}
+                disabled={logout.isPending}
+                className="button-press rounded-full bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-accent disabled:opacity-50"
+                data-testid="link-logout"
+              >
+                {logout.isPending ? 'Signing out…' : 'Sign out'}
+              </button>
+            </div>
+          ) : (
+            <Link href="/login" className="button-press rounded-full bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-accent" data-testid="link-login">
+              Sign in
+            </Link>
+          )}
+
           <button className="rounded-full p-2 md:hidden" onClick={() => setOpen(!open)} aria-label="Open navigation" data-testid="button-toggle-menu">
             {open ? <X size={21} /> : <Menu size={21} />}
           </button>
@@ -1320,12 +1453,53 @@ function Header() {
               {label}
             </Link>
           ))}
-          <Link href="/admin" onClick={() => setOpen(false)} className="block border-b border-foreground/10 py-3 text-sm font-semibold text-accent" data-testid="link-mobile-admin">
-            Admin console
-          </Link>
-          <Link href="/organizer" onClick={() => setOpen(false)} className="block py-3 text-sm font-semibold text-accent" data-testid="link-mobile-organizer">
+          {isAdmin && (
+            <Link href="/admin" onClick={() => setOpen(false)} className="block border-b border-foreground/10 py-3 text-sm font-semibold text-accent" data-testid="link-mobile-admin">
+              Admin console
+            </Link>
+          )}
+          <Link
+            href={isLoggedIn ? (isOrganiser ? '/organizer/events/create' : '/organizer') : '/register?role=organiser&redirect=/organizer/events/create'}
+            onClick={() => setOpen(false)}
+            className="block border-b border-foreground/10 py-3 text-sm font-semibold text-accent"
+            data-testid="link-mobile-organizer"
+          >
             List an event
           </Link>
+          <Link href="/dashboard" onClick={() => setOpen(false)} className="block border-b border-foreground/10 py-3 text-sm font-semibold" data-testid="link-mobile-dashboard">
+            Attendee dashboard
+          </Link>
+          {isLoggedIn ? (
+            <div className="pt-3">
+              <div className="flex items-center justify-between py-2 text-xs text-muted-foreground">
+                <span className="truncate">Signed in: <strong>{me.data?.email}</strong></span>
+                <span className="rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-bold text-accent">
+                  {me.data?.role === 'ADMIN' ? 'Admin' : me.data?.role === 'ORGANIZER' ? 'Organizer' : 'Attendee'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  logout.mutate();
+                }}
+                disabled={logout.isPending}
+                className="mt-2 block w-full rounded-full border border-destructive/30 px-4 py-2 text-center text-sm font-semibold text-destructive hover:bg-destructive/10"
+                data-testid="button-mobile-logout"
+              >
+                Sign out
+              </button>
+            </div>
+          ) : (
+            <Link
+              href="/login"
+              onClick={() => setOpen(false)}
+              className="mt-3 block rounded-full bg-primary px-4 py-2.5 text-center text-sm font-semibold text-primary-foreground hover:bg-accent"
+              data-testid="link-mobile-login"
+            >
+              Sign in
+            </Link>
+          )}
         </nav>
       )}
     </header>
@@ -1341,12 +1515,16 @@ function Footer() {
           <p className="mt-5 max-w-xs text-sm leading-6 text-primary-foreground/65">A high-signal guide to the events worth leaving home for.</p>
           <p className="mt-8 font-mono-face text-[10px] uppercase tracking-[.2em] text-primary-foreground/45">Made for curious people</p>
         </div>
-        <FooterCol title="Discover" links={[['Explore events', '/events'], ['Categories', '/categories'], ['Cities', '/cities']]} />
+        <FooterCol title="Discover" links={[['Explore events', '/events'], ['Sectors', '/categories'], ['Cities', '/cities']]} />
         <FooterCol title="Connect" links={[['Organizers', '/organizers'], ['Venues', '/venues'], ['For organizers', '/organizer']]} />
         <FooterCol title="Your 100 TIMES" links={[['Dashboard', '/dashboard'], ['My Schedule', '/dashboard/schedule'], ['Networking Hub', '/dashboard/networking'], ['Registrations & Pass', '/dashboard/registrations']]} />
       </div>
-      <div className="mx-auto flex max-w-[1440px] flex-wrap justify-between gap-3 border-t border-primary-foreground/15 px-5 py-5 text-xs text-primary-foreground/45 lg:px-10">
-        <span>© 2025 100 TIMES</span>
+      <div className="mx-auto flex max-w-[1440px] flex-wrap justify-between items-center gap-3 border-t border-primary-foreground/15 px-5 py-5 text-xs text-primary-foreground/45 lg:px-10">
+        <span>© 2026 100 TIMES</span>
+        <div className="flex gap-5">
+          <Link href="/privacy" className="hover:text-primary-foreground transition">Privacy Policy</Link>
+          <Link href="/terms" className="hover:text-primary-foreground transition">Terms of Service</Link>
+        </div>
         <span>Good events. Better conversations.</span>
       </div>
     </footer>
@@ -1481,7 +1659,14 @@ function SaveButton({ event, compact = false }: { event: EventCard; compact?: bo
   const [flash, setFlash] = useState('');
   const save = useSaveEvent();
   const unsave = useUnsaveEvent();
+  const [, setLocation] = useLocation();
+
   const toggle = () => {
+    const hasToken = typeof window !== 'undefined' && Boolean(localStorage.getItem('100-times-auth-token'));
+    if (!hasToken) {
+      setLocation(`/register?role=attendee&redirect=/events/${event.slug}`);
+      return;
+    }
     const next = !saved;
     setSaved(next);
     setFlash(next ? 'Saved' : 'Removed');
@@ -1673,7 +1858,7 @@ function HomePage() {
       <AIRecommendationsSection />
 
       <section className="mx-auto mt-24 max-w-[1440px] px-5 lg:px-10">
-        <SectionHeading kicker="02 / Browse by energy" title="Find your room" action="All categories" href="/categories" />
+        <SectionHeading kicker="02 / Browse by energy" title="Find your room" action="All sectors" href="/categories" />
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           {cats.slice(0, 4).map((cat, i) => (
             <Link href={`/categories/${cat.slug}`} key={cat.id} className={cx('hover-lift group rounded-2xl border border-foreground/10 bg-card p-5 sm:p-7', i === 1 && 'bg-secondary')} data-testid={`card-category-${cat.id}`}>
@@ -1720,27 +1905,102 @@ function HomePage() {
 }
 
 function EventsPage() {
+  const hasToken = typeof window !== 'undefined' && Boolean(localStorage.getItem('100-times-auth-token'));
   const [filters, setFilters] = useState<ListEventsParams>({ page: 1, pageSize: 8, sort: 'soonest', format: 'all' });
   const [term, setTerm] = useState('');
   const params = useMemo(() => ({ ...filters, q: term || undefined }), [filters, term]);
   const query = useListEvents(params);
-  const events = query.data?.items?.length ? query.data.items : fallbackEvents;
+  const rawEvents = query.data?.items?.length ? query.data.items : fallbackEvents;
+  const events = useMemo(() => {
+    if (!filters.country || query.data?.items?.length) return rawEvents;
+    const cLower = filters.country.toLowerCase();
+    return rawEvents.filter(e => {
+      const loc = (e.location || '').toLowerCase();
+      const ven = (e.venue || '').toLowerCase();
+      if (cLower === 'dubai') {
+        return loc.includes('dubai') || loc.includes('united arab emirates') || ven.includes('dubai');
+      }
+      return loc.includes(cLower) || ven.includes(cLower) ||
+        (cLower === 'india' && ['hyderabad', 'new delhi', 'mumbai', 'bengaluru'].some(c => loc.includes(c)));
+    });
+  }, [rawEvents, filters.country, query.data?.items]);
   const total = query.data?.total ?? events.length;
-  const pages = query.data?.totalPages ?? 1;
+  const pages = query.data?.totalPages ?? Math.max(1, Math.ceil(events.length / (filters.pageSize || 8)));
   return (
     <div className="page-enter mx-auto max-w-[1440px] px-5 py-12 lg:px-10 lg:py-20">
       <div className="max-w-3xl">
         <p className="font-mono-face text-xs uppercase tracking-[.2em] text-accent">The directory</p>
         <h1 className="mt-4 font-display text-5xl font-extrabold tracking-[-.07em] sm:text-7xl">Make a date<br />with an idea.</h1>
       </div>
+
+      {!hasToken && (
+        <div className="mt-8 rounded-2xl border border-accent/25 bg-accent/5 p-5 sm:p-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Sparkles size={16} className="text-accent" />
+              <span className="font-mono-face text-xs uppercase tracking-wider text-accent font-bold">Attendee & Organiser Access</span>
+            </div>
+            <p className="font-display text-lg font-bold">Create an account to reserve passes, save events & network</p>
+            <p className="text-xs text-muted-foreground">Hosting a conference, summit or expo? Create an organiser account to list your events on 100 TIMES.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+            <Link
+              href="/register?role=attendee&redirect=/events"
+              className="button-press rounded-full bg-primary px-4 py-2 text-xs font-bold text-primary-foreground hover:bg-accent"
+            >
+              Create Attendee Account
+            </Link>
+            <Link
+              href="/register?role=organiser&redirect=/organizer/events/create"
+              className="button-press rounded-full border border-foreground/15 bg-background px-4 py-2 text-xs font-semibold hover:border-accent hover:text-accent"
+            >
+              List an Event
+            </Link>
+            <Link
+              href="/login?redirect=/events"
+              className="text-xs font-semibold text-muted-foreground hover:text-foreground px-2"
+            >
+              Sign in
+            </Link>
+          </div>
+        </div>
+      )}
+
       <div className="mt-12 grid gap-8 lg:grid-cols-[250px_1fr]">
         <aside className="h-fit rounded-2xl border border-foreground/10 bg-card p-5 lg:sticky lg:top-24">
           <div className="flex items-center justify-between">
             <h2 className="font-display font-bold">Filter events</h2>
             <Filter size={16} className="text-accent" />
           </div>
+
           <label className="mt-6 block text-xs font-semibold text-muted-foreground">
-            Category
+            Country
+            <CountrySelect
+              value={filters.country}
+              onChange={(country) => setFilters((f) => ({ ...f, country, page: 1 }))}
+            />
+          </label>
+
+          {filters.country && (
+            <div className="mt-3 rounded-lg border border-accent/20 bg-accent/5 p-2.5 text-xs">
+              <div className="flex items-center justify-between font-semibold text-accent">
+                <span className="flex items-center gap-1.5"><Globe size={13} /> {filters.country}</span>
+                <button
+                  type="button"
+                  onClick={() => setFilters((f) => ({ ...f, country: undefined, page: 1 }))}
+                  className="text-[10px] text-muted-foreground hover:text-accent"
+                >
+                  ✕
+                </button>
+              </div>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Showing worldwide events discovered in {filters.country}.
+              </p>
+            </div>
+          )}
+
+          <label className="mt-4 block text-xs font-semibold text-muted-foreground">
+            Sector
             <select
               value={filters.category ?? ''}
               onChange={(e) => setFilters((f) => ({ ...f, category: e.target.value || undefined, page: 1 }))}
@@ -1771,13 +2031,13 @@ function EventsPage() {
             <input
               value={filters.city ?? ''}
               onChange={(e) => setFilters((f) => ({ ...f, city: e.target.value || undefined, page: 1 }))}
-              placeholder="Try Bengaluru"
+              placeholder={filters.country ? `Try cities in ${filters.country}...` : "Try London, New York, Bengaluru..."}
               className="mt-2 w-full rounded-lg border border-foreground/15 bg-background px-3 py-2.5 text-sm outline-none focus:border-accent"
               data-testid="input-filter-city"
             />
           </label>
           <button
-            onClick={() => { setFilters({ page: 1, pageSize: 8, sort: 'soonest', format: 'all' }); setTerm(''); }}
+            onClick={() => { setFilters({ page: 1, pageSize: 8, sort: 'soonest', format: 'all', country: undefined }); setTerm(''); }}
             className="mt-6 text-xs font-semibold text-accent hover:underline"
             data-testid="button-clear-filters"
           >
@@ -1859,6 +2119,7 @@ function EventsPage() {
 
 function EventDetailPage() {
   const { slug = '' } = useParams<{ slug: string }>();
+  const hasToken = typeof window !== 'undefined' && Boolean(localStorage.getItem('100-times-auth-token'));
   const query = useGetEvent(slug, { query: { queryKey: getGetEventQueryKey(slug) } });
   if (query.isLoading) return <LoadingState label="Opening the event" />;
   if (query.isError || !query.data) return <ErrorState retry={() => query.refetch()} title="We could not find that event." />;
@@ -1878,11 +2139,40 @@ function EventDetailPage() {
             <h1 className="mt-4 font-display text-5xl font-extrabold leading-[.92] tracking-[-.07em] sm:text-7xl">{event.title}</h1>
             <p className="mt-5 text-lg leading-7 text-muted-foreground">{event.description}</p>
             <div className="mt-8 flex flex-wrap gap-3">
-              <Link href={`/events/${event.slug}/register`} className="button-press inline-flex items-center gap-2 rounded-full bg-accent px-5 py-3 text-sm font-semibold text-accent-foreground hover:bg-primary hover:text-primary-foreground" data-testid="link-register-event">
+              <Link
+                href={hasToken ? `/events/${event.slug}/register` : `/register?role=attendee&redirect=/events/${event.slug}/register`}
+                className="button-press inline-flex items-center gap-2 rounded-full bg-accent px-5 py-3 text-sm font-semibold text-accent-foreground hover:bg-primary hover:text-primary-foreground"
+                data-testid="link-register-event"
+              >
                 Register now <ArrowRight size={16} />
               </Link>
               <SaveButton event={event} />
             </div>
+
+            {!hasToken && (
+              <div className="mt-6 rounded-2xl border border-accent/25 bg-accent/5 p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-xs">
+                <div>
+                  <span className="font-bold text-accent">Attending this event?</span>
+                  <p className="text-muted-foreground mt-0.5">
+                    Create a free attendee account to reserve tickets, receive your Digital Pass with QR badge, and add it to your schedule.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Link
+                    href={`/register?role=attendee&redirect=/events/${event.slug}/register`}
+                    className="button-press rounded-full bg-primary px-3.5 py-1.5 text-xs font-bold text-primary-foreground hover:bg-accent"
+                  >
+                    Create Account
+                  </Link>
+                  <Link
+                    href={`/login?role=attendee&redirect=/events/${event.slug}/register`}
+                    className="rounded-full border border-foreground/15 px-3 py-1.5 text-xs font-semibold hover:border-accent hover:text-accent"
+                  >
+                    Sign in
+                  </Link>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -2052,15 +2342,66 @@ function RegisterPage() {
   const { slug = '' } = useParams<{ slug: string }>();
   const eventQuery = useGetEvent(slug, { query: { queryKey: getGetEventQueryKey(slug) } });
   const mutation = useRegisterForEvent();
+  const hasToken = typeof window !== 'undefined' && Boolean(localStorage.getItem('100-times-auth-token'));
+  const me = useMe(hasToken);
   const [createdPass, setCreatedPass] = useState<RegistrationPass | null>(null);
   const [showPassModal, setShowPassModal] = useState(false);
   const [error, setError] = useState('');
   const [form, setForm] = useState<RegistrationInput>({ firstName: '', lastName: '', email: '', phone: '', company: '', jobTitle: '', country: 'India', ticketType: 'Standard' });
   const update = (key: keyof RegistrationInput, value: string) => setForm((f) => ({ ...f, [key]: value }));
 
+  // Auto-fill authenticated user data
+  useEffect(() => {
+    if (me.data) {
+      const parts = (me.data.name || '').split(' ');
+      setForm((f) => ({
+        ...f,
+        firstName: f.firstName || parts[0] || '',
+        lastName: f.lastName || parts.slice(1).join(' ') || '',
+        email: f.email || me.data?.email || '',
+      }));
+    }
+  }, [me.data]);
+
   if (eventQuery.isLoading) return <LoadingState label="Preparing registration" />;
   if (eventQuery.isError || !eventQuery.data) return <ErrorState title="That event is no longer available." />;
   const event = eventQuery.data;
+
+  if (!hasToken) {
+    return (
+      <div className="page-enter mx-auto max-w-xl px-5 py-24 text-center">
+        <div className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-accent/10 text-accent">
+          <Ticket size={30} />
+        </div>
+        <p className="mt-6 font-mono-face text-xs uppercase tracking-[.18em] text-accent">Attendee Registration</p>
+        <h1 className="mt-3 font-display text-4xl sm:text-5xl font-extrabold tracking-[-.06em]">
+          Create an account to reserve your place.
+        </h1>
+        <p className="mt-4 text-sm text-muted-foreground leading-relaxed">
+          Please create a free attendee account or sign in to reserve your ticket for <strong>{event.title}</strong> and receive your digital pass with instant QR verification.
+        </p>
+        <div className="mt-8 flex flex-wrap justify-center gap-3">
+          <Link
+            href={`/register?role=attendee&redirect=/events/${slug}/register`}
+            className="button-press rounded-full bg-primary px-6 py-3.5 text-sm font-bold text-primary-foreground hover:bg-accent"
+            data-testid="link-register-to-book"
+          >
+            Create Attendee Account
+          </Link>
+          <Link
+            href={`/login?role=attendee&redirect=/events/${slug}/register`}
+            className="rounded-full border border-foreground/15 px-6 py-3.5 text-sm font-semibold hover:border-accent hover:text-accent"
+            data-testid="link-login-to-book"
+          >
+            Sign In
+          </Link>
+        </div>
+        <p className="mt-8 text-xs text-muted-foreground">
+          Are you hosting an event? <Link href="/register?role=organiser&redirect=/organizer/events/create" className="text-accent underline font-semibold">List your event here</Link>
+        </p>
+      </div>
+    );
+  }
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -2207,13 +2548,13 @@ function Field({
 
 function DirectoryListPage({ kind }: { kind: 'categories' | 'cities' | 'organizers' | 'venues' }) {
   const config = {
-    categories: { title: 'Find your people.', kicker: 'Categories / The right rooms', hook: useListCategories, empty: fallbackCategories },
+    categories: { title: 'Find your people.', kicker: 'Sectors / The right rooms', hook: useListCategories, empty: fallbackCategories },
     cities: { title: 'Change your coordinates.', kicker: 'Cities / Go somewhere', hook: useListCities, empty: fallbackCities },
     organizers: { title: 'Follow the curators.', kicker: 'Organizers / People behind the rooms', hook: useListOrganizers, empty: [] as Organizer[] },
     venues: { title: 'Know the room.', kicker: 'Venues / Places with a point of view', hook: useListVenues, empty: [] as Venue[] },
   }[kind];
   const query = config.hook();
-  if (query.isLoading) return <LoadingState label={`Loading ${kind}`} />;
+  if (query.isLoading) return <LoadingState label={kind === 'categories' ? 'Loading sectors' : `Loading ${kind}`} />;
   if (query.isError && !query.data) return <ErrorState retry={() => query.refetch()} />;
   const data = (query.data?.length ? query.data : config.empty) as Array<Category | City | Organizer | Venue>;
   return (
@@ -2225,7 +2566,7 @@ function DirectoryListPage({ kind }: { kind: 'categories' | 'cities' | 'organize
           data.map((item, i) => <DirectoryCard key={item.id} item={item} kind={kind} index={i} />)
         ) : (
           <div className="sm:col-span-2 lg:col-span-3">
-            <EmptyState title={`No ${kind} indexed yet.`} />
+            <EmptyState title={kind === 'categories' ? 'No sectors indexed yet.' : `No ${kind} indexed yet.`} />
           </div>
         )}
       </div>
@@ -2255,7 +2596,7 @@ function DirectoryDetailPage({ kind }: { kind: 'category' | 'city' }) {
   const { slug = '' } = useParams<{ slug: string }>();
   const query = kind === 'category' ? useGetCategory(slug, { query: { queryKey: getGetCategoryQueryKey(slug) } }) : useGetCity(slug, { query: { queryKey: getGetCityQueryKey(slug) } });
   if (query.isLoading) return <LoadingState />;
-  if (query.isError || !query.data) return <ErrorState title={`We could not find that ${kind}.`} retry={() => query.refetch()} />;
+  if (query.isError || !query.data) return <ErrorState title={`We could not find that ${kind === 'category' ? 'sector' : kind}.`} retry={() => query.refetch()} />;
   const detail = query.data as DirectoryDetail;
   return (
     <div className="page-enter mx-auto max-w-[1440px] px-5 py-12 lg:px-10 lg:py-20">
@@ -2263,7 +2604,7 @@ function DirectoryDetailPage({ kind }: { kind: 'category' | 'city' }) {
         <ArrowLeft size={15} /> Back to directory
       </Link>
       <div className="mt-10 max-w-3xl">
-        <p className="font-mono-face text-xs uppercase tracking-[.18em] text-accent">{kind} / Directory</p>
+        <p className="font-mono-face text-xs uppercase tracking-[.18em] text-accent">{kind === 'category' ? 'Sector' : kind} / Directory</p>
         <h1 className="mt-4 font-display text-6xl font-extrabold tracking-[-.07em]">{detail.name}</h1>
         <p className="mt-5 max-w-xl text-lg leading-7 text-muted-foreground">{detail.description}</p>
       </div>
@@ -2388,37 +2729,249 @@ function SpeakerPage() {
   );
 }
 
-function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
+function AuthPage({ mode: initialMode }: { mode: 'login' | 'register' | 'forgot' }) {
   const [, setLocation] = useLocation();
+  const qc = useQueryClient();
   const login = useLogin();
   const register = useRegisterUser();
-  const [form, setForm] = useState({ name: '', email: '', password: '', country: 'India' });
+  const [currentMode, setCurrentMode] = useState<'login' | 'register' | 'forgot'>(initialMode);
+
+  // Read URL query params: e.g. ?role=admin or ?role=organiser or ?role=attendee or ?redirect=...
+  const queryParams = useMemo(() => {
+    if (typeof window === 'undefined') return new URLSearchParams();
+    return new URLSearchParams(window.location.search);
+  }, []);
+
+  const [roleType, setRoleType] = useState<'attendee' | 'organiser' | 'admin'>(() => {
+    const r = queryParams.get('role');
+    if (r === 'admin') return 'admin';
+    if (r === 'organiser' || r === 'organizer') return 'organiser';
+    return 'attendee';
+  });
+
+  const [form, setForm] = useState({
+    name: '',
+    email: '',
+    password: '',
+    company: '',
+    website: '',
+    city: 'Bengaluru',
+    country: 'India',
+  });
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState('');
-  const isForgot = mode === 'forgot';
-  const title = isForgot ? 'Reset your route.' : mode === 'login' ? 'Welcome back.' : 'Make room for more.';
+  const [isAccountNotFound, setIsAccountNotFound] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const submit = (e: FormEvent) => {
+  const sanitizeAuthError = (err: any): { message: string; isNotFound: boolean } => {
+    let raw = '';
+    if (err?.data && typeof err.data === 'object' && err.data.detail) {
+      raw = typeof err.data.detail === 'string' ? err.data.detail : JSON.stringify(err.data.detail);
+    } else if (typeof err?.message === 'string') {
+      raw = err.message;
+    } else if (typeof err === 'string') {
+      raw = err;
+    }
+
+    // Strip HTTP status prefix like "HTTP 401 Unauthorized: " or "HTTP 409 Conflict: "
+    const cleaned = raw.replace(/^HTTP\s+\d+\s+[^:]+:\s*/i, '').trim();
+    const lower = cleaned.toLowerCase();
+
+    // Check for non-existent account or unrecognized credentials
+    if (
+      lower.includes('no account details found') ||
+      lower.includes('incorrect email or password') ||
+      lower.includes('user not found') ||
+      lower.includes('account not found') ||
+      lower.includes('no user found') ||
+      lower.includes('unauthorized')
+    ) {
+      return {
+        message: 'No account details found. Please create a new account.',
+        isNotFound: true,
+      };
+    }
+
+    if (lower.includes('already exists')) {
+      return {
+        message: 'An account with this email already exists. Please sign in instead.',
+        isNotFound: false,
+      };
+    }
+
+    return {
+      message: cleaned || 'Unable to authenticate. Please verify your details and try again.',
+      isNotFound: false,
+    };
+  };
+
+  // Sync mode state if initialMode prop changes (e.g. route transitions)
+  useEffect(() => {
+    setCurrentMode(initialMode);
+    setError('');
+    setIsAccountNotFound(false);
+  }, [initialMode]);
+
+  const isForgot = currentMode === 'forgot';
+
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
+    setIsAccountNotFound(false);
+    setIsSubmitting(true);
+
     if (isForgot) {
-      setSubmitted(true);
+      try {
+        await customFetch('/api/auth/forgot-password', {
+          method: 'POST',
+          body: JSON.stringify({ email: form.email.trim().toLowerCase() }),
+        });
+      } catch {
+        // generic response prevents user enumeration
+      } finally {
+        setIsSubmitting(false);
+        setSubmitted(true);
+      }
       return;
     }
-    const action = mode === 'login' ? login : register;
-    const data = mode === 'login'
-      ? { email: form.email.trim().toLowerCase(), password: form.password }
-      : { ...form, email: form.email.trim().toLowerCase(), name: form.name.trim() };
-    action.mutate(
-      { data } as never,
-      {
-        onSuccess: (session) => {
-          localStorage.setItem('100-times-auth-token', session.token);
-          setLocation('/dashboard');
-        },
-        onError: () => setError('That did not work. Check your details and try again.'),
+
+    if (currentMode === 'login') {
+      login.mutate(
+        { data: { email: form.email.trim().toLowerCase(), password: form.password } } as never,
+        {
+          onSuccess: (session) => {
+            if (roleType === 'admin' && session.user?.role !== 'ADMIN') {
+              setIsSubmitting(false);
+              setError('This account does not have administrator privileges. Please switch to Attendee or Organiser.');
+              return;
+            }
+
+            localStorage.setItem('100-times-auth-token', session.token);
+            window.dispatchEvent(new Event('auth-change'));
+            qc.invalidateQueries({ queryKey: keys.me });
+            const redirect = queryParams.get('redirect');
+            if (redirect) {
+              setLocation(redirect);
+            } else if (session.user?.role === 'ADMIN' || roleType === 'admin') {
+              setLocation('/admin');
+            } else if (session.user?.role === 'ORGANIZER' || roleType === 'organiser') {
+              setLocation('/organizer');
+            } else {
+              setLocation('/dashboard');
+            }
+          },
+          onError: (err: any) => {
+            setIsSubmitting(false);
+            const { message, isNotFound } = sanitizeAuthError(err);
+            setError(message);
+            setIsAccountNotFound(isNotFound);
+          },
+        }
+      );
+      return;
+    }
+
+    // currentMode === 'register'
+    if (roleType === 'admin') {
+      setIsSubmitting(false);
+      setError('Administrator accounts must be provisioned internally. Please sign in with existing admin credentials.');
+      return;
+    }
+
+    try {
+      const regRes = await customFetch<{ token: string; user: any }>('/api/auth/register', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: form.name.trim(),
+          email: form.email.trim().toLowerCase(),
+          password: form.password,
+          country: form.country?.trim() || 'India',
+          company: roleType === 'organiser' ? (form.company.trim() || `${form.name.trim()}'s Organization`) : undefined,
+        }),
+      });
+
+      if (!regRes?.token) {
+        throw new Error('Registration failed to create session');
       }
-    );
+
+      localStorage.setItem('100-times-auth-token', regRes.token);
+      window.dispatchEvent(new Event('auth-change'));
+
+      if (roleType === 'organiser') {
+        // Perform secure organizer onboarding initialization
+        try {
+          await customFetch('/api/organizer/onboarding', {
+            method: 'POST',
+            body: JSON.stringify({
+              organizerName: form.name.trim(),
+              organizationName: form.company.trim() || `${form.name.trim()}'s Events`,
+              contactEmail: form.email.trim().toLowerCase(),
+              website: form.website?.trim() || '',
+              city: form.city?.trim() || 'Bengaluru',
+              country: form.country?.trim() || 'India',
+            }),
+          });
+        } catch (onboardErr) {
+          console.warn('Auto organizer onboarding warning:', onboardErr);
+        }
+        await qc.invalidateQueries({ queryKey: keys.me });
+        const redirect = queryParams.get('redirect');
+        setLocation(redirect || '/organizer');
+      } else {
+        await qc.invalidateQueries({ queryKey: keys.me });
+        const redirect = queryParams.get('redirect');
+        setLocation(redirect || '/dashboard');
+      }
+    } catch (regErr: any) {
+      setIsSubmitting(false);
+      const { message } = sanitizeAuthError(regErr);
+      setError(message || 'Unable to create account. Please check your details and try again.');
+      setIsAccountNotFound(false);
+    }
+  };
+
+  const getKicker = () => {
+    if (isForgot) return 'Account / Access Recovery';
+    if (currentMode === 'login') {
+      if (roleType === 'admin') return 'Admin Console / Secure Access';
+      if (roleType === 'organiser') return 'Organiser Studio / Sign In';
+      return 'Attendee Portal / Sign In';
+    }
+    if (roleType === 'admin') return 'Platform Administration / Access Control';
+    if (roleType === 'organiser') return 'Organiser Account / Host with 100 TIMES';
+    return 'Attendee Account / New Member';
+  };
+
+  const getTitle = () => {
+    if (isForgot) return 'Reset your password.';
+    if (currentMode === 'login') {
+      if (roleType === 'admin') return 'Operations sign in.';
+      if (roleType === 'organiser') return 'Welcome back, Host.';
+      return 'Welcome back.';
+    }
+    if (roleType === 'admin') return 'Privileged provisioning.';
+    if (roleType === 'organiser') return 'Publish & grow your event.';
+    return 'Make room for more.';
+  };
+
+  const getSubtitle = () => {
+    if (isForgot) return 'Enter your account email to receive a single-use password reset link.';
+    if (currentMode === 'login') {
+      if (roleType === 'admin') {
+        return 'Sign in with your verified administrator credentials to access platform operations, telemetry, and agents.';
+      }
+      if (roleType === 'organiser') {
+        return 'Sign in to manage your events, view attendee registrations, and run promotions.';
+      }
+      return 'Sign in to access your curated schedule, saved events, and digital passes.';
+    }
+    if (roleType === 'admin') {
+      return 'Platform administrator accounts require privileged internal assignment and cannot be created through public self-registration.';
+    }
+    if (roleType === 'organiser') {
+      return 'Create your verified organiser workspace to list events and reach qualified attendees.';
+    }
+    return 'Create your attendee account to discover high-signal events and network with peers.';
   };
 
   return (
@@ -2426,78 +2979,353 @@ function AuthPage({ mode }: { mode: 'login' | 'register' | 'forgot' }) {
       <div className="hidden bg-[#193d42] p-12 text-[#f3eadb] lg:flex lg:flex-col lg:justify-between">
         <Logo />
         <div>
-          <p className="font-mono-face text-xs uppercase tracking-[.18em] text-[#ec715c]">Your field guide</p>
+          <p className="font-mono-face text-xs uppercase tracking-[.18em] text-[#ec715c]">
+            {roleType === 'admin'
+              ? 'Platform Operations'
+              : roleType === 'organiser'
+              ? 'Organiser Portal'
+              : 'Attendee Field Guide'}
+          </p>
           <p className="mt-5 max-w-md font-display text-5xl font-bold leading-[.95] tracking-[-.06em]">
-            The right room can change the shape of a year.
+            {roleType === 'admin'
+              ? 'Autonomous agents, observability, and trusted event governance.'
+              : roleType === 'organiser'
+              ? 'Put your events in front of the people who matter.'
+              : 'The right room can change the shape of a year.'}
           </p>
         </div>
         <p className="text-sm text-[#f3eadb]/55">100 TIMES · A trusted event guide</p>
       </div>
-      <div className="flex items-center justify-center px-5 py-16">
+
+      <div className="flex items-center justify-center px-5 py-12 sm:py-16">
         <div className="w-full max-w-md">
-          <Link href="/" className="mb-12 inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-accent" data-testid="link-auth-home">
+          <Link href="/" className="mb-8 inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-accent" data-testid="link-auth-home">
             <ArrowLeft size={15} /> Back to 100 TIMES
           </Link>
+
+          {/* Three-Role Selection Tabs (Attendee vs Organiser vs Admin) */}
+          {!isForgot && (
+            <div className="mb-6 rounded-2xl border border-foreground/10 bg-secondary/50 p-1.5 flex gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setRoleType('attendee');
+                  setError('');
+                  setIsAccountNotFound(false);
+                }}
+                className={cx(
+                  'flex-1 flex items-center justify-center gap-1.5 rounded-xl py-2.5 text-xs font-bold transition-all',
+                  roleType === 'attendee'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+                data-testid="tab-auth-attendee"
+              >
+                <UserRound size={15} className={roleType === 'attendee' ? 'text-accent' : ''} />
+                <span>Attendee</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setRoleType('organiser');
+                  setError('');
+                  setIsAccountNotFound(false);
+                }}
+                className={cx(
+                  'flex-1 flex items-center justify-center gap-1.5 rounded-xl py-2.5 text-xs font-bold transition-all',
+                  roleType === 'organiser'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+                data-testid="tab-auth-organiser"
+              >
+                <Sparkles size={15} className={roleType === 'organiser' ? 'text-accent' : ''} />
+                <span>Organiser</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setRoleType('admin');
+                  setError('');
+                  setIsAccountNotFound(false);
+                }}
+                className={cx(
+                  'flex-1 flex items-center justify-center gap-1.5 rounded-xl py-2.5 text-xs font-bold transition-all',
+                  roleType === 'admin'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+                data-testid="tab-auth-admin"
+              >
+                <ShieldCheck size={15} className={roleType === 'admin' ? 'text-accent' : ''} />
+                <span>Admin</span>
+              </button>
+            </div>
+          )}
+
           <p className="font-mono-face text-xs uppercase tracking-[.18em] text-accent">
-            {isForgot ? 'Account / Access' : mode === 'login' ? 'Account / Sign in' : 'Account / New here'}
+            {getKicker()}
           </p>
-          <h1 className="mt-4 font-display text-5xl font-extrabold tracking-[-.07em]">{title}</h1>
+          <h1 className="mt-3 font-display text-4xl sm:text-5xl font-extrabold tracking-[-.07em]">
+            {getTitle()}
+          </h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            {getSubtitle()}
+          </p>
+
           {submitted ? (
             <div className="mt-8 rounded-2xl bg-secondary p-6">
               <Check className="text-secondary-foreground" />
               <p className="mt-4 font-semibold">Check your inbox.</p>
-              <p className="mt-2 text-sm leading-6 text-muted-foreground">If there is an account for {form.email}, you will receive a reset link shortly.</p>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                If an account exists for {form.email}, you will receive a secure single-use password reset link shortly.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setSubmitted(false);
+                  setCurrentMode('login');
+                }}
+                className="mt-5 rounded-full bg-primary px-5 py-2 text-xs font-bold text-primary-foreground hover:bg-accent"
+              >
+                Back to Sign in
+              </button>
+            </div>
+          ) : currentMode === 'register' && roleType === 'admin' ? (
+            <div className="mt-8 rounded-2xl border border-foreground/10 bg-secondary/40 p-6 space-y-4">
+              <div className="flex items-center gap-3">
+                <ShieldCheck size={24} className="text-accent" />
+                <h3 className="font-display text-lg font-bold">Privileged Access Only</h3>
+              </div>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Platform administrator accounts cannot be created publicly. Administrators must be provisioned internally. If you are a designated administrator, please sign in.
+              </p>
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentMode('login');
+                    setError('');
+                  }}
+                  className="button-press w-full rounded-full bg-primary px-5 py-3.5 text-xs font-bold text-primary-foreground hover:bg-accent transition shadow-sm"
+                  data-testid="button-switch-admin-login"
+                >
+                  Sign In to Admin Console
+                </button>
+              </div>
             </div>
           ) : (
-            <form onSubmit={submit} className="mt-9 space-y-5">
-              {mode === 'register' && <Field label="Your name" value={form.name} onChange={(v) => setForm((f) => ({ ...f, name: v }))} required testId="input-auth-name" />}
-              <Field label="Email" type="email" value={form.email} onChange={(v) => setForm((f) => ({ ...f, email: v }))} required testId="input-auth-email" />
-              {mode === 'login' && (
-                <div className="rounded-2xl border border-foreground/10 bg-secondary/50 p-4">
-                  <p className="font-mono-face text-[10px] uppercase tracking-wider text-muted-foreground mb-2">Quick Demo Accounts (1-Click Fill):</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setForm((f) => ({ ...f, email: 'admin@100times.in', password: 'AdminPass123!' }))}
-                      className="rounded-full border border-foreground/15 bg-background px-3 py-1 text-xs font-semibold hover:border-accent hover:text-accent"
-                    >
-                      👑 Admin
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setForm((f) => ({ ...f, email: 'demo@100times.in', password: 'DemoPass123!' }))}
-                      className="rounded-full border border-foreground/15 bg-background px-3 py-1 text-xs font-semibold hover:border-accent hover:text-accent"
-                    >
-                      👤 Attendee
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setForm((f) => ({ ...f, email: 'organizer@100times.in', password: 'OrganizerPass123!' }))}
-                      className="rounded-full border border-foreground/15 bg-background px-3 py-1 text-xs font-semibold hover:border-accent hover:text-accent"
-                    >
-                      🏢 Organizer
-                    </button>
-                  </div>
-                </div>
+            <form onSubmit={submit} className="mt-8 space-y-4">
+              {currentMode === 'register' && (
+                <Field
+                  label={roleType === 'organiser' ? 'Organizer / Contact Name *' : 'Your Full Name *'}
+                  value={form.name}
+                  onChange={(v) => setForm((f) => ({ ...f, name: v }))}
+                  required
+                  testId="input-auth-name"
+                />
               )}
-              {!isForgot && <Field label="Password" type="password" value={form.password} onChange={(v) => setForm((f) => ({ ...f, password: v }))} required testId="input-auth-password" />}
-              {mode === 'register' && <Field label="Country" value={form.country} onChange={(v) => setForm((f) => ({ ...f, country: v }))} testId="input-auth-country" />}
-              {error && <p className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive" data-testid="status-auth-error">{error}</p>}
-              <button disabled={login.isPending || register.isPending} className="button-press flex w-full items-center justify-center gap-2 rounded-full bg-primary px-5 py-3.5 text-sm font-bold text-primary-foreground hover:bg-accent" data-testid="button-auth-submit">
-                {login.isPending || register.isPending ? <Loader2 size={16} className="animate-spin" /> : <LockKeyhole size={16} />}
-                {isForgot ? 'Send reset link' : mode === 'login' ? 'Sign in' : 'Create account'}
+
+              <Field
+                label={roleType === 'admin' ? 'Administrator Email *' : roleType === 'organiser' && currentMode === 'register' ? 'Official Work Email *' : 'Email Address *'}
+                type="email"
+                value={form.email}
+                onChange={(v) => setForm((f) => ({ ...f, email: v }))}
+                required
+                testId="input-auth-email"
+              />
+
+              {currentMode === 'register' && roleType === 'organiser' && (
+                <>
+                  <Field
+                    label="Organization / Company Name *"
+                    value={form.company}
+                    onChange={(v) => setForm((f) => ({ ...f, company: v }))}
+                    required
+                    testId="input-auth-company"
+                  />
+                  <Field
+                    label="Organization Website (optional)"
+                    type="url"
+                    value={form.website}
+                    onChange={(v) => setForm((f) => ({ ...f, website: v }))}
+                    testId="input-auth-website"
+                  />
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field
+                      label="Headquarters City"
+                      value={form.city}
+                      onChange={(v) => setForm((f) => ({ ...f, city: v }))}
+                      testId="input-auth-city"
+                    />
+                    <Field
+                      label="Country"
+                      value={form.country}
+                      onChange={(v) => setForm((f) => ({ ...f, country: v }))}
+                      testId="input-auth-country"
+                    />
+                  </div>
+                </>
+              )}
+
+              {!isForgot && (
+                <Field
+                  label="Password *"
+                  type="password"
+                  value={form.password}
+                  onChange={(v) => setForm((f) => ({ ...f, password: v }))}
+                  required
+                  minLength={8}
+                  testId="input-auth-password"
+                />
+              )}
+
+              {currentMode === 'register' && roleType === 'attendee' && (
+                <Field
+                  label="Country"
+                  value={form.country}
+                  onChange={(v) => setForm((f) => ({ ...f, country: v }))}
+                  testId="input-auth-country"
+                />
+              )}
+
+              {error && (
+                isAccountNotFound && roleType !== 'admin' ? (
+                  <div
+                    className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm animate-in fade-in"
+                    data-testid="status-auth-error"
+                  >
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className="mt-0.5 shrink-0 text-amber-500" size={18} />
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold text-foreground">No account details found</p>
+                        <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+                          We couldn't find an existing account for <strong className="text-foreground">{form.email || 'this email'}</strong>. Please create a new account to continue.
+                        </p>
+                        <div className="mt-3">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCurrentMode('register');
+                              setError('');
+                              setIsAccountNotFound(false);
+                            }}
+                            className="button-press inline-flex items-center gap-1.5 rounded-full bg-accent px-4 py-2 text-xs font-bold text-accent-foreground shadow-sm hover:opacity-90"
+                            data-testid="button-switch-to-create-account"
+                          >
+                            <UserPlus size={14} />
+                            Create New {roleType === 'organiser' ? 'Organiser' : 'Attendee'} Account
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    className="rounded-xl bg-destructive/10 border border-destructive/20 p-3 text-sm text-destructive flex items-center gap-2.5 animate-in fade-in"
+                    data-testid="status-auth-error"
+                  >
+                    <AlertTriangle size={16} className="shrink-0 text-destructive" />
+                    <p className="text-xs leading-relaxed">{error}</p>
+                  </div>
+                )
+              )}
+
+              <button
+                type="submit"
+                disabled={login.isPending || register.isPending || isSubmitting}
+                className="button-press flex w-full items-center justify-center gap-2 rounded-full bg-primary px-5 py-3.5 text-sm font-bold text-primary-foreground hover:bg-accent disabled:opacity-50 transition-colors shadow-sm"
+                data-testid="button-auth-submit"
+              >
+                {login.isPending || register.isPending || isSubmitting ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : roleType === 'admin' ? (
+                  <ShieldCheck size={16} />
+                ) : roleType === 'organiser' && currentMode === 'register' ? (
+                  <Sparkles size={16} />
+                ) : (
+                  <LockKeyhole size={16} />
+                )}
+                {isForgot
+                  ? 'Send password reset link'
+                  : currentMode === 'login'
+                  ? roleType === 'admin'
+                    ? 'Sign In to Admin Console'
+                    : roleType === 'organiser'
+                    ? 'Sign In to Organiser Desk'
+                    : 'Sign In as Attendee'
+                  : roleType === 'organiser'
+                  ? 'Create Organiser Account'
+                  : 'Create Attendee Account'}
               </button>
             </form>
           )}
-          <div className="mt-7 text-sm text-muted-foreground">
-            {mode === 'login' ? (
-              <>
-                <Link href="/forgot-password" className="font-semibold text-foreground hover:text-accent" data-testid="link-forgot-password">Forgot password?</Link>
-                <span className="mx-2">·</span>
-                <Link href="/register" className="font-semibold text-foreground hover:text-accent" data-testid="link-create-account">Create account</Link>
-              </>
+
+          {/* Mode Switcher Footer */}
+          <div className="mt-8 border-t border-foreground/10 pt-5 text-sm text-muted-foreground">
+            {currentMode === 'login' ? (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                {roleType === 'admin' ? (
+                  <span className="text-xs text-muted-foreground">
+                    Restricted operational console
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCurrentMode('register');
+                      setError('');
+                      setIsAccountNotFound(false);
+                    }}
+                    className="font-semibold text-foreground hover:text-accent"
+                    data-testid="link-create-account"
+                  >
+                    {roleType === 'organiser' ? 'New organiser? Create account' : 'New attendee? Create account'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentMode('forgot');
+                    setError('');
+                    setIsAccountNotFound(false);
+                  }}
+                  className="text-xs text-muted-foreground hover:text-foreground"
+                  data-testid="link-forgot-password"
+                >
+                  Forgot password?
+                </button>
+              </div>
+            ) : currentMode === 'register' ? (
+              <div className="text-center">
+                <span>Already have an account? </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentMode('login');
+                    setError('');
+                    setIsAccountNotFound(false);
+                  }}
+                  className="font-semibold text-foreground hover:text-accent ml-1"
+                  data-testid="link-existing-account"
+                >
+                  Sign in here
+                </button>
+              </div>
             ) : (
-              !isForgot && <Link href="/login" className="font-semibold text-foreground hover:text-accent" data-testid="link-existing-account">Already have an account?</Link>
+              <div className="text-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentMode('login');
+                    setError('');
+                    setIsAccountNotFound(false);
+                  }}
+                  className="font-semibold text-foreground hover:text-accent"
+                >
+                  ← Back to Sign in
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -2520,6 +3348,7 @@ function DashboardNav() {
     ['Recommendations', '/dashboard/recommendations', Sparkles],
     ['Notifications', '/dashboard/notifications', Bell],
     ['Settings', '/dashboard/settings', Settings2],
+    ['Admin Console', '/admin', ShieldCheck],
   ] as const;
 
   return (
@@ -2894,6 +3723,7 @@ function RegistrationsTab({
 
 function SettingsPanel() {
   const [saved, setSaved] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const updateMutation = useUpdateProfile();
 
   const [form, setForm] = useState({
@@ -2934,28 +3764,68 @@ function SettingsPanel() {
           />
         </label>
         <Field label="Country" value={form.country} onChange={(v) => setForm((f) => ({ ...f, country: v }))} testId="input-settings-country" />
-        <button
-          type="submit"
-          disabled={updateMutation.isPending}
-          className="button-press rounded-full bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground hover:bg-accent disabled:opacity-60"
-          data-testid="button-save-settings"
-        >
-          {updateMutation.isPending ? 'Saving...' : saved ? '✓ Saved' : 'Save preferences'}
-        </button>
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+          <button
+            type="submit"
+            disabled={updateMutation.isPending}
+            className="button-press rounded-full bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground hover:bg-accent disabled:opacity-60"
+            data-testid="button-save-settings"
+          >
+            {updateMutation.isPending ? 'Saving...' : saved ? '✓ Saved' : 'Save preferences'}
+          </button>
+        </div>
       </form>
+
+      {/* Danger Zone: Delete Account */}
+      <div className="mt-10 pt-6 border-t border-foreground/10 space-y-3">
+        <h3 className="font-display text-base font-bold text-rose-500">Danger Zone</h3>
+        <p className="text-xs text-muted-foreground">
+          Permanently remove your 100 TIMES account, personal profile, and associated event data.
+        </p>
+        <button
+          type="button"
+          onClick={() => setShowDeleteModal(true)}
+          className="rounded-full border border-rose-500/30 bg-rose-500/10 px-4 py-2 text-xs font-bold text-rose-500 hover:bg-rose-500 hover:text-white transition"
+          data-testid="button-open-delete-account"
+        >
+          Delete Account
+        </button>
+      </div>
+      <DeleteAccountModal isOpen={showDeleteModal} onClose={() => setShowDeleteModal(false)} />
     </div>
   );
 }
 
 function DashboardPage({ tab = 'overview' }: { tab?: string }) {
+  const me = useMe();
   const dash = useGetDashboard();
   const saved = useGetSavedEvents();
   const regs = useGetRegistrations();
   const notes = useGetNotifications();
   const [selectedPass, setSelectedPass] = useState<RegistrationPass | null>(null);
 
+  const token = typeof window !== 'undefined' ? localStorage.getItem('100-times-auth-token') : null;
+
   if (dash.isLoading) return <LoadingState label="Loading your dashboard" />;
-  if (dash.isError) return <ErrorState retry={() => dash.refetch()} />;
+  if (dash.isError || !token) {
+    return (
+      <div className="page-enter mx-auto max-w-xl px-5 py-32 text-center">
+        <p className="font-mono-face text-xs uppercase tracking-[.18em] text-accent">Attendee Dashboard</p>
+        <h1 className="mt-4 font-display text-4xl font-extrabold tracking-[-.06em]">Sign in to access your dashboard</h1>
+        <p className="mt-3 text-sm text-muted-foreground">
+          Sign in to view your personalized schedule, attendee networking connections, saved events, and digital passes.
+        </p>
+        <div className="mt-6 flex flex-wrap justify-center gap-3">
+          <Link href="/login?redirect=/dashboard" className="rounded-full bg-primary px-6 py-3 text-sm font-bold text-primary-foreground hover:bg-accent" data-testid="link-dashboard-login">
+            Sign in
+          </Link>
+          <Link href="/register?redirect=/dashboard" className="rounded-full border border-foreground/15 px-6 py-3 text-sm font-semibold hover:border-accent hover:text-accent">
+            Create account
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   const data = dash.data;
   const savedEvents = saved.data ?? data?.saved ?? [];
@@ -2975,10 +3845,13 @@ function DashboardPage({ tab = 'overview' }: { tab?: string }) {
 
   return (
     <div className="page-enter mx-auto max-w-[1440px] px-5 py-12 lg:px-10 lg:py-16">
+      {me.data?.emailVerified === false && (
+        <EmailVerificationBanner userEmail={me.data?.email} />
+      )}
       <div className="mb-10">
         <p className="font-mono-face text-xs uppercase tracking-[.18em] text-accent">Dashboard / {tab}</p>
         <h1 className="mt-4 font-display text-5xl font-extrabold tracking-[-.07em]">{titles[tab] ?? titles.overview}</h1>
-        <p className="mt-3 text-muted-foreground">Good to see you, {data?.userName ?? 'Aarav'}.</p>
+        <p className="mt-3 text-muted-foreground">Good to see you, {me.data?.name || data?.userName || 'Member'}.</p>
       </div>
       <div className="grid gap-8 lg:grid-cols-[235px_1fr]">
         <DashboardNav />
@@ -3229,7 +4102,7 @@ function CreateEventPage() {
           </div>
           <Field label="Event type" value={form.eventType} onChange={(v) => set('eventType', v)} required testId="input-event-type" />
           <label className="block text-xs font-semibold text-muted-foreground">
-            Category
+            Sector
             <select value={form.category} onChange={(e) => set('category', e.target.value)} className="mt-2 w-full rounded-lg border border-foreground/15 bg-background px-3 py-3 text-sm" data-testid="select-event-category">
               {fallbackCategories.map((c) => (
                 <option key={c.slug} value={c.slug}>{c.name}</option>
@@ -3263,7 +4136,7 @@ const ADMIN_NAV = [
   { view: 'events', label: 'Events', href: '/admin/events' },
   { view: 'users', label: 'Users', href: '/admin/users' },
   { view: 'organizers', label: 'Organizers', href: '/admin/organizers' },
-  { view: 'categories', label: 'Categories', href: '/admin/categories' },
+  { view: 'categories', label: 'Sectors', href: '/admin/categories' },
   { view: 'venues', label: 'Venues', href: '/admin/venues' },
   { view: 'reviews', label: 'Reviews', href: '/admin/reviews' },
 ];
@@ -3290,7 +4163,7 @@ function AdminEventsWorkspace() {
           <Search className="absolute left-3.5 top-3.5 text-muted-foreground" size={16} />
           <input
             type="text"
-            placeholder="Search events, organizers, categories..."
+            placeholder="Search events, organizers, sectors..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full rounded-full border border-foreground/15 bg-card py-2.5 pl-10 pr-4 text-sm focus:border-accent focus:outline-none"
@@ -3317,7 +4190,7 @@ function AdminEventsWorkspace() {
             <thead>
               <tr className="border-b border-foreground/10 bg-muted/30 font-mono-face text-[11px] uppercase tracking-wider text-muted-foreground">
                 <th className="px-6 py-3.5">Event</th>
-                <th className="px-6 py-3.5">Category</th>
+                <th className="px-6 py-3.5">Sector</th>
                 <th className="px-6 py-3.5">Date & Time</th>
                 <th className="px-6 py-3.5">Format & Price</th>
                 <th className="px-6 py-3.5">Status</th>
@@ -3593,10 +4466,11 @@ function AdminCategoriesWorkspace() {
   const query = useListCategories();
   const [search, setSearch] = useState('');
 
-  if (query.isLoading) return <LoadingState label="Loading categories" />;
+  if (query.isLoading) return <LoadingState label="Loading sectors" />;
   if (query.isError) return <ErrorState retry={() => query.refetch()} />;
 
-  const categories = (query.data ?? []).filter((c) => {
+  const sourceCategories = query.data?.length ? query.data : fallbackCategories;
+  const categories = sourceCategories.filter((c) => {
     return !search || c.name.toLowerCase().includes(search.toLowerCase()) || c.slug.toLowerCase().includes(search.toLowerCase());
   });
 
@@ -3606,7 +4480,7 @@ function AdminCategoriesWorkspace() {
         <Search className="absolute left-3.5 top-3.5 text-muted-foreground" size={16} />
         <input
           type="text"
-          placeholder="Search categories..."
+          placeholder="Search sectors..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="w-full rounded-full border border-foreground/15 bg-card py-2.5 pl-10 pr-4 text-sm focus:border-accent focus:outline-none"
@@ -3618,7 +4492,7 @@ function AdminCategoriesWorkspace() {
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="border-b border-foreground/10 bg-muted/30 font-mono-face text-[11px] uppercase tracking-wider text-muted-foreground">
-                <th className="px-6 py-3.5">Category</th>
+                <th className="px-6 py-3.5">Sector</th>
                 <th className="px-6 py-3.5">Slug</th>
                 <th className="px-6 py-3.5">Description</th>
                 <th className="px-6 py-3.5 text-right">View</th>
@@ -3628,7 +4502,7 @@ function AdminCategoriesWorkspace() {
               {categories.length === 0 ? (
                 <tr>
                   <td colSpan={4} className="px-6 py-12 text-center text-muted-foreground">
-                    No categories found.
+                    No sectors found.
                   </td>
                 </tr>
               ) : (
@@ -3649,7 +4523,7 @@ function AdminCategoriesWorkspace() {
           </table>
         </div>
         <div className="border-t border-foreground/10 px-6 py-3 font-mono-face text-xs text-muted-foreground">
-          Showing {categories.length} of {query.data?.length ?? 0} categories
+          Showing {categories.length} of {query.data?.length ?? 0} sectors
         </div>
       </div>
     </div>
@@ -3896,9 +4770,9 @@ function AdminPage({ view = 'overview' }: { view?: string }) {
         <div className="mt-12 grid gap-5 lg:grid-cols-2">
           <div className="rounded-2xl border border-foreground/10 bg-card p-6">
             <div className="flex items-center justify-between">
-              <p className="font-mono-face text-[10px] uppercase tracking-[.15em] text-accent">Popular categories</p>
+              <p className="font-mono-face text-[10px] uppercase tracking-[.15em] text-accent">Popular sectors</p>
               <Link href="/admin/categories" className="font-mono-face text-[10px] text-accent hover:underline flex items-center gap-1">
-                View all categories <ArrowRight size={10} />
+                View all sectors <ArrowRight size={10} />
               </Link>
             </div>
             <div className="mt-5 space-y-3">
@@ -3975,6 +4849,15 @@ function Router() {
 
         {/* Admin Console — Organizer Discovery, Outreach, Trust Agent 3, Attendee Agent & n8n Automations */}
         <Route path="/admin" component={() => <OpsLayout><OpsDashboardPage /></OpsLayout>} />
+        <Route path="/admin/observability" component={() => <OpsLayout><ObservabilityPage /></OpsLayout>} />
+        <Route path="/privacy" component={() => <PrivacyPolicyPage />} />
+        <Route path="/terms" component={() => <TermsOfServicePage />} />
+        <Route path="/verify-email" component={() => <VerifyEmailPage />} />
+        <Route path="/reset-password" component={() => <ResetPasswordPage />} />
+        <Route path="/admin/automations" component={() => <OpsLayout><AutomationsPage /></OpsLayout>} />
+        <Route path="/admin/community-discovery" component={() => <Redirect to="/admin/automations" />} />
+        <Route path="/admin/community-promotion" component={() => <Redirect to="/admin/automations" />} />
+        <Route path="/admin/social-promotions" component={() => <OpsLayout><SocialPromotionsPage /></OpsLayout>} />
         <Route path="/admin/trust-review" component={() => <OpsLayout><TrustReviewPage /></OpsLayout>} />
         <Route path="/admin/attendee-agent" component={() => <OpsLayout><AttendeeAgentPage /></OpsLayout>} />
         <Route path="/admin/workflows" component={() => <OpsLayout><WorkflowsLogsPage mode="workflows" /></OpsLayout>} />

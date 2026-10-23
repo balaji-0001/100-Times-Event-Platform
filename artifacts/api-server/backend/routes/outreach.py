@@ -27,6 +27,8 @@ from backend.schemas import (
     DiscoveredEventOut,
     DiscoveredOrganizerOut,
     OutreachActionRequest,
+    OutreachAutoStatusOut,
+    OutreachAutoToggleRequest,
     OutreachBatchRunRequest,
     OutreachEditRequest,
     OutreachMessageOut,
@@ -41,6 +43,12 @@ from backend.schemas import (
 from backend.services.smtp_config import get_smtp_info, save_smtp_settings, send_test_email
 from backend.services.social_agent import state_machine
 from backend.services.social_agent.outreach import suppression
+from backend.services.social_agent.outreach.auto_toggle import (
+    get_outreach_auto_settings,
+    is_outreach_auto_enabled,
+    set_outreach_auto_enabled,
+    set_outreach_auto_settings,
+)
 from backend.services.social_agent.outreach.followup import process_followups
 from backend.services.social_agent.outreach.orchestrator import run_organizer_outreach, run_outreach_agent, send_outreach_message
 from backend.services.social_agent.outreach.senders import clear_outbox, get_outbox, provider_status
@@ -132,6 +140,79 @@ def get_outreach_run(run_id: int, db: Session = Depends(get_db), _user: User = _
     if run is None or run.agent_type != "outreach":
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Outreach run not found")
     return AgentRunOut.model_validate(run)
+
+
+@router.get("/auto")
+def get_outreach_auto(db: Session = Depends(get_db), _user: User = _admin) -> OutreachAutoStatusOut:
+    """Live state of Agent 2's on/off switch. When enabled, the background
+    loops that are always running (see `services/social_agent/
+    scheduler.py`) actually draft new candidates and sweep for follow-ups on
+    their configured intervals, instead of skipping each tick. Either way,
+    nothing is ever auto-sent — drafts still land at PENDING_APPROVAL for a
+    human to approve. Registered before `/{outreach_id}` so "auto" is never
+    swallowed by that dynamic int path."""
+    settings = get_settings()
+    auto_scope = get_outreach_auto_settings(db)
+    return OutreachAutoStatusOut(
+        enabled=is_outreach_auto_enabled(db),
+        draft_interval_minutes=auto_scope.get("draft_interval_minutes") or settings.outreach_scan_interval_minutes,
+        followup_interval_minutes=auto_scope.get("followup_interval_minutes") or settings.outreach_followup_interval_minutes,
+        country=auto_scope.get("country"),
+        countries=auto_scope.get("countries") or ([] if not auto_scope.get("country") else [auto_scope.get("country")]),
+        cities=auto_scope.get("cities") or [],
+        states=auto_scope.get("states") or [],
+        categories=auto_scope.get("categories") or [],
+        max_candidates=auto_scope.get("max_candidates", settings.outreach_max_candidates_per_run),
+        daily_limit=auto_scope.get("daily_limit", 100),
+        followup_wait_days=auto_scope.get("followup_wait_days", settings.organizer_followup_first_wait_days),
+        max_followup_attempts=auto_scope.get("max_followup_attempts", settings.organizer_followup_max_attempts),
+        sender_name=auto_scope.get("sender_name", "100 TIMES Partnerships"),
+        template_style=auto_scope.get("template_style", "invitational"),
+    )
+
+
+@router.patch("/auto")
+def set_outreach_auto(payload: OutreachAutoToggleRequest, db: Session = Depends(get_db), _user: User = _admin) -> OutreachAutoStatusOut:
+    """Flip the switch or configure automated outreach targeting and cadence.
+    Takes effect on the next scheduler tick — no restart needed — and persists across restarts."""
+    if payload.enabled is not None:
+        set_outreach_auto_enabled(db, payload.enabled)
+
+    settings_updates: dict = {}
+    if payload.country is not None:
+        settings_updates["country"] = payload.country
+    if payload.countries is not None:
+        settings_updates["countries"] = payload.countries
+        if payload.countries and not payload.country:
+            settings_updates["country"] = payload.countries[0]
+    if payload.cities is not None:
+        settings_updates["cities"] = payload.cities
+    if payload.states is not None:
+        settings_updates["states"] = payload.states
+    if payload.categories is not None:
+        settings_updates["categories"] = payload.categories
+    if payload.max_candidates is not None:
+        settings_updates["max_candidates"] = payload.max_candidates
+    if payload.daily_limit is not None:
+        settings_updates["daily_limit"] = payload.daily_limit
+    if payload.followup_wait_days is not None:
+        settings_updates["followup_wait_days"] = payload.followup_wait_days
+    if payload.max_followup_attempts is not None:
+        settings_updates["max_followup_attempts"] = payload.max_followup_attempts
+    if payload.sender_name is not None:
+        settings_updates["sender_name"] = payload.sender_name
+    if payload.template_style is not None:
+        settings_updates["template_style"] = payload.template_style
+    if payload.draft_interval_minutes is not None:
+        settings_updates["draft_interval_minutes"] = payload.draft_interval_minutes
+    if payload.followup_interval_minutes is not None:
+        settings_updates["followup_interval_minutes"] = payload.followup_interval_minutes
+
+    if settings_updates:
+        set_outreach_auto_settings(db, settings_updates)
+
+    db.commit()
+    return get_outreach_auto(db=db, _user=_user)
 
 
 @router.get("/{outreach_id}", response_model=OutreachMessageOut)

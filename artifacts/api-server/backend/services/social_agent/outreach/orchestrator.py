@@ -41,7 +41,6 @@ from sqlalchemy.orm import Session
 from backend.core.config import get_settings
 from backend.models import AgentAction, AgentRun, Community, DiscoveredEvent, DiscoveredOrganizer, OutreachCampaign, OutreachMessage
 from backend.services.social_agent import state_machine
-from backend.services.social_agent.ai_client import AIClientError, get_ai_client, not_configured_message
 from backend.services.social_agent.outreach import duplicate_check, eligibility, event_verification, message_generator, organizer_finder, suppression
 from backend.services.social_agent.outreach.senders import get_email_provider
 from backend.services.social_agent.outreach.types import EventDetails, OrganizerContactInfo, OutreachRunConfig, OutreachRunSummary
@@ -271,11 +270,27 @@ def run_outreach_agent(db: Session, config: OutreachRunConfig | None = None) -> 
     """Batch entrypoint: selects eligible discovered events/organizers
     (regardless of which agent found them), drafts a message for each, and
     lands it at PENDING_APPROVAL. Logs one `AgentRun` + `OutreachCampaign`
-    per call, mirroring `discovery_agent/orchestrator.py`'s discipline —
-    fails the whole run honestly (not per-item) if AI isn't configured,
-    since drafting is entirely AI/deterministic-fallback dependent."""
-    config = config or OutreachRunConfig(max_candidates=get_settings().outreach_max_candidates_per_run)
-    ai_client = get_ai_client()
+    per call, mirroring `discovery_agent/orchestrator.py`'s discipline.
+
+    Does NOT require an AI provider to be configured — `message_generator.
+    generate_outreach_message` already falls back to a real, production
+    deterministic template per message when AI is unavailable or a call
+    fails, exactly like Agent 1's discovery runs without any AI dependency
+    at all. A missing/broken AI key degrades quality (plain template
+    instead of a personalized draft), never blocks the run; every message's
+    `generated_by` field still records honestly which path produced it."""
+    if config is None:
+        from backend.services.social_agent.outreach.auto_toggle import get_outreach_auto_settings
+        saved_settings = get_outreach_auto_settings(db)
+        config = OutreachRunConfig(
+            max_candidates=saved_settings.get("max_candidates", get_settings().outreach_max_candidates_per_run),
+            countries=saved_settings.get("countries", []),
+            states=saved_settings.get("states", []),
+            cities=saved_settings.get("cities", []),
+            categories=saved_settings.get("categories", []),
+            sender_name=saved_settings.get("sender_name"),
+            template_style=saved_settings.get("template_style"),
+        )
 
     run = AgentRun(
         agent_type="outreach", status="running", started_at=datetime.now(timezone.utc),
@@ -295,9 +310,6 @@ def run_outreach_agent(db: Session, config: OutreachRunConfig | None = None) -> 
 
     summary = OutreachRunSummary()
     try:
-        if not ai_client.is_configured:
-            raise AIClientError(f"{not_configured_message()} — Agent 2 cannot draft outreach emails without it (the deterministic fallback still exists per-message, but a whole batch run refuses to proceed silently degraded).")
-
         candidates, selection_summary = eligibility.find_eligible_candidates(db, config)
         summary.candidates_considered = selection_summary.candidates_considered
         summary.skipped_duplicate = selection_summary.skipped_duplicate

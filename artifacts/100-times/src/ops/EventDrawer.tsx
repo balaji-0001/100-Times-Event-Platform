@@ -21,7 +21,7 @@ function informationFound(type: string, isPrimary: boolean) {
 export function EventDrawer({ event, organizer, messages, onClose }: { event: DiscoveredEvent | null; organizer?: DiscoveredOrganizer; messages: OutreachMessage[]; onClose: () => void }) {
   const [showRaw, setShowRaw] = useState(false);
   if (!event) return null;
-  const location = [event.venue, event.city, event.state].filter(Boolean).join(', ');
+  const location = [event.venue, event.city, event.state, event.country].filter(Boolean).join(', ');
   const primaryUrl = event.sourceUrl ?? event.url;
 
   return (
@@ -34,15 +34,15 @@ export function EventDrawer({ event, organizer, messages, onClose }: { event: Di
       </div>
 
       {event.verificationNotes.length > 0 && (
-        <div className="mt-4"><Notice tone="warn">{event.verificationNotes.map((n, i) => <p key={i}>{n}</p>)}</Notice></div>
+        <div className="mt-4"><Notice tone={event.verificationStatus === 'REJECTED' ? 'danger' : 'warn'}>{event.verificationNotes.map((n, i) => <p key={i}>{n}</p>)}</Notice></div>
       )}
 
       <Section title="Event details">
         <DL rows={[
           ['Event name', val(event.name)],
           ['Description', event.eventDescription ? <span className="whitespace-pre-wrap leading-relaxed">{event.eventDescription}</span> : NA],
-          ['Category', val(event.category)],
-          ['Subcategory', val(event.subcategory)],
+          ['Sector', val(event.category)],
+          ['Subsector', val(event.subcategory)],
           ['Event date', event.date ? <span>{event.date}{event.eventDate && <span className="ml-2 text-muted-foreground">(parsed {fmtDate(event.eventDate)})</span>}</span> : NA],
           ['Start time', val(event.startTime)],
           ['End time', val(event.endTime)],

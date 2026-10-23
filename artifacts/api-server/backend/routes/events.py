@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from backend.db import get_db
 from backend.dependencies import get_current_user, optional_current_user
-from backend.models import AcquisitionReferralEvent, Category, City, Event, Registration, Review, SavedEvent, User, Venue
+from backend.models import AcquisitionReferralEvent, Category, City, Event, Organizer, OrganizerProfile, Registration, Review, SavedEvent, User, Venue
 from backend.services.social_agent.attribution import attribute_registration
 from backend.schemas import (
     ActionResult,
@@ -46,6 +46,7 @@ def list_events(
     q: str | None = None,
     category: str | None = None,
     city: str | None = None,
+    country: str | None = None,
     eventType: str | None = None,
     date: str | None = None,
     format: str = Query("all", pattern="^(all|online|in-person)$"),
@@ -71,8 +72,45 @@ def list_events(
         )
     if category:
         query = query.join(Category).where(or_(Category.slug == category, Category.name.ilike(category)))
-    if city:
-        query = query.join(Event.venue).join(Venue.city).where(or_(City.name.ilike(city), City.slug == city))
+    if city or (country and country.strip().lower() not in ("all", "all countries", "worldwide", "")):
+        query = query.outerjoin(Event.venue).outerjoin(Venue.city)
+        if city:
+            query = query.where(
+                or_(
+                    Event.city_name.ilike(f"%{city.strip()}%"),
+                    City.name.ilike(city),
+                    City.slug == city,
+                )
+            )
+        if country and country.strip().lower() not in ("all", "all countries", "worldwide", ""):
+            from backend.services.discovery_agent.country_utils import normalize_country
+            norm_country = normalize_country(country) or country.strip()
+            country_term = f"%{norm_country}%"
+            extra_clauses = []
+            if "dubai" in country.strip().lower():
+                extra_clauses.extend([
+                    Event.city_name.ilike("%Dubai%"),
+                    Event.state_name.ilike("%Dubai%"),
+                    Event.country_name.ilike("%United Arab Emirates%"),
+                    Venue.country.ilike("%United Arab Emirates%"),
+                ])
+            elif "emirates" in country.strip().lower() or country.strip().lower() in ("uae", "ae"):
+                extra_clauses.extend([
+                    Event.country_name.ilike("%Dubai%"),
+                    Event.city_name.ilike("%Dubai%"),
+                ])
+
+            query = query.where(
+                or_(
+                    Event.country_name.ilike(norm_country),
+                    Event.country_name.ilike(country_term),
+                    Venue.country.ilike(norm_country),
+                    Venue.country.ilike(country_term),
+                    City.country.ilike(norm_country),
+                    City.country.ilike(country_term),
+                    *extra_clauses
+                )
+            )
     if eventType:
         query = query.where(Event.event_type.ilike(eventType))
     if format != "all":
@@ -105,11 +143,6 @@ def get_event(slug: str, db: Session = Depends(get_db), user: User | None = Depe
         )
         .where(Event.slug == slug)
     )
-    if user and user.role in ("ADMIN", "ORGANIZER"):
-        pass
-    else:
-        query = query.where(Event.status == "published")
-
     event = db.scalar(query)
     if not event and slug.isdigit():
         event = db.scalar(
@@ -124,6 +157,22 @@ def get_event(slug: str, db: Session = Depends(get_db), user: User | None = Depe
 
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+
+    if event.status != "published":
+        is_admin = bool(user and user.role == "ADMIN")
+        is_owner = False
+        if user:
+            if event.organizer and getattr(event.organizer, "user_id", None) == user.id:
+                is_owner = True
+            else:
+                user_org_ids = set(db.scalars(select(Organizer.id).where(Organizer.user_id == user.id)).all())
+                profile_org_id = db.scalar(select(OrganizerProfile.organizer_id).where(OrganizerProfile.user_id == user.id))
+                if profile_org_id:
+                    user_org_ids.add(profile_org_id)
+                if event.organizer_id in user_org_ids:
+                    is_owner = True
+        if not (is_admin or is_owner):
+            raise HTTPException(status_code=404, detail="Event not found")
     reviews = [review_out(review) for review in sorted(event.reviews, key=lambda item: item.created_at, reverse=True)]
     related_query = (
         select(Event)
@@ -191,10 +240,11 @@ def register_for_event(
     if not target_user:
         target_user = db.scalar(select(User).where(func.lower(User.email) == submitted_email))
         if not target_user:
+            import uuid
             target_user = User(
                 name=f"{payload.first_name} {payload.last_name}".strip() or submitted_email.split("@")[0] or "Attendee",
                 email=submitted_email or f"attendee-{int(datetime.now(timezone.utc).timestamp())}@100times.io",
-                password_hash="guest_registration",
+                password_hash=f"!unusable_{uuid.uuid4().hex}",
                 role="USER",
                 company=payload.company,
                 job_title=payload.job_title,
@@ -209,10 +259,11 @@ def register_for_event(
         if existing_for_current and submitted_email and submitted_email != (target_user.email or "").lower():
             other_user = db.scalar(select(User).where(func.lower(User.email) == submitted_email))
             if not other_user:
+                import uuid
                 other_user = User(
                     name=f"{payload.first_name} {payload.last_name}".strip() or submitted_email.split("@")[0],
                     email=submitted_email,
-                    password_hash=target_user.password_hash,
+                    password_hash=f"!unusable_{uuid.uuid4().hex}",
                     role="USER",
                     company=payload.company,
                     job_title=payload.job_title,

@@ -62,6 +62,26 @@
 
 ---
 
+### 2.4 Event Contact Qualification Contract (`EventContactQualification`)
+- **Qualification Logic:** An event is qualified if and only if `bool(organizer_email or organizer_phone)`.
+- **Contract:**
+```json
+{
+  "event_id": 101,
+  "has_organizer_email": true,
+  "has_organizer_phone": false,
+  "is_qualified": true,
+  "disqualification_reason": null
+}
+```
+- **Disqualification Handling:** Any event where both email and phone are absent yields `is_qualified: false, disqualification_reason: "MISSING_CONTACT_DETAILS"` and is discarded from downstream outreach and listing.
+
+### 2.5 Community Discovery Qualification Contract (`DiscoveredCommunityQualification`)
+- **Qualification Logic:** A discovered community candidate is eligible for storage if and only if `category in APPROVED_PLATFORM_CATEGORIES` (12 sectors: Pharmaceuticals, Healthcare, Energy and Power Generation, Telecommunications, Construction, Mining, Finance, Packaging, Transport and Logistics, Oil and Gas, Textiles, Manufacturing).
+- **Disqualification Handling:** Any candidate categorized as "Other" or falling outside the 12 approved sectors is immediately discarded with no database record created.
+
+---
+
 ## 3. API Endpoint Specifications
 
 | Domain | Method & Path | Auth | Description |
@@ -75,6 +95,9 @@
 | **Calendar Feed** | `GET /api/events/{id}/calendar.ics` | Public | Download RFC 5545 `.ics` calendar invite |
 | **Attendee Agent** | `POST /api/attendee-agent/process-signal` | `ADMIN` | Extract intent, match events, and generate recommendation |
 | **Attendee Sources** | `POST /api/attendee-agent/sources/{source}/toggle` | `ADMIN` | Enable/disable community source and adjust hourly rate limit |
+| **Community Discovery** | `POST /api/community-discovery/run` | `ADMIN` | Trigger Community Discovery Agent run across the 12 platform sectors |
+| **Community Queue** | `GET /api/community-discovery/communities` | `ADMIN` | List discovered communities with category/status filters |
+| **Community Decision** | `POST /api/community-discovery/communities/{id}/action` | `ADMIN` | Approve, reject, or mark connection status on discovered community |
 | **n8n Webhooks** | `POST /api/webhooks/n8n/{workflow}` | Webhook Secret | Execute idempotent workflow (`registration`, `confirmation`, `reminders`, `cancellation`, `reschedule`, `post-event-attendee`, `organizer-followup`, `attendance`) |
 
 ---

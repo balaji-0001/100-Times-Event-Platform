@@ -47,6 +47,32 @@ def find_eligible_candidates(
             summary.skipped_no_organizer += 1
             continue
 
+        if config.categories:
+            norm_cats = [c.strip().lower() for c in config.categories if c]
+            if norm_cats and (not event.event_category or event.event_category.strip().lower() not in norm_cats):
+                continue
+
+        if config.cities:
+            norm_cities = [c.strip().lower() for c in config.cities if c]
+            event_city = (event.city or "").strip().lower()
+            org_city = (organizer.city or "").strip().lower()
+            if norm_cities and event_city not in norm_cities and org_city not in norm_cities:
+                continue
+
+        if config.states:
+            norm_states = [s.strip().lower() for s in config.states if s]
+            event_state = (event.state or "").strip().lower()
+            org_state = (organizer.state or "").strip().lower()
+            if norm_states and event_state not in norm_states and org_state not in norm_states:
+                continue
+
+        if config.countries:
+            norm_countries = [c.strip().lower() for c in config.countries if c]
+            from backend.services.discovery_agent.country_utils import normalize_country
+            ev_country = (normalize_country(event.country or "") or "").lower()
+            if norm_countries and ev_country not in norm_countries and (event.country or "").lower() not in norm_countries:
+                continue
+
         if organizer.blocked or suppression.is_suppressed(db, organizer.email):
             summary.skipped_suppressed += 1
             continue

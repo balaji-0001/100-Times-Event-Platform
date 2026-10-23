@@ -15,7 +15,7 @@ from backend.models import DiscoveredEvent, DiscoveredOrganizer, EventSource, Or
 from backend.services.discovery_agent import discovery_dedup
 from backend.services.discovery_agent.types import ExtractedEventCandidate, OrganizerCandidate, RunSummary
 
-_CONTACT_FIELDS = ("email", "phone", "linkedin", "website")
+_CONTACT_FIELDS = ("email", "phone", "linkedin", "twitter", "instagram", "facebook", "website")
 
 
 def get_or_create_organizer(db: Session, candidate: OrganizerCandidate, summary: RunSummary) -> DiscoveredOrganizer | None:
@@ -46,7 +46,15 @@ def get_or_create_organizer(db: Session, candidate: OrganizerCandidate, summary:
     summary.organizers_found += 1
 
     source_url = candidate.sources[0].url if candidate.sources else None
-    values = {"email": candidate.email, "phone": candidate.phone, "linkedin": candidate.linkedin, "website": candidate.website}
+    values = {
+        "email": candidate.email,
+        "phone": candidate.phone,
+        "linkedin": candidate.linkedin,
+        "twitter": getattr(candidate, "twitter", None),
+        "instagram": getattr(candidate, "instagram", None),
+        "facebook": getattr(candidate, "facebook", None),
+        "website": candidate.website,
+    }
     for contact_type in _CONTACT_FIELDS:
         value = values[contact_type]
         if not value:
@@ -84,10 +92,10 @@ def persist_event(
     confidence_score: int,
     event_date,
     summary: RunSummary,
+    rejection_reason: str | None = None,
 ) -> DiscoveredEvent | None:
     """Returns the persisted row, or `None` if this was a duplicate (already
     counted in `summary.duplicate_events`) and nothing new was written."""
-    summary.events_discovered += 1
 
     duplicate = discovery_dedup.find_duplicate_event(
         db,
@@ -106,8 +114,30 @@ def persist_event(
     # it only picks events whose organizer_status is FOUND, i.e. with an email.
     organizer_row = get_or_create_organizer(db, organizer, summary) if organizer and (organizer.found or organizer.name) else None
 
-    if verification_status == "NEEDS_REVIEW":
-        summary.events_needing_review += 1
+    # Annotate verification notes with rejection reason if rejected
+    notes_to_store = list(verification_notes)
+    if verification_status == "REJECTED" and rejection_reason:
+        reason_label = f"REJECTION_REASON: {rejection_reason}"
+        if not any(reason_label in n for n in notes_to_store):
+            notes_to_store.insert(0, reason_label)
+
+    # Track metrics
+    if verification_status == "REJECTED":
+        summary.rejected_events += 1
+        notes_str = " ".join(notes_to_store).lower()
+        if rejection_reason in ("MISSING_ORGANIZER_EMAIL", "INVALID_ORGANIZER_EMAIL") or "organizer email" in notes_str:
+            summary.missing_organizer_email += 1
+        elif rejection_reason == "UNSUPPORTED_CATEGORY" or "category" in notes_str:
+            summary.unsupported_category += 1
+        elif rejection_reason == "PAST_OR_EXPIRED" or "past" in notes_str:
+            summary.past_or_expired += 1
+        discovery_status = "REJECTED"
+    else:
+        summary.accepted_events += 1
+        summary.new_events += 1
+        discovery_status = "NEW"
+        if verification_status == "NEEDS_REVIEW":
+            summary.events_needing_review += 1
 
     primary = candidate.primary_source
     event = DiscoveredEvent(
@@ -123,7 +153,7 @@ def persist_event(
         location=candidate.venue or candidate.city,
         city=candidate.city,
         state=candidate.state,
-        country=candidate.country or "India",
+        country=candidate.country or "Worldwide",
         url=candidate.url,
         ticket_url=candidate.ticket_url,
         source_website=primary.source_website if primary else None,
@@ -134,15 +164,14 @@ def persist_event(
         confidence_score=confidence_score,
         organizer_status="FOUND" if (organizer_row and organizer_row.email) else ("NOT_FOUND" if organizer else "PENDING"),
         verification_status=verification_status,
-        discovery_status="NEW",
+        discovery_status=discovery_status,
         discovered_by="web_discovery_agent",
-        verification_notes=verification_notes,
+        verification_notes=notes_to_store,
         discovered_at=datetime.now(timezone.utc),
         created_at=datetime.now(timezone.utc),
     )
     db.add(event)
     db.flush()
-    summary.new_events += 1
 
     seen_urls = set()
     all_sources = list(candidate.sources) + [s for s in (organizer.sources if organizer else [])]

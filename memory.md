@@ -29,6 +29,21 @@
 4. **Idempotent Automation & Secret Redaction (`backend/services/audit.py`):**
    - Every webhook or automation execution records a unique `idempotency_key` in `AutomationRun`. Repeated webhook deliveries return the stored result immediately without duplicating notifications or attendance updates.
    - `record_audit_log()` recursively sanitizes keys matching `password`, `secret`, `token`, `api_key`, `authorization`, or `cookie`.
+5. **Mandatory Organizer Contact Requirement (Email or Phone):**
+   - **Core Rule:** An event is **only considered valid/actionable if at least one direct organizer contact detail is present: either a phone number OR an email address** (`bool(organizer_phone or organizer_email)`).
+   - Events lacking **both** organizer email and phone are strictly disqualified and ignored from downstream outreach, attendee recommendations, auto-publishing, and promotional pipelines.
+6. **Strict 12 Platform Categories (No Medical Science / Hospitality Management):**
+   - Platform is restricted strictly to 12 sectors: Pharmaceuticals, Healthcare, Energy and Power Generation, Telecommunications, Construction, Mining, Finance, Packaging, Transport and Logistics, Oil and Gas, Textiles, and Manufacturing. Medical Science is merged into Healthcare; Hospitality Management is deprecated.
+7. **Community Discovery Agent (Agent 5) Strict 12-Sector Alignment:**
+   - The Community Discovery Agent exclusively finds and categorizes public communities (Telegram groups/channels and Discord servers) across the 12 approved platform sectors.
+   - Search query generation (`backend/services/community_agent/query_seeds.py`) uses sector-specific keywords (pharma, biotech, telecom, renewable energy, mining, logistics, etc.) and category-first round-robin interleaving so all 12 platform sectors receive equal, prioritized coverage.
+   - Strict Category Gate: Candidates classified as 'Other' or falling outside the 12 approved sectors are immediately skipped and never persisted.
+   - Two-Stage Community Discovery: Stage 1 ingests vetted sector seed directory sources across all 12 categories, ensuring reliable coverage even if external web search throttles, followed by Stage 2 broad web search.
+8. **Fully Automated User-Level Publishing Engines (Discord User Automation & Telegram MTProto User Client):**
+   - Designed for hands-free publishing into external communities without manual copy-pasting or requiring third-party bot invites from external server admins.
+   - `DiscordUserPublisher` (`backend/services/social_agent/publishers/discord_user.py`): Uses a dedicated user authorization token (`DISCORD_USER_TOKEN`) with browser user-agent headers, simulated typing indicators, jitter, and invite code auto-join (`/invites/{code}`).
+   - `TelegramUserPublisher` (`backend/services/social_agent/publishers/telegram_user.py`): Uses Telegram's native MTProto client API via `Telethon` (`TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_SESSION_STRING`) for auto-joining public groups and publishing messages as a user account on autopilot.
+   - Intelligent Fallback: `DiscordPublisher` and `TelegramPublisher` route to user publishers when `target_ref` starts with `discord_user_` / `telegram_user_` or when bot credentials are absent.
 
 ---
 

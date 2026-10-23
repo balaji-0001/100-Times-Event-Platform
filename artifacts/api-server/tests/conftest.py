@@ -32,8 +32,30 @@ def no_live_web_search(monkeypatch):
 
     from backend.services.discovery_agent import web_search
 
-    monkeypatch.setattr(web_search, "_post", lambda query: SimpleNamespace(status_code=200, text="<html></html>"))
+    monkeypatch.setattr(web_search, "_post", lambda query, *args, **kwargs: SimpleNamespace(status_code=200, text="<html></html>"))
     monkeypatch.setattr(web_search, "_wait_turn", lambda: None)
+
+
+@pytest.fixture(autouse=True)
+def no_live_ai_calls(monkeypatch, request):
+    """Ensure no test outside test_ai_client makes live network calls to AI vendors."""
+    if "test_ai_client" in request.node.nodeid:
+        return
+    fake = FakeAIClient(configured=False)
+    from backend.services.social_agent import ai_client
+    monkeypatch.setattr(ai_client, "get_ai_client", lambda: fake)
+    try:
+        import backend.services.trust_agent.agent as ta
+        monkeypatch.setattr(ta, "get_ai_client", lambda: fake)
+    except (ImportError, AttributeError):
+        pass
+    try:
+        import backend.services.attendee_agent.agent as aa
+        monkeypatch.setattr(aa, "get_ai_client", lambda: fake)
+    except (ImportError, AttributeError):
+        pass
+
+
 
 
 @pytest.fixture()
@@ -61,7 +83,7 @@ def db_session():
 def seeded_catalog(db_session):
     """One category/city/venue/organizer and one published, future event —
     enough for the event-matching stage to have something real to score."""
-    category = Category(name="Artificial Intelligence", slug="ai", description="AI", icon="sparkles")
+    category = Category(name="Pharmaceuticals", slug="pharmaceuticals", description="Pharma", icon="pill")
     city = City(name="Pune", slug="pune", country="India")
     organizer = Organizer(name="Orbit Collective", slug="orbit-collective", description="desc")
     db_session.add_all([category, city, organizer])
@@ -72,9 +94,9 @@ def seeded_catalog(db_session):
     db_session.flush()
 
     event = Event(
-        title="AI Builders Hackathon",
-        slug="ai-builders-hackathon",
-        description="A hands-on AI hackathon.",
+        title="Global Pharma Innovations Summit",
+        slug="global-pharma-innovations-summit",
+        description="A hands-on pharma conference.",
         event_type="Hackathon",
         start_date=date.today() + timedelta(days=14),
         end_date=date.today() + timedelta(days=15),

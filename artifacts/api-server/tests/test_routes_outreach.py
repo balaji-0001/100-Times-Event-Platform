@@ -132,7 +132,10 @@ def test_opt_out_action_suppresses_the_contact(client, db_session):
     assert suppression.is_suppressed(db_session, "hello@puneriders.test") is True
 
 
-def test_stats_endpoint(client, db_session):
+def test_stats_endpoint(client, db_session, monkeypatch):
+    from backend.core.config import get_settings
+    monkeypatch.setattr(get_settings(), "smtp_host", None)
+    monkeypatch.setattr(get_settings(), "smtp_username", None)
     _make_outreach(db_session, status="DELIVERED", sent_at=datetime.now(timezone.utc))
     _make_outreach(db_session, status="APPROVED", failure_reason="SMTP send failed: connection refused")
     response = client.get("/api/acquisition/outreach/stats")
@@ -151,15 +154,24 @@ def test_process_followups_endpoint_runs(client, db_session):
     assert body["followUpsDrafted"] == 0
 
 
-def test_batch_run_requires_ai_configured(client, db_session, monkeypatch):
+def test_batch_run_drafts_with_deterministic_fallback_without_ai(client, db_session, monkeypatch):
+    """Same no-AI-needed guarantee as discovery — a batch run still
+    completes and drafts real messages via the deterministic template when
+    no AI provider is configured; it just can't personalize them."""
     from tests.conftest import FakeAIClient
 
-    monkeypatch.setattr("backend.services.social_agent.outreach.orchestrator.get_ai_client", lambda: FakeAIClient(configured=False))
+    monkeypatch.setattr("backend.services.social_agent.outreach.message_generator.get_ai_client", lambda: FakeAIClient(configured=False))
+    organizer = DiscoveredOrganizer(name="Pune Riders Collective", email="hello@puneriders.test")
+    db_session.add(organizer)
+    db_session.flush()
+    db_session.add(DiscoveredEvent(name="Pune Cycling Meetup", match_score=90, organizer_status="FOUND", organizer_id=organizer.id, verification_status="VERIFIED"))
+    db_session.commit()
+
     response = client.post("/api/acquisition/outreach/batch-run", json={})
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "failed"
-    assert body["drafted"] == 0
+    assert body["status"] == "completed"
+    assert body["drafted"] == 1
 
 
 def test_outreach_routes_require_admin(db_session):
@@ -168,3 +180,54 @@ def test_outreach_routes_require_admin(db_session):
     app.dependency_overrides[get_db] = lambda: db_session
     with TestClient(app) as unauthenticated_client:
         assert unauthenticated_client.get("/api/acquisition/outreach").status_code == 401
+
+
+# --- Agent 2 automation toggle (mirrors test_routes_discovery.py's `/discovery/auto`) ---
+
+
+def test_outreach_auto_toggle_defaults_off_and_flips_live(client, db_session):
+    from backend.core.config import get_settings
+
+    settings = get_settings()
+    status = client.get("/api/acquisition/outreach/auto").json()
+    assert status["enabled"] is False
+    assert status["draftIntervalMinutes"] == settings.outreach_scan_interval_minutes
+    assert status["followupIntervalMinutes"] == settings.outreach_followup_interval_minutes
+
+    on = client.patch("/api/acquisition/outreach/auto", json={"enabled": True})
+    assert on.status_code == 200
+    assert on.json()["enabled"] is True
+    assert client.get("/api/acquisition/outreach/auto").json()["enabled"] is True  # persisted, visible to a fresh read
+
+    # Test updating outreach settings with targeting and cadence
+    configured = client.patch(
+        "/api/acquisition/outreach/auto",
+        json={
+            "country": "India",
+            "countries": ["India", "Singapore"],
+            "categories": ["Pharmaceuticals", "Healthcare"],
+            "maxCandidates": 35,
+            "dailyLimit": 150,
+            "senderName": "Balaji Partnerships",
+        },
+    )
+    assert configured.status_code == 200
+    conf_data = configured.json()
+    assert conf_data["country"] == "India"
+    assert "India" in conf_data["countries"]
+    assert "Pharmaceuticals" in conf_data["categories"]
+    assert conf_data["maxCandidates"] == 35
+    assert conf_data["dailyLimit"] == 150
+    assert conf_data["senderName"] == "Balaji Partnerships"
+
+    off = client.patch("/api/acquisition/outreach/auto", json={"enabled": False})
+    assert off.json()["enabled"] is False
+    assert client.get("/api/acquisition/outreach/auto").json()["enabled"] is False
+
+
+def test_outreach_auto_toggle_requires_admin():
+    app = FastAPI()
+    app.include_router(outreach_routes.router, prefix="/api")
+    with TestClient(app) as unauthenticated_client:
+        assert unauthenticated_client.get("/api/acquisition/outreach/auto").status_code == 401
+        assert unauthenticated_client.patch("/api/acquisition/outreach/auto", json={"enabled": True}).status_code == 401

@@ -36,7 +36,9 @@ from backend.schemas import (
     PipelineStageLogOut,
     PlatformRateLimitOut,
     PlatformRateLimitUpdateInput,
+    PromotedEventSummary,
     ScanTriggerRequest,
+    TargetCommunitySummary,
     TestDiscussionRequest,
     TrackEventRequest,
 )
@@ -56,27 +58,41 @@ def serialize_opportunity(op: AcquisitionOpportunity) -> AcquisitionOpportunityO
     comm_name = disc.community.name if (disc and disc.community) else ""
     comm_risk = disc.community.risk_level if (disc and disc.community) else "low"
 
-    disc_out = DiscussionOut(
-        id=disc.id,
-        community_id=disc.community_id,
-        community_name=comm_name,
-        platform=disc.platform,
-        external_id=disc.external_id,
-        url=disc.url,
-        title=disc.title,
-        content=disc.content,
-        author=disc.author,
-        published_at=disc.published_at,
-        intent_classification=disc.intent_classification,
-        intent_confidence=float(disc.intent_confidence),
-        extracted_intent=disc.extracted_intent,
-        status=disc.status,
-        pipeline_status=disc.pipeline_status,
-        qualification_score=disc.qualification_score,
-        qualification_breakdown=disc.qualification_breakdown,
-        rejection_reason=disc.rejection_reason,
-        created_at=disc.created_at,
-    )
+    disc_out = None
+    if disc is not None:
+        disc_out = DiscussionOut(
+            id=disc.id,
+            community_id=disc.community_id,
+            community_name=comm_name,
+            platform=disc.platform,
+            external_id=disc.external_id,
+            url=disc.url,
+            title=disc.title,
+            content=disc.content,
+            author=disc.author,
+            published_at=disc.published_at,
+            intent_classification=disc.intent_classification,
+            intent_confidence=float(disc.intent_confidence),
+            extracted_intent=disc.extracted_intent,
+            status=disc.status,
+            pipeline_status=disc.pipeline_status,
+            qualification_score=disc.qualification_score,
+            qualification_breakdown=disc.qualification_breakdown,
+            rejection_reason=disc.rejection_reason,
+            created_at=disc.created_at,
+        )
+
+    promoted_event_out = None
+    if op.promoted_event is not None:
+        promoted_event_out = PromotedEventSummary(id=op.promoted_event.id, title=op.promoted_event.title, slug=op.promoted_event.slug)
+
+    target_community_out = None
+    if op.target_community is not None:
+        target_community_out = TargetCommunitySummary(
+            id=op.target_community.id, name=op.target_community.name, platform=op.target_community.platform,
+            connected=bool(op.target_community.platform_ref),
+        )
+        comm_risk = op.target_community.risk_level
 
     events_out = [
         MatchingEventSummary(
@@ -101,7 +117,11 @@ def serialize_opportunity(op: AcquisitionOpportunity) -> AcquisitionOpportunityO
 
     return AcquisitionOpportunityOut(
         id=op.id,
+        source_kind=op.source_kind,
         discussion=disc_out,
+        promoted_event=promoted_event_out,
+        target_community=target_community_out,
+        match_explanation=op.match_explanation,
         matching_events=events_out,
         relevance_score=op.relevance_score,
         generated_response=op.generated_response,
@@ -128,6 +148,8 @@ def _load_opportunity(db: Session, opportunity_id: int) -> AcquisitionOpportunit
         .options(
             selectinload(AcquisitionOpportunity.discussion).selectinload(Discussion.community),
             selectinload(AcquisitionOpportunity.referral_events),
+            selectinload(AcquisitionOpportunity.promoted_event),
+            selectinload(AcquisitionOpportunity.target_community),
         )
         .where(AcquisitionOpportunity.id == opportunity_id)
     )
@@ -146,10 +168,15 @@ def list_opportunities(
 ) -> list[AcquisitionOpportunityOut]:
     stmt = (
         select(AcquisitionOpportunity)
-        .join(AcquisitionOpportunity.discussion)
+        # LEFT OUTER, not inner: a community_promotion-origin row has no discussion at
+        # all (discussion_id is null) — an inner join here would silently drop every one.
+        .outerjoin(AcquisitionOpportunity.discussion)
+        .outerjoin(AcquisitionOpportunity.target_community)
         .options(
             selectinload(AcquisitionOpportunity.discussion).selectinload(Discussion.community),
             selectinload(AcquisitionOpportunity.referral_events),
+            selectinload(AcquisitionOpportunity.promoted_event),
+            selectinload(AcquisitionOpportunity.target_community),
         )
         .order_by(AcquisitionOpportunity.created_at.desc())
     )
@@ -157,7 +184,7 @@ def list_opportunities(
     if approval_status:
         stmt = stmt.where(AcquisitionOpportunity.approval_status == approval_status)
     if platform:
-        stmt = stmt.where(Discussion.platform == platform)
+        stmt = stmt.where((Discussion.platform == platform) | (Community.platform == platform))
     if min_score is not None:
         stmt = stmt.where(AcquisitionOpportunity.relevance_score >= min_score)
 
@@ -338,6 +365,8 @@ def list_communities(db: Session = Depends(get_db)) -> list[CommunityOut]:
             automation_allowed=c.automation_allowed,
             risk_level=c.risk_level,
             quality_score=c.quality_score,
+            platform_ref=c.platform_ref,
+            discovered_community_id=c.discovered_community_id,
             last_checked=c.last_checked,
             created_at=c.created_at,
         )
@@ -365,6 +394,8 @@ def update_community(
         c.risk_level = payload.risk_level
     if payload.rules_text is not None:
         c.rules_text = payload.rules_text
+    if payload.platform_ref is not None:
+        c.platform_ref = payload.platform_ref
 
     db.commit()
     db.refresh(c)
@@ -380,6 +411,8 @@ def update_community(
         automation_allowed=c.automation_allowed,
         risk_level=c.risk_level,
         quality_score=c.quality_score,
+        platform_ref=c.platform_ref,
+        discovered_community_id=c.discovered_community_id,
         last_checked=c.last_checked,
         created_at=c.created_at,
     )
@@ -487,12 +520,13 @@ def _finalize_publish_result(op: AcquisitionOpportunity, result, now: datetime) 
     return "manual_publish_requested"
 
 
-def _run_publish_flow(publisher: "PlatformPublisher", text: str, target_ref: str):
+def _run_publish_flow(publisher: "PlatformPublisher", text: str, target_ref: str, *, as_reply: bool = True):
     """The real four-step flow from the spec: validate_connection ->
-    validate_publish_permission -> publish_reply -> verify_publication.
-    Stub publishers (no real integration) skip straight to publish_reply,
-    whose own honest failure message is more specific than a generic
-    "not connected" would be."""
+    validate_publish_permission -> publish_reply (or `publish_post` for a
+    standalone community-promotion announcement, `as_reply=False`) ->
+    verify_publication. Stub publishers (no real integration) skip straight
+    to the publish step, whose own honest failure message is more specific
+    than a generic "not connected" would be."""
     from backend.services.social_agent.types import PublishResult
 
     if publisher.is_real:
@@ -504,7 +538,7 @@ def _run_publish_flow(publisher: "PlatformPublisher", text: str, target_ref: str
         if not perm_check.get("allowed"):
             return PublishResult(success=False, platform=publisher.platform, published_url=None, message=perm_check.get("message", "Publish permission check failed"))
 
-    raw_result = publisher.publish_reply(text, target_ref)
+    raw_result = publisher.publish_reply(text, target_ref) if as_reply else publisher.publish_post(text, target_ref)
     return publisher.verify_publication(raw_result)
 
 
@@ -536,9 +570,23 @@ def prepare_manual_publish(
     elif op.approval_status not in ("approved", "ready_for_manual_publishing"):
         raise HTTPException(status_code=400, detail="Opportunity must be approved or scheduled-and-due before publishing")
 
-    platform = op.discussion.platform if op.discussion else "reddit"
-    publisher = get_publisher(platform)
-    result = _run_publish_flow(publisher, op.generated_response, op.discussion.external_id)
+    if op.source_kind == "community_promotion":
+        from backend.services.social_agent.types import PublishResult
+
+        if not op.target_community:
+            raise HTTPException(status_code=400, detail="This draft has no target community.")
+        if not op.target_community.platform_ref:
+            result = PublishResult(
+                success=False, platform=op.target_community.platform, published_url=None,
+                message="This community has not been connected yet — set its platform_ref (PATCH /communities/{id}) once the bot is actually a member, then publish.",
+            )
+        else:
+            publisher = get_publisher(op.target_community.platform)
+            result = _run_publish_flow(publisher, op.generated_response, op.target_community.platform_ref, as_reply=False)
+    else:
+        platform = op.discussion.platform if op.discussion else "reddit"
+        publisher = get_publisher(platform)
+        result = _run_publish_flow(publisher, op.generated_response, op.discussion.external_id)
     action_type = _finalize_publish_result(op, result, now)
 
     db.add(

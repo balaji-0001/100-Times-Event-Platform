@@ -18,16 +18,38 @@ def _slug(city: str) -> str:
     return "-".join(city.strip().lower().split())
 
 
-def build_listing_urls(templates: list[str], cities: list[str]) -> list[str]:
+def build_listing_urls(
+    templates: list[str],
+    cities: list[str],
+    countries: list[str] | None = None,
+    country: str | None = None,
+) -> list[str]:
     urls: list[str] = []
+    target_countries = [country] if (country and country.lower() not in ("all", "all countries", "worldwide")) else (countries or [""])
     for template in templates:
-        if "{city}" not in template:
-            expanded = [template]
-        else:
-            host = (urlparse(template).netloc or "").lower().removeprefix("www.")
+        has_country = "{country}" in template
+        has_city = "{city}" in template
+
+        if not has_city and not has_country:
+            if template not in urls:
+                urls.append(template)
+            continue
+
+        c_list = [c for c in target_countries if c] or ["global"]
+        for c in c_list:
+            c_slug = _slug(c) if c else ""
+            t_country = template.replace("{country}", c_slug) if has_country else template
+            if not has_city:
+                if t_country not in urls:
+                    urls.append(t_country)
+                continue
+            host = (urlparse(t_country).netloc or "").lower().removeprefix("www.")
             aliases = _CITY_SLUG_ALIASES.get(host, {})
-            expanded = [template.replace("{city}", aliases.get(_slug(city), _slug(city))) for city in cities if city.strip()]
-        for url in expanded:
-            if url not in urls:
-                urls.append(url)
+            for city in cities:
+                if not city.strip():
+                    continue
+                city_slug = aliases.get(_slug(city), _slug(city))
+                url = t_country.replace("{city}", city_slug)
+                if url not in urls:
+                    urls.append(url)
     return urls

@@ -18,6 +18,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from backend.core.config import get_settings
 from backend.db import get_db
 from backend.models import AcquisitionOpportunity, AcquisitionReferralEvent, ClickEvent, Discussion
 from backend.services.social_agent.attribution import SESSION_COOKIE_NAME
@@ -65,8 +66,14 @@ def redirect_and_track_click(opportunity_id: int, request: Request, db: Session 
     )
     db.commit()
 
+    is_prod = get_settings().environment.lower() == "production"
     response = RedirectResponse(url=destination, status_code=302)
     response.set_cookie(
-        SESSION_COOKIE, session_id, max_age=SESSION_COOKIE_MAX_AGE, httponly=True, samesite="lax"
+        SESSION_COOKIE,
+        session_id,
+        max_age=SESSION_COOKIE_MAX_AGE,
+        httponly=True,
+        samesite="lax",
+        secure=is_prod,
     )
     return response

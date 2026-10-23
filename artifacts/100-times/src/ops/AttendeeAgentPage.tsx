@@ -264,7 +264,7 @@ export function AttendeeAgentPage() {
 
               <div className="flex flex-wrap gap-2 text-xs">
                 <span className="rounded-lg bg-muted px-2.5 py-1 font-mono-face">
-                  category: <strong>{intent.eventCategory}</strong>
+                  sector: <strong>{intent.eventCategory}</strong>
                 </span>
                 <span className="rounded-lg bg-muted px-2.5 py-1 font-mono-face">
                   location: <strong>{intent.location}</strong>

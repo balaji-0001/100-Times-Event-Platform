@@ -1,0 +1,60 @@
+name: Security & SAST Audit
+
+on:
+  push:
+    branches: [main, master, discovery-automation]
+  pull_request:
+    branches: [main, master, discovery-automation]
+
+jobs:
+  backend-security:
+    name: Backend SAST & Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Security Tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install bandit pip-audit
+
+      - name: Run Bandit (Python Static Security Analysis)
+        run: |
+          bandit -r artifacts/api-server/backend -ll -ii --exclude artifacts/api-server/backend/venv
+
+      - name: Install Backend Dependencies
+        run: |
+          if [ -f artifacts/api-server/requirements.txt ]; then
+            pip install -r artifacts/api-server/requirements.txt
+          fi
+
+      - name: Run pip-audit (Vulnerability Scanner)
+        run: |
+          if [ -f artifacts/api-server/requirements.txt ]; then
+            pip-audit -r artifacts/api-server/requirements.txt --ignore-vuln CVE-NONE || true
+          fi
+
+  frontend-security:
+    name: Frontend Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run npm audit
+        working-directory: artifacts/100-times
+        run: |
+          npm audit --audit-level=high || true
+

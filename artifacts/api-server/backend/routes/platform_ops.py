@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -58,7 +58,18 @@ router = APIRouter(tags=["platform-ops"])
 # ---------------------------------------------------------------------------
 
 
+def _validate_safe_url_scheme(v: str | None) -> str | None:
+    if not v:
+        return v
+    s = str(v).strip().lower()
+    if s.startswith(("javascript:", "data:", "vbscript:", "file:")):
+        raise ValueError(f"Insecure URL scheme is not permitted: {v}")
+    return v
+
+
 class OrganizerOnboardingInput(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     organizer_name: str = Field(min_length=2, max_length=140, alias="organizerName")
     organization_name: str = Field(min_length=2, max_length=160, alias="organizationName")
     contact_email: EmailStr = Field(alias="contactEmail")
@@ -71,13 +82,20 @@ class OrganizerOnboardingInput(BaseModel):
     social_links: dict[str, str] = Field(default_factory=dict, alias="socialLinks")
     discovered_organizer_id: int | None = Field(default=None, alias="discoveredOrganizerId")
 
+    @field_validator("website", mode="before")
+    @classmethod
+    def validate_website(cls, v: Any) -> Any:
+        return _validate_safe_url_scheme(v)
+
 
 class RichEventInput(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     title: str = Field(min_length=3, max_length=200)
     description: str = Field(min_length=10, max_length=10000)
     organizer_name: str | None = Field(default=None, alias="organizerName")
     organization_name: str | None = Field(default=None, alias="organizationName")
-    category: str = "Technology"
+    category: str = "Pharmaceuticals"
     event_type: str = Field(default="Conference", alias="eventType")
     start_date: date = Field(alias="startDate")
     end_date: date | None = Field(default=None, alias="endDate")
@@ -104,6 +122,11 @@ class RichEventInput(BaseModel):
     tags: list[str] = Field(default_factory=list)
     target_audience: str | None = Field(default=None, alias="targetAudience")
     save_as_draft: bool = Field(default=False, alias="saveAsDraft")
+
+    @field_validator("online_meeting_url", "registration_url", "image", mode="before")
+    @classmethod
+    def validate_urls(cls, v: Any) -> Any:
+        return _validate_safe_url_scheme(v)
 
 
 class TrustAdminDecisionInput(BaseModel):
@@ -358,6 +381,9 @@ def complete_organizer_onboarding(
         profile.discovered_organizer_id = payload.discovered_organizer_id
 
     user.company = payload.organization_name.strip()
+    current_roles = set(user.roles_list or [])
+    current_roles.update(["attendee", "user", "organiser", "organizer"])
+    user.roles_list = sorted(list(current_roles))
     if user.role == "USER":
         user.role = "ORGANIZER"
 
@@ -395,7 +421,7 @@ def complete_organizer_onboarding(
 @router.get("/organizer/events/full")
 def list_organizer_events_full(
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_roles("ORGANIZER", "ADMIN")),
 ) -> list[dict[str, Any]]:
     organizer, _ = _ensure_organizer_and_profile(db, user)
     rows = db.scalars(
@@ -411,7 +437,7 @@ def list_organizer_events_full(
 def create_rich_organizer_event(
     payload: RichEventInput,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_roles("ORGANIZER", "ADMIN")),
 ) -> dict[str, Any]:
     organizer, profile = _ensure_organizer_and_profile(db, user)
     if payload.organization_name:
@@ -495,17 +521,32 @@ def create_rich_organizer_event(
     return _serialize_rich_event(db, event, user.id)
 
 
+def _assert_event_owner(db: Session, event: Event, user: User) -> tuple[Organizer, OrganizerProfile]:
+    organizer, profile = _ensure_organizer_and_profile(db, user)
+    if user.role != "ADMIN":
+        is_owner = (
+            event.organizer_id == organizer.id
+            or (event.organizer is not None and getattr(event.organizer, "user_id", None) == user.id)
+        )
+        if not is_owner:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to modify or manage this event.",
+            )
+    return organizer, profile
+
+
 @router.put("/organizer/events/{event_id}")
 def update_rich_organizer_event(
     event_id: int,
     payload: RichEventInput,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_roles("ORGANIZER", "ADMIN")),
 ) -> dict[str, Any]:
     event = db.get(Event, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    organizer, profile = _ensure_organizer_and_profile(db, user)
+    organizer, profile = _assert_event_owner(db, event, user)
 
     event.title = payload.title.strip()
     event.description = payload.description.strip()
@@ -559,12 +600,12 @@ def update_rich_organizer_event(
 def submit_event_to_trust_agent(
     event_id: int,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_roles("ORGANIZER", "ADMIN")),
 ) -> dict[str, Any]:
     event = db.get(Event, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    organizer, profile = _ensure_organizer_and_profile(db, user)
+    organizer, profile = _assert_event_owner(db, event, user)
     transition_event_state(db, event, "SUBMITTED", actor=user.email, actor_id=user.id, reason="Submitted to Trust Agent", force=True)
     advance_organizer_stage(db, organizer, profile, "SUBMITTED", actor=user.email, actor_id=user.id)
     evaluate_event_trust(db, event, organizer=organizer, profile=profile, auto_publish_if_approved=True)
@@ -578,11 +619,12 @@ def cancel_organizer_event(
     event_id: int,
     payload: CancelEventInput,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_roles("ORGANIZER", "ADMIN")),
 ) -> dict[str, Any]:
     event = db.get(Event, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+    _assert_event_owner(db, event, user)
     summary = cancel_event_workflow(db, event, reason=payload.reason, actor_id=user.id)
     db.commit()
     return {"summary": summary, "event": _serialize_rich_event(db, event, user.id)}
@@ -593,11 +635,12 @@ def reschedule_organizer_event(
     event_id: int,
     payload: RescheduleInput,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_roles("ORGANIZER", "ADMIN")),
 ) -> dict[str, Any]:
     event = db.get(Event, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+    _assert_event_owner(db, event, user)
     summary = reschedule_event_workflow(
         db,
         event,
@@ -621,6 +664,7 @@ def record_event_attendance(
     event = db.get(Event, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+    _assert_event_owner(db, event, user)
     summary = mark_attendance_and_noshows(db, event, attended_registration_ids=payload.attended_registration_ids)
     initiate_or_advance_organizer_followup(db, event=event, reason="POST_EVENT")
     db.commit()
@@ -637,6 +681,7 @@ def submit_organizer_followup(
     event = db.get(Event, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+    _assert_event_owner(db, event, user)
     followup = initiate_or_advance_organizer_followup(db, event=event, reason="POST_EVENT")
     record_organizer_followup_response(
         db,

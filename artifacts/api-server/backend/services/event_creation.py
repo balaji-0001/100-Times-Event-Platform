@@ -20,10 +20,14 @@ DEFAULT_EVENT_IMAGE = "https://images.unsplash.com/photo-1517245386807-bb43f82c3
 
 
 def resolve_category(db: Session, category_name: str) -> Category:
-    name = (category_name or "General").strip() or "General"
+    name = (category_name or "Pharmaceuticals").strip() or "Pharmaceuticals"
     category = db.scalar(select(Category).where((Category.slug == slugify(name)) | (Category.name.ilike(name))))
     if not category:
-        category = Category(name=name.title(), slug=slugify(name), description=f"Events about {name}.", icon="sparkles")
+        category = db.scalar(select(Category).where((Category.slug == "pharmaceuticals") | (Category.name == "Pharmaceuticals")))
+    if not category:
+        category = db.scalar(select(Category).order_by(Category.id))
+    if not category:
+        category = Category(name="Pharmaceuticals", slug="pharmaceuticals", description="Pharmaceutical companies, drug manufacturing, research, and industry developments.", icon="pill")
         db.add(category)
         db.flush()
     return category

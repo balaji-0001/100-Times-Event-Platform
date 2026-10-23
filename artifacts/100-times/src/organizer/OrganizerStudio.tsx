@@ -1,4 +1,5 @@
 import { FormEvent, useState } from 'react';
+import { DeleteAccountModal } from '../components/AccountSecurityPages';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   customFetch,
@@ -184,6 +185,40 @@ export function OrganizerStudioPage({ initialTab = 'overview' }: { initialTab?: 
     0,
     ORGANIZER_LIFECYCLE_STAGES.indexOf(profile?.lifecycleStage || 'SIGNED_UP')
   );
+
+  const token = typeof window !== 'undefined' ? localStorage.getItem('100-times-auth-token') : null;
+  if (!token || profileQuery.isError) {
+    return (
+      <div className="page-enter mx-auto max-w-xl px-5 py-24 text-center">
+        <div className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-accent/10 text-accent">
+          <Sparkles size={30} />
+        </div>
+        <p className="mt-6 font-mono-face text-xs uppercase tracking-[.18em] text-accent">Organiser Studio</p>
+        <h1 className="mt-3 font-display text-4xl sm:text-5xl font-extrabold tracking-[-.06em]">
+          Create an account to list your event.
+        </h1>
+        <p className="mt-4 text-sm text-muted-foreground leading-relaxed">
+          Create a verified organiser account to publish conferences, manage attendee registrations, issue digital passes, and reach thousands of attendees worldwide.
+        </p>
+        <div className="mt-8 flex flex-wrap justify-center gap-3">
+          <Link
+            href="/register?role=organiser&redirect=/organizer/events/create"
+            className="button-press rounded-full bg-primary px-6 py-3.5 text-sm font-bold text-primary-foreground hover:bg-accent"
+            data-testid="link-create-organizer-account"
+          >
+            Create Organiser Account
+          </Link>
+          <Link
+            href="/login?role=organiser&redirect=/organizer"
+            className="rounded-full border border-foreground/15 px-6 py-3.5 text-sm font-semibold hover:border-accent hover:text-accent"
+            data-testid="link-organizer-login"
+          >
+            Sign In to Organiser Desk
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="page-enter mx-auto max-w-[1440px] px-5 py-10 lg:px-10 lg:py-14 space-y-8">
@@ -557,7 +592,7 @@ function MultiStepEventWizard({
     description: '',
     organizerName: profile?.organizerName || 'Aarav Mehta',
     organizationName: profile?.organizationName || 'Voxel Labs',
-    category: 'artificial-intelligence',
+    category: 'pharmaceuticals',
     eventType: 'Conference',
     startDate: '2026-11-15',
     endDate: '2026-11-15',
@@ -727,18 +762,25 @@ function MultiStepEventWizard({
               />
             </label>
             <label className="block text-xs font-semibold text-muted-foreground">
-              Category *
+              Sector *
               <select
                 value={form.category}
                 onChange={(e) => setForm({ ...form, category: e.target.value })}
                 className="mt-1.5 w-full rounded-xl border border-foreground/15 bg-background px-3.5 py-2.5 text-sm"
                 data-testid="select-event-category"
               >
-                <option value="artificial-intelligence">Artificial Intelligence</option>
-                <option value="design-systems">Design Systems</option>
-                <option value="climate-frontier">Climate & Energy</option>
-                <option value="founder-summits">Founder Summits</option>
-                <option value="fintech">Finance & Fintech</option>
+                <option value="pharmaceuticals">Pharmaceuticals</option>
+                <option value="healthcare">Healthcare</option>
+                <option value="energy-and-power-generation">Energy and Power Generation</option>
+                <option value="telecommunications">Telecommunications</option>
+                <option value="construction">Construction</option>
+                <option value="mining">Mining</option>
+                <option value="finance">Finance</option>
+                <option value="packaging">Packaging</option>
+                <option value="transport-and-logistics">Transport and Logistics</option>
+                <option value="oil-and-gas">Oil and Gas</option>
+                <option value="textiles">Textiles</option>
+                <option value="manufacturing">Manufacturing</option>
               </select>
             </label>
 
@@ -882,7 +924,7 @@ function MultiStepEventWizard({
             <div className="rounded-2xl border border-foreground/10 bg-background p-6 space-y-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="font-mono-face text-xs uppercase text-accent">Trust Agent (Agent 3) Verification</p>
+                  <p className="font-mono-face text-xs uppercase text-accent">Trust Agent Verification</p>
                   <h3 className="mt-1 font-display text-2xl font-bold">
                     {createdEvent.lifecycleState === 'PUBLISHED'
                       ? 'Event published successfully.'
@@ -973,6 +1015,7 @@ function MultiStepEventWizard({
 function OrganizerProfileForm({ profile }: { profile?: OrganizerProfileData }) {
   const qc = useQueryClient();
   const [saved, setSaved] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [form, setForm] = useState({
     organizerName: profile?.organizerName || 'Aarav Mehta',
     organizationName: profile?.organizationName || 'Voxel Labs',
@@ -1070,13 +1113,34 @@ function OrganizerProfileForm({ profile }: { profile?: OrganizerProfileData }) {
         </label>
       </div>
 
-      <button
-        type="submit"
-        disabled={onboardingMutation.isPending}
-        className="rounded-full bg-primary px-5 py-2.5 text-xs font-bold text-primary-foreground hover:bg-accent"
-      >
-        {onboardingMutation.isPending ? 'Saving…' : saved ? '✓ Organizer Profile Verified & Saved' : 'Save & Verify Organizer Profile'}
-      </button>
+      <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+        <button
+          type="submit"
+          disabled={onboardingMutation.isPending}
+          className="rounded-full bg-primary px-5 py-2.5 text-xs font-bold text-primary-foreground hover:bg-accent"
+        >
+          {onboardingMutation.isPending ? 'Saving…' : saved ? '✓ Organizer Profile Verified & Saved' : 'Save & Verify Organizer Profile'}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            localStorage.removeItem('100-times-auth-token');
+            window.dispatchEvent(new Event('auth-change'));
+            window.location.href = '/login';
+          }}
+          className="rounded-full border border-destructive/30 px-4 py-2 text-xs font-semibold text-destructive hover:bg-destructive/10"
+        >
+          Sign out of organizer account
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowDeleteModal(true)}
+          className="rounded-full border border-rose-500/30 bg-rose-500/10 px-4 py-2 text-xs font-bold text-rose-500 hover:bg-rose-500 hover:text-white"
+        >
+          Delete Account
+        </button>
+      </div>
+      <DeleteAccountModal isOpen={showDeleteModal} onClose={() => setShowDeleteModal(false)} />
     </form>
   );
 }

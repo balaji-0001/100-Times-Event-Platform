@@ -11,15 +11,21 @@ class DiscoveryConfig:
     """Everything one discovery run is configured with. Captured verbatim
     into `AgentRun.config_snapshot` so a run is reproducible and auditable."""
 
-    cities: list[str]
-    states: list[str]
-    categories: list[str]
+    cities: list[str] = field(default_factory=list)
+    states: list[str] = field(default_factory=list)
+    categories: list[str] = field(default_factory=list)
+    countries: list[str] = field(default_factory=list)
+    country: str | None = None
     search_depth: int = 20  # max search queries this run issues
     sources_per_query: int = 5  # max candidate URLs pulled from each query
     daily_limit: int = 200  # max new DiscoveredEvent rows this run may create
     confidence_threshold: int = 60  # below this, verification_status becomes NEEDS_REVIEW
     listing_urls: list[str] = field(default_factory=list)  # listing-page templates read without AI; may contain {city}
     events_per_listing: int = 25  # max events taken from one listing page
+    require_organizer_email: bool = True  # mandatory organizer email check (production rule)
+    date_from: str | None = None  # optional start date filter (YYYY-MM-DD)
+    date_to: str | None = None  # optional end date filter (YYYY-MM-DD)
+    is_manual: bool = False  # True when manually triggered by an admin from Ops / Manual Research
 
 
 @dataclass
@@ -73,20 +79,30 @@ class OrganizerCandidate:
     phone: str | None = None
     website: str | None = None
     linkedin: str | None = None
+    twitter: str | None = None
+    instagram: str | None = None
+    facebook: str | None = None
     organizer_type: str | None = None
     city: str | None = None
     state: str | None = None
     confidence_score: int = 0
     sources: list[CandidateSource] = field(default_factory=list)
+    email_source_url: str | None = None  # Exact public source URL where organizer email was verified
 
 
 @dataclass
 class RunSummary:
-    """Exact shape requested for Agent 1's structured per-run output."""
+    """Exact shape requested for Agent 1's structured per-run output,
+    tracking discovered, accepted, rejected, duplicate, and missing-organiser-email counts."""
 
     events_discovered: int = 0
-    new_events: int = 0
+    accepted_events: int = 0
+    new_events: int = 0  # alias/backwards-compat for accepted_events
+    rejected_events: int = 0
     duplicate_events: int = 0
+    missing_organizer_email: int = 0
+    unsupported_category: int = 0
+    past_or_expired: int = 0
     organizers_found: int = 0
     new_organizers: int = 0
     contacts_found: int = 0
@@ -95,8 +111,13 @@ class RunSummary:
     def as_dict(self) -> dict[str, int]:
         return {
             "events_discovered": self.events_discovered,
+            "accepted_events": self.accepted_events or self.new_events,
             "new_events": self.new_events,
+            "rejected_events": self.rejected_events,
             "duplicate_events": self.duplicate_events,
+            "missing_organizer_email": self.missing_organizer_email,
+            "unsupported_category": self.unsupported_category,
+            "past_or_expired": self.past_or_expired,
             "organizers_found": self.organizers_found,
             "new_organizers": self.new_organizers,
             "contacts_found": self.contacts_found,

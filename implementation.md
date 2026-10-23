@@ -21,6 +21,8 @@
   - Implements **Attendee Agent** (`extract_attendee_intent`, `match_events_for_intent`, `process_attendee_signal`, `run_attendee_discovery_cycle`, `set_source_enabled`).
 - [`artifacts/api-server/backend/services/registration_automation.py`](file:///c:/BALAJI/100-Times-Event-Platform/100-Times-Event-Platform/artifacts/api-server/backend/services/registration_automation.py)
   - Implements registration validation, capacity/waitlist enforcement, `zoneinfo.ZoneInfo` reminder scheduling (`T-7d`, `T-24h`, `T-1h`), event cancellation, event reschedule diffing, attendance/no-show marking, and multi-touch organizer follow-ups.
+- [`artifacts/api-server/backend/services/community_agent/orchestrator.py`](file:///c:/BALAJI/100-Times-Event-Platform/100-Times-Event-Platform/artifacts/api-server/backend/services/community_agent/orchestrator.py), [`query_seeds.py`](file:///c:/BALAJI/100-Times-Event-Platform/100-Times-Event-Platform/artifacts/api-server/backend/services/community_agent/query_seeds.py), [`candidate_extractor.py`](file:///c:/BALAJI/100-Times-Event-Platform/100-Times-Event-Platform/artifacts/api-server/backend/services/community_agent/candidate_extractor.py)
+  - Implements Community Discovery Agent (Agent 5) strictly aligned with the 12 platform categories, two-stage ingestion (Stage 1 sector seed directories + Stage 2 round-robin query seeds), candidate extraction with `t.me/s/` support, and strict qualification gate skipping any "Other" or non-approved sector candidates.
 - [`artifacts/api-server/backend/services/notifications.py`](file:///c:/BALAJI/100-Times-Event-Platform/100-Times-Event-Platform/artifacts/api-server/backend/services/notifications.py)
   - Implements all 16 email/in-app notification templates + RFC 5545 `.ics` calendar generator (`generate_ics_content`, `generate_calendar_links`).
 - [`artifacts/api-server/backend/services/lifecycle.py`](file:///c:/BALAJI/100-Times-Event-Platform/100-Times-Event-Platform/artifacts/api-server/backend/services/lifecycle.py)
@@ -29,6 +31,7 @@
   - Implements `record_audit_log()` with recursive secret/token redaction.
 
 ### 1.3 FastAPI Routers
+- [`artifacts/api-server/backend/routes/community_discovery.py`](file:///c:/BALAJI/100-Times-Event-Platform/100-Times-Event-Platform/artifacts/api-server/backend/routes/community_discovery.py) — Manual community discovery trigger, run history, categorized community list, stats, and approve/reject decision actions.
 - [`artifacts/api-server/backend/routes/platform_ops.py`](file:///c:/BALAJI/100-Times-Event-Platform/100-Times-Event-Platform/artifacts/api-server/backend/routes/platform_ops.py) — Organizer Onboarding, Trust Agent, Attendee Agent, Feedback, Attendance, Calendar `.ics`, and Admin Observability routes.
 - [`artifacts/api-server/backend/routes/webhooks_n8n.py`](file:///c:/BALAJI/100-Times-Event-Platform/100-Times-Event-Platform/artifacts/api-server/backend/routes/webhooks_n8n.py) — Secured idempotent n8n webhook endpoints (`/api/webhooks/n8n/*`).
 - [`artifacts/api-server/backend/routes/events.py`](file:///c:/BALAJI/100-Times-Event-Platform/100-Times-Event-Platform/artifacts/api-server/backend/routes/events.py) — Extended event creation (`DRAFT` vs `SUBMITTED`), editing, SEO slug generation, and automated registration flow.

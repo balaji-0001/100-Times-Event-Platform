@@ -17,15 +17,21 @@ def _engine_url() -> str:
         api_server_dir = Path(__file__).resolve().parent.parent
         db_file = api_server_dir / "100times-dev.db"
         return f"sqlite:///{db_file.as_posix()}"
-    return url.replace("postgres://", "postgresql+psycopg://", 1).replace(
-        "postgresql://", "postgresql+psycopg://", 1
-    )
+    if url.startswith("mysql://"):
+        return url.replace("mysql://", "mysql+pymysql://", 1)
+    return url
 
 
 def _engine_options() -> dict:
-    """Keep SQLite usable by FastAPI's worker threads without affecting PostgreSQL."""
-    if _engine_url().startswith("sqlite"):
+    """Keep SQLite usable by FastAPI's worker threads without affecting MySQL."""
+    url = _engine_url()
+    if url.startswith("sqlite"):
         return {"connect_args": {"check_same_thread": False}}
+    if url.startswith("mysql"):
+        return {
+            "pool_pre_ping": True,
+            "pool_recycle": 3600,
+        }
     return {"pool_pre_ping": True}
 
 
@@ -46,6 +52,10 @@ def sync_schema_columns(target_engine=None) -> None:
         return
 
     alterations: dict[str, list[tuple[str, str]]] = {
+        "users": [
+            ("email_verified", "BOOLEAN DEFAULT 1 NOT NULL"),
+            ("roles_list", "JSON"),
+        ],
         "organizers": [
             ("user_id", "INTEGER"),
             ("discovered_organizer_id", "INTEGER"),

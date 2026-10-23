@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from backend.db import get_db
@@ -8,6 +8,7 @@ from backend.models import Category, City, Event, Organizer, Review, Speaker, Ve
 from backend.schemas import (
     CategoryOut,
     CityOut,
+    CountryOut,
     DirectoryDetail,
     OrganizerDetail,
     OrganizerOut,
@@ -49,6 +50,39 @@ def get_category(slug: str, db: Session = Depends(get_db), user: User | None = D
 @router.get("/cities", response_model=list[CityOut])
 def list_cities(db: Session = Depends(get_db)) -> list[CityOut]:
     return [city_out(db, item) for item in db.scalars(select(City).order_by(City.name)).all()]
+
+
+@router.get("/countries", response_model=list[CountryOut])
+def list_countries(db: Session = Depends(get_db)) -> list[CountryOut]:
+    """Returns the full list of all world countries with published event counts."""
+    from backend.services.discovery_agent.country_utils import ALL_WORLD_COUNTRIES, normalize_country
+    stmt = (
+        select(Event.country_name, func.count(Event.id))
+        .where(Event.status == "published")
+        .group_by(Event.country_name)
+    )
+    counts: dict[str, int] = {}
+    for c_name, count in db.execute(stmt).all():
+        if c_name:
+            norm = normalize_country(c_name) or c_name
+            counts[norm] = counts.get(norm, 0) + count
+
+    # Also compute count for Dubai from city or country
+    dubai_stmt = (
+        select(func.count(Event.id))
+        .where(
+            Event.status == "published",
+            or_(
+                Event.country_name.ilike("%dubai%"),
+                Event.city_name.ilike("%dubai%"),
+            )
+        )
+    )
+    dubai_count = db.scalar(dubai_stmt) or 0
+    if dubai_count > 0:
+        counts["Dubai"] = max(counts.get("Dubai", 0), dubai_count)
+
+    return [CountryOut(name=c, event_count=counts.get(c, 0)) for c in ALL_WORLD_COUNTRIES]
 
 
 @router.get("/cities/{slug}", response_model=DirectoryDetail)

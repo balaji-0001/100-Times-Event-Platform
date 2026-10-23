@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 
 from backend.core.config import Settings, get_settings
 from backend.models import AgentRun, DiscoveredEvent
-from backend.services.discovery_agent import listing_sources, organizer_identifier, page_extractor, query_seeds, storage, validation, web_search
+from backend.services.discovery_agent import categorizer, listing_sources, organizer_identifier, page_extractor, query_seeds, storage, validation, web_search
 from backend.services.discovery_agent.types import DiscoveryConfig, RunSummary
 
 logger = logging.getLogger("discovery_agent.orchestrator")
@@ -35,17 +35,44 @@ def _split(csv: str) -> list[str]:
     return [item.strip() for item in csv.split(",") if item.strip()]
 
 
-def config_from_settings(settings: Settings) -> DiscoveryConfig:
+def config_from_settings(settings: Settings, db: Session | None = None) -> DiscoveryConfig:
+    # Dynamically retrieve categories from the website/database if available
+    db_cats = categorizer.get_supported_categories(db) if db is not None else []
+    target_categories = db_cats if db_cats else _split(settings.discovery_target_categories)
+
+    # Check for admin-configured auto discovery scope settings in db
+    auto_scope: dict = {}
+    if db is not None:
+        try:
+            from backend.services.discovery_agent.auto_toggle import get_discovery_auto_settings
+            auto_scope = get_discovery_auto_settings(db)
+        except Exception:
+            pass
+
+    cities = auto_scope.get("cities") if auto_scope.get("cities") else _split(settings.discovery_target_cities)
+    states = auto_scope.get("states") if auto_scope.get("states") else _split(settings.discovery_target_states)
+    if auto_scope.get("categories"):
+        target_categories = auto_scope["categories"]
+    country = auto_scope.get("country")
+    countries = auto_scope.get("countries") if auto_scope.get("countries") else _split(getattr(settings, "discovery_target_countries", ""))
+    if not countries and country:
+        countries = [country]
+    search_depth = auto_scope.get("search_depth") or settings.discovery_search_depth
+    daily_limit = auto_scope.get("daily_limit") or settings.discovery_daily_limit
+
     return DiscoveryConfig(
-        cities=_split(settings.discovery_target_cities),
-        states=_split(settings.discovery_target_states),
-        categories=_split(settings.discovery_target_categories),
-        search_depth=settings.discovery_search_depth,
+        cities=cities,
+        states=states,
+        categories=target_categories,
+        countries=countries,
+        country=country,
+        search_depth=search_depth,
         sources_per_query=settings.discovery_sources_per_query,
-        daily_limit=settings.discovery_daily_limit,
+        daily_limit=daily_limit,
         confidence_threshold=settings.discovery_confidence_threshold,
         listing_urls=_split(settings.discovery_listing_urls),
         events_per_listing=settings.discovery_events_per_listing,
+        require_organizer_email=getattr(settings, "discovery_require_organizer_email", True),
     )
 
 
@@ -57,22 +84,63 @@ def _todays_new_event_count(db: Session) -> int:
     return sum(1 for ts in rows if ts and ts.date() == today)
 
 
-def _process_candidate(db: Session, run: AgentRun, candidate, config: DiscoveryConfig, summary: RunSummary) -> None:
-    """Organizer lookup, validation and storage for one extracted event."""
+def _process_candidate(
+    db: Session,
+    run: AgentRun,
+    candidate,
+    config: DiscoveryConfig,
+    summary: RunSummary,
+    supported_categories: list[str],
+) -> None:
+    """Categorization, organizer lookup, validation and storage for one extracted event."""
+    summary.events_discovered += 1
+
+    candidate.category, candidate.subcategory = categorizer.categorize(
+        candidate.name,
+        candidate.event_description,
+        candidate.url,
+        supported_categories=supported_categories,
+        db=db,
+    )
+
+    # Strictly enforce target categories: skip unlisted/Other categories for this run
+    if config.require_organizer_email:
+        target_categories = set(config.categories) if config.categories else set(supported_categories)
+        if candidate.category not in target_categories or candidate.category.lower() == "other":
+            summary.unsupported_category += 1
+            summary.rejected_events += 1
+            run.summary = summary.as_dict()
+            db.add(run)
+            return
+
     try:
         organizer_candidate = organizer_identifier.identify_organizer(candidate)
     except Exception:
         logger.exception("Organizer identification failed for %s — continuing without an organizer.", candidate.url)
-        organizer_candidate = None
+        organizer_candidate = OrganizerCandidate(found=False)
 
-    status, notes, confidence, event_date = validation.validate_event(candidate, config.confidence_threshold)
-    if status == "REJECTED":
-        summary.events_discovered += 1
-        logger.info("Rejected candidate %r: %s", candidate.name, "; ".join(notes) or "no reason given")
+    if organizer_candidate is None:
+        organizer_candidate = OrganizerCandidate(found=False)
+
+    # Strictly enforce organizer details: skip events without organizer details/email for this run
+    if config.require_organizer_email and (not organizer_candidate.found or not organizer_candidate.email):
+        summary.missing_organizer_email += 1
+        summary.rejected_events += 1
         run.summary = summary.as_dict()
         db.add(run)
-        db.commit()
         return
+
+    val_result = validation.validate_event(
+        candidate,
+        config.confidence_threshold,
+        organizer=organizer_candidate,
+        require_organizer_email=config.require_organizer_email,
+        supported_categories=supported_categories,
+        date_from=getattr(config, "date_from", None),
+        date_to=getattr(config, "date_to", None),
+    )
+    status, notes, confidence, event_date = val_result
+    rejection_reason = getattr(val_result, "rejection_reason", None)
 
     try:
         storage.persist_event(
@@ -84,6 +152,7 @@ def _process_candidate(db: Session, run: AgentRun, candidate, config: DiscoveryC
             confidence_score=confidence,
             event_date=event_date,
             summary=summary,
+            rejection_reason=rejection_reason,
         )
     except Exception:
         db.rollback()
@@ -92,14 +161,24 @@ def _process_candidate(db: Session, run: AgentRun, candidate, config: DiscoveryC
 
     run.summary = summary.as_dict()
     db.add(run)
-    db.commit()
+    # Commit periodically to keep run summary fresh without thrashing disk I/O on every candidate
+    if summary.events_discovered % 10 == 0:
+        db.commit()
 
 
 def _limit_reached(already_today: int, summary: RunSummary, config: DiscoveryConfig) -> bool:
-    return already_today + summary.new_events >= config.daily_limit
+    return summary.new_events >= config.daily_limit
 
 
-def _read_page(db: Session, run: AgentRun, page_url: str, config: DiscoveryConfig, summary: RunSummary, already_today: int) -> None:
+def _read_page(
+    db: Session,
+    run: AgentRun,
+    page_url: str,
+    config: DiscoveryConfig,
+    summary: RunSummary,
+    already_today: int,
+    supported_categories: list[str],
+) -> None:
     try:
         candidates = page_extractor.extract_events_from_page(page_url, config.events_per_listing, config.cities)
     except Exception:
@@ -108,11 +187,15 @@ def _read_page(db: Session, run: AgentRun, page_url: str, config: DiscoveryConfi
     for candidate in candidates:
         if _limit_reached(already_today, summary, config):
             return
-        _process_candidate(db, run, candidate, config, summary)
+        _process_candidate(db, run, candidate, config, summary, supported_categories)
 
 
 def run_discovery_agent(db: Session, config: DiscoveryConfig | None = None) -> RunSummary:
-    config = config or config_from_settings(get_settings())
+    config = config or config_from_settings(get_settings(), db=db)
+    supported_categories = categorizer.get_supported_categories(db)
+    effective_categories = list(dict.fromkeys(supported_categories + (config.categories or [])))
+    if not config.categories:
+        config.categories = supported_categories
 
     run = AgentRun(
         agent_type="discovery",
@@ -131,15 +214,9 @@ def run_discovery_agent(db: Session, config: DiscoveryConfig | None = None) -> R
         already_today = _todays_new_event_count(db)
         pages_read: set[str] = set()
 
-        # 1. Known event-listing sites, per target city.
-        for listing_url in listing_sources.build_listing_urls(config.listing_urls, config.cities):
-            if _limit_reached(already_today, summary, config):
-                break
-            pages_read.add(listing_url)
-            _read_page(db, run, listing_url, config, summary, already_today)
-
-        # 2. Web search: every result page is read the same way. A block
-        # (captcha / rate limit) stops searching but keeps what was found.
+        # 1. Targeted web search: prioritized first so manual and automated runs find
+        # high-precision sector-matched events (LinkedIn, Facebook, Twitter, and
+        # conference queries) directly without wasting time crawling generic directories.
         search_error: str | None = None
         for query in query_seeds.build_search_queries(config):
             if _limit_reached(already_today, summary, config):
@@ -158,7 +235,26 @@ def run_discovery_agent(db: Session, config: DiscoveryConfig | None = None) -> R
                 if url in pages_read or _limit_reached(already_today, summary, config):
                     continue
                 pages_read.add(url)
-                _read_page(db, run, url, config, summary, already_today)
+                _read_page(db, run, url, config, summary, already_today, effective_categories)
+
+        # 2. Known event-listing sites, with an adaptive budget so a run never hangs for 45+ minutes.
+        # In manual research runs (or low search depth), cap to at most 2 listing pages.
+        # In background runs, cap to at most 6 listing pages.
+        is_manual = getattr(config, "is_manual", False)
+        listing_budget = 2 if (is_manual or config.search_depth <= 6) else 6
+        all_listing_urls = listing_sources.build_listing_urls(
+            config.listing_urls,
+            config.cities[:3] if len(config.cities) > 3 else config.cities,
+            countries=getattr(config, "countries", None),
+            country=getattr(config, "country", None),
+        )
+        for listing_url in all_listing_urls[:listing_budget]:
+            if _limit_reached(already_today, summary, config):
+                break
+            if listing_url in pages_read:
+                continue
+            pages_read.add(listing_url)
+            _read_page(db, run, listing_url, config, summary, already_today, effective_categories)
 
         run.error = f"Web search stopped early: {search_error}" if search_error else None
         run.status = "completed"

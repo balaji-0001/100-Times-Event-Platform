@@ -100,6 +100,15 @@ def transition_event_state(
         result="SUCCESS",
         metadata={"from": current, "to": target, "legacy_status": event.status, "reason": reason},
     )
+
+    if target == "PUBLISHED" and current != "PUBLISHED":
+        try:
+            from backend.services.social_agent.event_promotion_orchestrator import trigger_event_promotions
+            trigger_event_promotions(db, event, actor=actor)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("Automatic promotion dispatch failed for event #%s: %s", event.id, exc)
+
     return event
 
 

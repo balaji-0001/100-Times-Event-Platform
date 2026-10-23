@@ -4,6 +4,7 @@ import { Play, RotateCcw } from 'lucide-react';
 import { type OutreachMessage, OUTREACH_STATUSES, OUTREACH_TABS, type OutreachTabKey, STATUS_LABEL, useDiscoveredOrganizers, useOutreachMessages, useOutreachStats, useProcessFollowups, useRunOutreachBatch } from './api';
 import { AdminTable, Btn, ErrorState, EmptyState, LoadingState, NA, Notice, PageHeader, Pager, SearchBox, SelectFilter, StatCard, StatusBadge, cell, cellMuted, cx, fmtDateTime, useDebounce, usePagination } from './ui';
 import { OutreachDrawer } from './OutreachDrawer';
+import { OutreachSettingsButton } from './OutreachSettingsModal';
 
 const ALL = '__all__';
 const uniq = (vals: Array<string | null | undefined>) => Array.from(new Set(vals.filter((v): v is string => Boolean(v)))).sort();
@@ -65,6 +66,7 @@ export function OutreachPage() {
     <div>
       <PageHeader kicker="Organizer Outreach · Agent 2" title="Organizer Outreach" subtitle="Promote 100Times to event organizers and invite them to list their events. Every email is generated per organizer and sent only after an admin approves it."
         actions={<>
+          <OutreachSettingsButton size="md" />
           <Btn loading={followups.isPending} onClick={() => followups.mutate()}>Process follow-ups</Btn>
           <Btn variant="primary" loading={runBatch.isPending} onClick={() => runBatch.mutate({})}><Play size={13} /> Generate outreach batch</Btn>
         </>} />

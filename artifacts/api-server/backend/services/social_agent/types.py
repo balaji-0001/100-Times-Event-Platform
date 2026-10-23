@@ -22,3 +22,4 @@ class PublishResult:
     platform: str
     published_url: str | None
     message: str
+    post_id: str | None = None

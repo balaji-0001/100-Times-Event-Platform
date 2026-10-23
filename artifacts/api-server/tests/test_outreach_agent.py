@@ -92,7 +92,6 @@ def test_eligibility_respects_max_candidates(db_session):
 # --- Batch orchestrator ---
 
 def test_run_outreach_agent_drafts_to_pending_approval_and_is_idempotent(db_session, monkeypatch):
-    monkeypatch.setattr(orchestrator, "get_ai_client", lambda: FakeAIClient(configured=True))
     monkeypatch.setattr(orchestrator.message_generator, "get_ai_client", lambda: FakeAIClient(configured=False))
     _seed_event(db_session, name="Pune Tech Summit", email="hello@puneevents.test")
     _seed_event(db_session, name="Mumbai Startup Meet", email="team@mumbaistartups.test")
@@ -115,17 +114,24 @@ def test_run_outreach_agent_drafts_to_pending_approval_and_is_idempotent(db_sess
     assert db_session.query(OutreachMessage).count() == 2
 
 
-def test_run_outreach_agent_fails_honestly_without_api_key(db_session, monkeypatch):
-    monkeypatch.setattr(orchestrator, "get_ai_client", lambda: FakeAIClient(configured=False))
+def test_run_outreach_agent_drafts_with_deterministic_fallback_when_ai_is_not_configured(db_session, monkeypatch):
+    """Agent 2 needs no AI provider to run, same as Agent 1's discovery —
+    `message_generator` already falls back to a real deterministic template
+    per message, so a missing/unconfigured AI key degrades quality, it
+    never blocks the batch."""
+    monkeypatch.setattr(orchestrator.message_generator, "get_ai_client", lambda: FakeAIClient(configured=False))
     _seed_event(db_session)
 
     summary = orchestrator.run_outreach_agent(db_session, OutreachRunConfig(max_candidates=10))
 
-    assert summary.drafted == 0
+    assert summary.drafted == 1
     run = db_session.query(AgentRun).filter(AgentRun.agent_type == "outreach").one()
-    assert run.status == "failed"
-    assert "AI provider is not configured" in run.error
-    assert db_session.query(OutreachMessage).count() == 0
+    assert run.status == "completed"
+    assert run.error is None
+    message = db_session.query(OutreachMessage).one()
+    assert message.status == "PENDING_APPROVAL"
+    assert message.generated_by == "deterministic_fallback"
+    assert message.subject and message.message
 
 
 # --- Sending: bounce handling + failure revert ---

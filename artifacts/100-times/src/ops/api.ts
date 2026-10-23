@@ -14,6 +14,8 @@ export interface Me {
   name: string;
   email: string;
   role: 'USER' | 'ORGANIZER' | 'ADMIN';
+  roles?: string[];
+  emailVerified?: boolean;
 }
 
 export interface EventSource {
@@ -136,6 +138,61 @@ export interface AgentRun {
 export interface DiscoveryAutoStatus {
   enabled: boolean;
   intervalMinutes: number;
+  country?: string | null;
+  countries?: string[];
+  cities?: string[];
+  states?: string[];
+  categories?: string[];
+  searchDepth?: number | null;
+  dailyLimit?: number | null;
+}
+
+export interface OutreachAutoStatus {
+  enabled: boolean;
+  draftIntervalMinutes: number;
+  followupIntervalMinutes: number;
+  country?: string | null;
+  countries?: string[];
+  cities?: string[];
+  states?: string[];
+  categories?: string[];
+  maxCandidates?: number;
+  dailyLimit?: number;
+  followupWaitDays?: number;
+  maxFollowupAttempts?: number;
+  senderName?: string;
+  templateStyle?: string;
+}
+
+/** Real database counts — never derived by counting the (200-row-capped)
+ * events/organizers lists client-side. Those lists are for browsing a page
+ * at a time; once discovery finds more than 200, a count computed from
+ * `.length` on that list silently stops growing. These numbers don't. */
+export interface DiscoveryStats {
+  eventsTotal: number;
+  organizersTotal: number;
+  contactsTotal: number;
+  organizersWithEmailTotal: number;
+  needsReviewTotal: number;
+  newEventsTotal: number;
+  onlineTotal: number;
+  offlineTotal: number;
+  hybridTotal: number;
+  formatUnknownTotal: number;
+  venueMissingTotal: number;
+  venueMissingSample: Array<{ id: number; name: string | null; city: string | null }>;
+}
+
+export type AutomationRequestStatus = 'NEW' | 'IN_PROGRESS' | 'DONE' | 'DECLINED';
+
+export interface AutomationRequest {
+  id: number;
+  description: string;
+  status: AutomationRequestStatus;
+  requestedBy: string | null;
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export type OutreachAction =
@@ -243,13 +300,48 @@ export const keys = {
   discoveryRuns: ['ops', 'runs', 'discovery'] as const,
   outreachRuns: ['ops', 'runs', 'outreach'] as const,
   discoveryAuto: ['ops', 'discovery-auto'] as const,
+  outreachAuto: ['ops', 'outreach-auto'] as const,
+  discoveryStats: ['ops', 'discovery-stats'] as const,
+  automationRequests: ['ops', 'automation-requests'] as const,
   smtpConfig: ['ops', 'smtp-config'] as const,
   emailOutbox: ['ops', 'email-outbox'] as const,
+  categories: ['ops', 'categories'] as const,
 };
+
+export const PLATFORM_CATEGORIES = [
+  'Construction',
+  'Energy and Power Generation',
+  'Finance',
+  'Healthcare',
+  'Manufacturing',
+  'Mining',
+  'Oil and Gas',
+  'Packaging',
+  'Pharmaceuticals',
+  'Telecommunications',
+  'Textiles',
+  'Transport and Logistics',
+] as const;
+
+export interface CategoryItem {
+  id: number;
+  name: string;
+  slug: string;
+  description?: string;
+  icon?: string;
+  eventCount?: number;
+}
 
 // ---------------------------------------------------------------------------
 // Queries
 // ---------------------------------------------------------------------------
+
+export function useCategories() {
+  return useQuery({
+    queryKey: keys.categories,
+    queryFn: () => customFetch<CategoryItem[]>('/api/categories'),
+  });
+}
 
 export function useMe(enabled = true) {
   return useQuery({
@@ -260,9 +352,12 @@ export function useMe(enabled = true) {
   });
 }
 
-// The list endpoints cap at limit=200. Current volumes (dozens of rows) fit in one request,
-// so filtering/search/sort happen client-side; if the tables outgrow that, pagination goes here.
-const LIST_LIMIT = 200;
+// Fetches the full discovered-events/organizers list in one request so client-side
+// filtering/search/sort/pagination always works against everything, not a stale slice —
+// discovery hit the old 200-row cap for real and the overview silently stopped growing.
+// The backend caps this at 5000; true totals for headline numbers come from `/stats`
+// (`useDiscoveryStats`) instead of counting this list, so those stay correct either way.
+const LIST_LIMIT = 5000;
 
 export function useDiscoveredEvents() {
   return useQuery({
@@ -313,6 +408,24 @@ export function useDiscoveryAutoStatus() {
   });
 }
 
+export function useDiscoveryStats() {
+  return useQuery({
+    queryKey: keys.discoveryStats,
+    queryFn: () => customFetch<DiscoveryStats>('/api/discovery/stats'),
+    // The automatic discovery scan (every 60 min, when its switch is on) finds and stores
+    // events entirely server-side — no mutation in this tab to invalidate the cache off of.
+    // Poll so the overview reflects what the background automation just did without a manual refresh.
+    refetchInterval: 60_000,
+  });
+}
+
+export function useOutreachAutoStatus() {
+  return useQuery({
+    queryKey: keys.outreachAuto,
+    queryFn: () => customFetch<OutreachAutoStatus>('/api/acquisition/outreach/auto'),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Mutations
 // ---------------------------------------------------------------------------
@@ -349,18 +462,85 @@ export function useEditOutreachMessage() {
 export function useSetDiscoveryAuto() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (enabled: boolean) =>
-      customFetch<DiscoveryAutoStatus>('/api/discovery/auto', { method: 'PATCH', body: JSON.stringify({ enabled }) }),
+    mutationFn: (
+      payload:
+        | boolean
+        | {
+            enabled?: boolean;
+            country?: string | null;
+            countries?: string[];
+            cities?: string[];
+            states?: string[];
+            categories?: string[];
+            searchDepth?: number;
+            dailyLimit?: number;
+          }
+    ) => {
+      const body = typeof payload === 'boolean' ? { enabled: payload } : payload;
+      return customFetch<DiscoveryAutoStatus>('/api/discovery/auto', {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      });
+    },
     onSuccess: (data) => qc.setQueryData(keys.discoveryAuto, data),
+  });
+}
+
+export function useSetOutreachAuto() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (
+      payload:
+        | boolean
+        | {
+            enabled?: boolean;
+            country?: string | null;
+            countries?: string[];
+            cities?: string[];
+            states?: string[];
+            categories?: string[];
+            maxCandidates?: number;
+            dailyLimit?: number;
+            followupWaitDays?: number;
+            maxFollowupAttempts?: number;
+            senderName?: string;
+            templateStyle?: string;
+            draftIntervalMinutes?: number;
+            followupIntervalMinutes?: number;
+          }
+    ) => {
+      const body = typeof payload === 'boolean' ? { enabled: payload } : payload;
+      return customFetch<OutreachAutoStatus>('/api/acquisition/outreach/auto', {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      });
+    },
+    onSuccess: (data) => qc.setQueryData(keys.outreachAuto, data),
+  });
+}
+
+export function useAutomationRequests() {
+  return useQuery({
+    queryKey: keys.automationRequests,
+    queryFn: () => customFetch<AutomationRequest[]>('/api/automations/requests'),
+  });
+}
+
+export function useCreateAutomationRequest() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (description: string) =>
+      customFetch<AutomationRequest>('/api/automations/requests', { method: 'POST', body: JSON.stringify({ description }) }),
+    onSuccess: () => invalidate(keys.automationRequests),
   });
 }
 
 export function useRunDiscovery() {
   const invalidate = useInvalidate();
   return useMutation({
-    mutationFn: (body: { cities?: string[]; categories?: string[]; searchDepth?: number; sourcesPerQuery?: number } = {}) =>
+    mutationFn: (body: { cities?: string[]; states?: string[]; categories?: string[]; country?: string; countries?: string[]; searchDepth?: number; sourcesPerQuery?: number; dateFrom?: string; dateTo?: string } = {}) =>
       customFetch<Record<string, unknown>>('/api/discovery/run', { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: () => invalidate(keys.events, keys.organizers, keys.discoveryRuns, keys.outreachStats),
+    onSuccess: () => invalidate(keys.events, keys.organizers, keys.discoveryRuns, keys.outreachStats, keys.discoveryStats),
   });
 }
 
@@ -483,3 +663,413 @@ export function contactStatus(messages: OutreachMessage[]): 'Not contacted' | 'P
   if (messages.some((m) => PRE_SEND_STATUSES.includes(m.status))) return 'Pending approval';
   return 'Not contacted';
 }
+
+// ---------------------------------------------------------------------------
+// Community Discovery (Agent 5) + Community Promotion (Agent 4 extension)
+// ---------------------------------------------------------------------------
+
+export interface CommunitySource {
+  id: number;
+  sourceUrl: string;
+  sourceType: string;
+  fetchedAt: string;
+}
+
+/** DISCOVERED | NEEDS_REVIEW | APPROVED | REJECTED | CONNECTION_REQUIRED | CONNECTED | PERMISSION_MISSING | PROMOTION_RESTRICTED */
+export type CommunityApprovalStatus = 'DISCOVERED' | 'NEEDS_REVIEW' | 'APPROVED' | 'REJECTED' | 'CONNECTION_REQUIRED' | 'CONNECTED' | 'PERMISSION_MISSING' | 'PROMOTION_RESTRICTED';
+
+export interface DiscoveredCommunity {
+  id: number;
+  platform: 'telegram' | 'discord';
+  name: string;
+  canonicalUrl: string;
+  inviteUrl: string | null;
+  description: string | null;
+  category: string | null;
+  subcategory: string | null;
+  topics: string[];
+  language: string | null;
+  city: string | null;
+  state: string | null;
+  country: string | null;
+  memberCount: number | null;
+  rulesText: string | null;
+  promotionAllowed: boolean | null;
+  automationAllowed: boolean;
+  riskLevel: string;
+  confidenceScore: number;
+  discoveryStatus: string;
+  verificationNotes: string[];
+  approvalStatus: CommunityApprovalStatus;
+  rejectionReason: string | null;
+  connectionStatus: string;
+  communityId: number | null;
+  discoveredAt: string;
+  lastCheckedAt: string | null;
+  sources: CommunitySource[];
+}
+
+export interface CommunityDiscoveryStats {
+  communitiesTotal: number;
+  needsReviewTotal: number;
+  approvedTotal: number;
+  connectedTotal: number;
+  telegramTotal: number;
+  discordTotal: number;
+}
+
+export type CommunityAction = 'approve' | 'reject' | 'mark_connection_required' | 'mark_connected' | 'mark_permission_missing' | 'mark_promotion_restricted';
+
+export interface PromotedEventSummary {
+  id: number;
+  title: string;
+  slug: string;
+}
+
+export interface TargetCommunitySummary {
+  id: number;
+  name: string;
+  platform: string;
+  connected: boolean;
+}
+
+/** A drafted event<->community promotion post (Agent 4 extension). Reuses the
+ * existing acquisition-opportunity pipeline under the hood — `sourceKind`
+ * distinguishes this from the original discussion-reply flow, which this
+ * console doesn't surface (kept out of the UI since the 2026 redesign). */
+export interface CommunityPromotionOpportunity {
+  id: number;
+  sourceKind: 'discussion_reply' | 'community_promotion';
+  promotedEvent: PromotedEventSummary | null;
+  targetCommunity: TargetCommunitySummary | null;
+  matchExplanation: string | null;
+  relevanceScore: number;
+  generatedResponse: string;
+  contentPayload: { subject?: string } | null;
+  contentGeneratedBy: 'ai' | 'deterministic_fallback' | null;
+  approvalStatus: 'pending' | 'approved' | 'rejected' | 'scheduled' | 'ready_for_manual_publishing' | 'published';
+  referralUrl: string;
+  clicksCount: number;
+  registrationsCount: number;
+  scheduledAt: string | null;
+  publishedAt: string | null;
+  publishedUrl: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+}
+
+const COMMUNITY_LIST_LIMIT = 5000;
+
+const communityKeys = {
+  communities: ['ops', 'discovered-communities'] as const,
+  communityStats: ['ops', 'community-discovery-stats'] as const,
+  communityAuto: ['ops', 'community-discovery-auto'] as const,
+  communityRuns: ['ops', 'runs', 'community-discovery'] as const,
+  promotionOpportunities: ['ops', 'community-promotion-opportunities'] as const,
+  promotionAuto: ['ops', 'community-promotion-auto'] as const,
+  promotionRuns: ['ops', 'runs', 'community-promotion'] as const,
+};
+
+export function useDiscoveredCommunities() {
+  return useQuery({
+    queryKey: communityKeys.communities,
+    queryFn: () => customFetch<DiscoveredCommunity[]>(`/api/community-discovery/communities?limit=${COMMUNITY_LIST_LIMIT}`),
+  });
+}
+
+export function useCommunityDiscoveryStats() {
+  return useQuery({
+    queryKey: communityKeys.communityStats,
+    queryFn: () => customFetch<CommunityDiscoveryStats>('/api/community-discovery/stats'),
+    refetchInterval: 60_000, // the background scan (when on) finds communities with no tab open to invalidate off of
+  });
+}
+
+export function useCommunityDiscoveryAutoStatus() {
+  return useQuery({
+    queryKey: communityKeys.communityAuto,
+    queryFn: () => customFetch<DiscoveryAutoStatus>('/api/community-discovery/auto'),
+  });
+}
+
+export function useSetCommunityDiscoveryAuto() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (enabled: boolean) =>
+      customFetch<DiscoveryAutoStatus>('/api/community-discovery/auto', { method: 'PATCH', body: JSON.stringify({ enabled }) }),
+    onSuccess: (data) => qc.setQueryData(communityKeys.communityAuto, data),
+  });
+}
+
+export function useCommunityDiscoveryRuns() {
+  return useQuery({
+    queryKey: communityKeys.communityRuns,
+    queryFn: () => customFetch<AgentRun[]>('/api/community-discovery/runs?limit=100'),
+  });
+}
+
+export function useRunCommunityDiscovery() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (body: { cities?: string[]; states?: string[]; categories?: string[]; country?: string; countries?: string[]; searchDepth?: number; sourcesPerQuery?: number; dateFrom?: string; dateTo?: string } = {}) =>
+      customFetch<Record<string, unknown>>('/api/community-discovery/run', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => invalidate(communityKeys.communities, communityKeys.communityStats, communityKeys.communityRuns),
+  });
+}
+
+export function useCommunityAction() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: ({ id, action, reason }: { id: number; action: CommunityAction; reason?: string }) =>
+      customFetch<DiscoveredCommunity>(`/api/community-discovery/communities/${id}/action`, {
+        method: 'POST', body: JSON.stringify(reason ? { action, reason } : { action }),
+      }),
+    onSuccess: () => invalidate(communityKeys.communities, communityKeys.communityStats),
+  });
+}
+
+export function usePromotionOpportunities() {
+  return useQuery({
+    queryKey: communityKeys.promotionOpportunities,
+    queryFn: () => customFetch<CommunityPromotionOpportunity[]>('/api/acquisition/opportunities?limit=100'),
+    select: (rows) => rows.filter((r) => r.sourceKind === 'community_promotion'),
+  });
+}
+
+export function useCommunityPromotionAutoStatus() {
+  return useQuery({
+    queryKey: communityKeys.promotionAuto,
+    queryFn: () => customFetch<DiscoveryAutoStatus>('/api/community-promotion/auto'),
+  });
+}
+
+export function useSetCommunityPromotionAuto() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (enabled: boolean) =>
+      customFetch<DiscoveryAutoStatus>('/api/community-promotion/auto', { method: 'PATCH', body: JSON.stringify({ enabled }) }),
+    onSuccess: (data) => qc.setQueryData(communityKeys.promotionAuto, data),
+  });
+}
+
+export function useCommunityPromotionRuns() {
+  return useQuery({
+    queryKey: communityKeys.promotionRuns,
+    queryFn: () => customFetch<AgentRun[]>('/api/community-promotion/runs?limit=100'),
+  });
+}
+
+export function useRunCommunityPromotion() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (body: { maxCandidates?: number } = {}) =>
+      customFetch<Record<string, unknown>>('/api/community-promotion/run', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => invalidate(communityKeys.promotionOpportunities, communityKeys.promotionRuns),
+  });
+}
+
+export type PromotionOpportunityAction = 'approve' | 'reject' | 'ignore' | 'approve_and_publish';
+
+export function usePromotionOpportunityAction() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: ({ id, action }: { id: number; action: PromotionOpportunityAction }) =>
+      customFetch<CommunityPromotionOpportunity>(`/api/acquisition/opportunities/${id}/action`, { method: 'POST', body: JSON.stringify({ action }) }),
+    onSuccess: () => invalidate(communityKeys.promotionOpportunities),
+  });
+}
+
+export function usePublishPromotionOpportunity() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (id: number) => customFetch<CommunityPromotionOpportunity>(`/api/acquisition/opportunities/${id}/publish`, { method: 'POST' }),
+    onSuccess: () => invalidate(communityKeys.promotionOpportunities),
+  });
+}
+
+/** Matches `routes/acquisition.py`'s `CommunityUpdateInput` — used to set a
+ * community's `platformRef` once a human has actually connected the bot and
+ * looked up its real chat/channel id, and/or confirming the separate,
+ * explicit "promotion allowed" policy decision once a human has actually
+ * read the community's rules. Neither is ever set by the agent itself. */
+export function useUpdateCommunityPolicy() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: ({ communityId, platformRef, promotionAllowed }: { communityId: number; platformRef?: string; promotionAllowed?: boolean }) =>
+      customFetch<unknown>(`/api/acquisition/communities/${communityId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ ...(platformRef !== undefined && { platformRef }), ...(promotionAllowed !== undefined && { promotionAllowed }) }),
+      }),
+    onSuccess: () => invalidate(communityKeys.communities, communityKeys.promotionOpportunities),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Social Event Promotions (Instagram, Facebook, LinkedIn, Telegram, Discord)
+// ---------------------------------------------------------------------------
+
+export interface PromotionJob {
+  id: number;
+  eventId: number;
+  event?: {
+    id: number;
+    title: string;
+    slug: string;
+    startDate?: string | null;
+    format?: string | null;
+    city?: string | null;
+    category?: string | null;
+    status: string;
+    image?: string | null;
+  } | null;
+  platform: string;
+  destinationRef?: string | null;
+  status: string;
+  isDryRun: boolean;
+  title?: string | null;
+  content: string;
+  mediaUrls?: string[];
+  utmParams?: Record<string, string>;
+  trackingUrl?: string | null;
+  externalPostId?: string | null;
+  publishedUrl?: string | null;
+  retryCount: number;
+  maxRetries: number;
+  lastError?: string | null;
+  approvalRequired: boolean;
+  approvedBy?: string | null;
+  approvedAt?: string | null;
+  publishedAt?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface PlatformPromotionSetting {
+  id: number;
+  platform: string;
+  enabled: boolean;
+  autoPublish: boolean;
+  dryRun: boolean;
+  defaultDestination?: string | null;
+  rateLimitPerDay: number;
+  customPromptTemplate?: string | null;
+  isConnected: boolean;
+  connectionMessage: string;
+  updatedAt?: string | null;
+}
+
+export interface PromotionStats {
+  totalJobs: number;
+  published: number;
+  dryRun: number;
+  pendingApproval: number;
+  failed: number;
+  byPlatform: Record<string, number>;
+}
+
+export const promotionKeys = {
+  jobs: ['promotions', 'jobs'] as const,
+  settings: ['promotions', 'settings'] as const,
+  stats: ['promotions', 'stats'] as const,
+};
+
+export function usePromotionJobs(filters?: { platform?: string; status?: string; page?: number; pageSize?: number }) {
+  const params = new URLSearchParams();
+  if (filters?.platform) params.set('platform', filters.platform);
+  if (filters?.status) params.set('status', filters.status);
+  if (filters?.page) params.set('page', String(filters.page));
+  if (filters?.pageSize) params.set('page_size', String(filters.pageSize));
+  const qs = params.toString();
+
+  return useQuery({
+    queryKey: [...promotionKeys.jobs, filters],
+    queryFn: () => customFetch<{ items: PromotionJob[]; total: number; page: number; pageSize: number; totalPages: number }>(`/api/promotions/jobs${qs ? `?${qs}` : ''}`),
+  });
+}
+
+export function usePromotionSettings() {
+  return useQuery({
+    queryKey: promotionKeys.settings,
+    queryFn: () => customFetch<PlatformPromotionSetting[]>('/api/promotions/settings'),
+  });
+}
+
+export function usePromotionStats() {
+  return useQuery({
+    queryKey: promotionKeys.stats,
+    queryFn: () => customFetch<PromotionStats>('/api/promotions/stats'),
+  });
+}
+
+export function useApprovePromotionJob() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: ({ id, dryRun }: { id: number; dryRun?: boolean }) =>
+      customFetch<PromotionJob>(`/api/promotions/jobs/${id}/approve`, {
+        method: 'POST',
+        body: JSON.stringify({ dry_run: dryRun }),
+      }),
+    onSuccess: () => invalidate(promotionKeys.jobs, promotionKeys.stats),
+  });
+}
+
+export function useRejectPromotionJob() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (id: number) =>
+      customFetch<PromotionJob>(`/api/promotions/jobs/${id}/reject`, { method: 'POST' }),
+    onSuccess: () => invalidate(promotionKeys.jobs, promotionKeys.stats),
+  });
+}
+
+export function useRetryPromotionJob() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (id: number) =>
+      customFetch<PromotionJob>(`/api/promotions/jobs/${id}/retry`, { method: 'POST' }),
+    onSuccess: () => invalidate(promotionKeys.jobs, promotionKeys.stats),
+  });
+}
+
+export function useUpdatePromotionJobContent() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: ({ id, content, title, destinationRef }: { id: number; content: string; title?: string; destinationRef?: string }) =>
+      customFetch<PromotionJob>(`/api/promotions/jobs/${id}/content`, {
+        method: 'PATCH',
+        body: JSON.stringify({ content, title, destination_ref: destinationRef }),
+      }),
+    onSuccess: () => invalidate(promotionKeys.jobs),
+  });
+}
+
+export function useUpdatePlatformSetting() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: ({ platform, updates }: { platform: string; updates: Partial<PlatformPromotionSetting> }) =>
+      customFetch<PlatformPromotionSetting>(`/api/promotions/settings/${platform}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          enabled: updates.enabled,
+          auto_publish: updates.autoPublish,
+          dry_run: updates.dryRun,
+          default_destination: updates.defaultDestination,
+          rate_limit_per_day: updates.rateLimitPerDay,
+        }),
+      }),
+    onSuccess: () => invalidate(promotionKeys.settings),
+  });
+}
+
+export function useTriggerEventPromotion() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: ({ eventId, platforms, force }: { eventId: number; platforms?: string[]; force?: boolean }) =>
+      customFetch<PromotionJob[]>(`/api/promotions/events/${eventId}/trigger`, {
+        method: 'POST',
+        body: JSON.stringify({ platforms, force }),
+      }),
+    onSuccess: () => invalidate(promotionKeys.jobs, promotionKeys.stats),
+  });
+}
+

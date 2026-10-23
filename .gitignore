@@ -63,8 +63,9 @@ Thumbs.db
 *.pfx
 *secret*.json
 *credentials*.json
-*.db.*
-!artifacts/api-server/100times-dev.db
+*.db
+*.db-shm
+*.db-wal
 *.bak
 *.bak-*
 

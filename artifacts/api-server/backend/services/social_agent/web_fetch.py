@@ -10,6 +10,7 @@ fabricates a name/email/website that isn't present in the fetched HTML.
 """
 
 import json
+import logging
 import re
 import time
 from urllib.parse import urlparse
@@ -17,9 +18,21 @@ from urllib.parse import urlparse
 import httpx
 from bs4 import BeautifulSoup
 
+from backend.core.config import get_settings
+from backend.core.ssrf_protection import validate_safe_url
+
+logger = logging.getLogger("social_agent.web_fetch")
 EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 LINKEDIN_RE = re.compile(r"https?://(?:www\.)?linkedin\.com/(?:company|in)/[A-Za-z0-9_\-%]+/?")
-USER_AGENT = "100TimesAgentBot/1.0 (+https://100times.in; event/organizer discovery)"
+TWITTER_RE = re.compile(r"https?://(?:www\.)?(?:twitter\.com|x\.com)/[A-Za-z0-9_]{1,30}/?")
+INSTAGRAM_RE = re.compile(r"https?://(?:www\.)?instagram\.com/[A-Za-z0-9_.-]{1,50}/?")
+FACEBOOK_RE = re.compile(r"https?://(?:www\.)?facebook\.com/[A-Za-z0-9_.-]+/?")
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+DEFAULT_HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
 
 # Below this much visible text (and with no JSON-LD), a page is treated as
 # an unrendered JavaScript shell.
@@ -35,6 +48,13 @@ def fetch(url: str, render_js: bool = False) -> str | None:
     """Plain HTTP fetch. With `render_js=True` (Event Discovery Agent only),
     a failed or thin result is retried in a headless browser — see
     `browser_fetch.py`; if that fails too, the HTTP result is kept."""
+    allow_dev = get_settings().environment.lower() != "production"
+    try:
+        url = validate_safe_url(url, allow_private_in_dev=allow_dev)
+    except ValueError as exc:
+        logger.warning("SSRF protection blocked fetch for %s: %s", url, exc)
+        return None
+
     if render_js:
         _wait_for_host(url)
     html = _http_get(url)
@@ -65,8 +85,14 @@ def is_thin_page(html: str) -> bool:
 
 
 def _http_get(url: str) -> str | None:
+    allow_dev = get_settings().environment.lower() != "production"
     try:
-        response = httpx.get(url, timeout=8, follow_redirects=True, headers={"User-Agent": USER_AGENT})
+        url = validate_safe_url(url, allow_private_in_dev=allow_dev)
+    except ValueError as exc:
+        logger.warning("SSRF protection blocked HTTP get for %s: %s", url, exc)
+        return None
+    try:
+        response = httpx.get(url, timeout=10, follow_redirects=True, headers=DEFAULT_HEADERS)
     except httpx.HTTPError:
         return None
     if response.status_code != 200:
@@ -115,19 +141,32 @@ def from_json_ld_organizer(soup: BeautifulSoup) -> tuple[str | None, str | None,
 
 def extract_contact(html: str) -> tuple[str | None, str | None, str | None, str | None]:
     """Returns (name, website, email, linkedin) found on one already-fetched page."""
+    from backend.services.discovery_agent.email_verifier import is_valid_organizer_email
+
     soup = BeautifulSoup(html, "html.parser")
 
-    name, website, email = from_json_ld_organizer(soup)
+    name, website, raw_email = from_json_ld_organizer(soup)
+    email: str | None = None
+    if raw_email:
+        valid, norm, _ = is_valid_organizer_email(raw_email)
+        if valid:
+            email = norm
 
     if not email:
         mailto_hrefs = [a["href"] for a in soup.find_all("a", href=True) if a["href"].lower().startswith("mailto:")]
-        if mailto_hrefs:
-            email = mailto_hrefs[0].split(":", 1)[1].split("?")[0].strip()
+        for href in mailto_hrefs:
+            candidate_email = href.split(":", 1)[1].split("?")[0].strip()
+            valid, norm, _ = is_valid_organizer_email(candidate_email)
+            if valid:
+                email = norm
+                break
 
     if not email:
-        match = EMAIL_RE.search(html)
-        if match:
-            email = match.group(0)
+        for match in EMAIL_RE.finditer(html):
+            valid, norm, _ = is_valid_organizer_email(match.group(0))
+            if valid:
+                email = norm
+                break
 
     linkedin = None
     for anchor in soup.find_all("a", href=True):
@@ -143,6 +182,23 @@ def extract_contact(html: str) -> tuple[str | None, str | None, str | None, str 
             name = soup.title.get_text(strip=True)
 
     return name, website, email, linkedin
+
+
+def extract_social_links(soup: BeautifulSoup) -> dict[str, str]:
+    """Extracts public organizer social channels (LinkedIn, Twitter/X, Instagram, Facebook)."""
+    socials: dict[str, str] = {}
+    for anchor in soup.find_all("a", href=True):
+        href = anchor["href"].strip()
+        if "linkedin" not in socials and LINKEDIN_RE.match(href):
+            socials["linkedin"] = href
+        elif "twitter" not in socials and TWITTER_RE.match(href):
+            socials["twitter"] = href
+        elif "instagram" not in socials and INSTAGRAM_RE.match(href):
+            socials["instagram"] = href
+        elif "facebook" not in socials and FACEBOOK_RE.match(href):
+            if "sharer" not in href.lower() and "share.php" not in href.lower():
+                socials["facebook"] = href
+    return socials
 
 
 def extract_phone(html: str) -> str | None:

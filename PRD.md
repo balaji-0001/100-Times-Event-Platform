@@ -79,6 +79,21 @@
 ### 3.8 n8n Automation & Post-Event Loops
 - **8 Reusable Workflows:** Registration (`01`), Confirmation (`02`), Reminders (`03`), Cancellation (`04`), Reschedule (`05`), Post-Event Attendee Feedback (`06`), Organizer Multi-Touch Follow-Up (`07` with +1d and +2d retries), and Attendance/No-Show Tracking (`08`).
 
+### 3.9 Community Discovery Agent (Agent 5) — Sector-Targeted Community Ingestion
+- **Strict 12-Sector Focus:** Discovers public Telegram channels/groups and Discord servers solely for the 12 approved platform sectors (Pharmaceuticals, Healthcare, Energy and Power Generation, Telecommunications, Construction, Mining, Finance, Packaging, Transport and Logistics, Oil and Gas, Textiles, Manufacturing).
+- **Two-Stage Ingestion Pipeline:**
+  1. *Stage 1: Sector Seed Ingestion:* Discovers and validates curated industry directories and sector channels across all 12 categories, ensuring baseline coverage even if external search engines throttle.
+  2. *Stage 2: Web Search Discovery:* Generates sector-specific query seeds (`site:t.me {keyword} India`, `site:discord.gg {keyword} India`, qualifiers, and city pairings) interleaved round-robin across all 12 sectors.
+- **Strict Qualification Gate:** Only communities verified to belong to one of the 12 approved sectors are persisted; candidates categorized as "Other" or non-approved domains are strictly skipped.
+- **Approval & Connection Workflow:** Discovered communities are ingested into the Admin Community Discovery queue (`DISCOVERED` or `NEEDS_REVIEW`), where admins review metadata and authorize promotion.
+
+### 3.10 Fully Automated Multi-Mode Social Publishing (Bot & User-Level)
+- **Bot Mode Publishing:** Uses official Discord and Telegram Bot APIs for communities and channels where the 100Times bot is an authorized member/admin.
+- **Hands-Free User-Level Automation:**
+  - **Discord User Automation Engine (`DiscordUserPublisher`):** Publishes event drops into external Discord servers where a dedicated user account is a member via `DISCORD_USER_TOKEN`. Simulates natural human typing delays, includes jitter, and supports server auto-joining via invite links (`/invites/{code}`) without requiring server admins to install a bot.
+  - **Telegram MTProto User Client (`TelegramUserPublisher`):** Utilizes `Telethon` MTProto client API with `StringSession` to auto-join public groups and dispatch automated event recommendations completely hands-free.
+  - **Intelligent Routing & Fallback:** Core publishers seamlessly detect user-mode target references and credentials to automatically route messages without manual intervention.
+
 ---
 
 ## 4. Success Metrics & KPIs

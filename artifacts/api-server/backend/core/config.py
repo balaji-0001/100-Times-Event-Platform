@@ -1,13 +1,16 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _API_SERVER_DIR = Path(__file__).resolve().parent.parent.parent
 _ENV_PATHS = (
     ".env",
     str(_API_SERVER_DIR / ".env"),
+    str(_API_SERVER_DIR.parent / ".env"),
+    str(_API_SERVER_DIR.parent.parent / ".env"),
+    str(_API_SERVER_DIR.parent.parent.parent / ".env"),
     str(Path(__file__).resolve().parent.parent / ".env"),
 )
 
@@ -30,14 +33,29 @@ class Settings(BaseSettings):
     reddit_client_secret: str | None = None
     reddit_redirect_uri: str | None = None  # used only for the one-time refresh-token setup script, not a live callback route
     discord_bot_token: str | None = None
+    discord_user_token: str | None = None  # User account token for automated posting into joined Discord communities
     telegram_bot_token: str | None = None
+    telegram_api_id: int | None = None  # Telegram MTProto User Client API ID (from my.telegram.org)
+    telegram_api_hash: str | None = None  # Telegram MTProto User Client API Hash
+    telegram_session_string: str | None = None  # Telethon string session for user account automation
+    telegram_phone: str | None = None
     x_bearer_token: str | None = None  # app-only bearer — read/discovery side only
     x_api_key: str | None = None  # OAuth2 client id — needed for the publish-side user-context flow, once X approves commercial access
     x_api_secret: str | None = None
     linkedin_access_token: str | None = None
     linkedin_client_id: str | None = None  # needed for the Community Management API OAuth flow, once LinkedIn approves the API product
     linkedin_client_secret: str | None = None
+    linkedin_organization_id: str | None = None
     instagram_access_token: str | None = None
+    instagram_business_account_id: str | None = None
+    facebook_page_access_token: str | None = None
+    facebook_page_id: str | None = None
+    discord_promotion_webhook_url: str | None = None
+    telegram_promotion_channel_id: str | None = None
+    auto_promotion_enabled: bool = True
+    auto_promotion_dry_run_default: bool = True
+    auto_promotion_require_approval: bool = True
+    auto_promotion_platforms: str = "instagram,facebook,linkedin,telegram,discord"
     social_agent_daily_cap_per_platform: int = 25
 
     # n8n orchestration layer (see infra/n8n/README.md). Not read by FastAPI
@@ -79,28 +97,40 @@ class Settings(BaseSettings):
     # Public URL organizers use to list an event on 100Times — included in every outreach email.
     platform_listing_url: str = "https://100times.in"
     outreach_max_candidates_per_run: int = 20
+    # How often Agent 2's scheduled draft tick runs when its own live toggle
+    # (`services/social_agent/outreach/auto_toggle.py`, admin-flipped, no
+    # restart needed — same pattern as discovery_scan_interval_minutes
+    # below) is on. Each tick only drafts candidates to PENDING_APPROVAL;
+    # nothing is ever auto-sent.
+    outreach_scan_interval_minutes: int = 60
 
     # Event Discovery & Organizer Research Agent ("Agent 1") — broad web
     # search (the configured provider's web-search tool, via ai_client.py) for
-    # events across India, independent of the social-listening pipeline.
+    # events worldwide across all countries, regions, and major cities.
     # Comma-separated lists, same style as `cors_origins`.
+    discovery_target_countries: str = (
+        "United States,United Kingdom,Germany,India,Canada,Australia,France,"
+        "Singapore,Japan,United Arab Emirates,Brazil,Netherlands,Switzerland,Spain,Italy"
+    )
     discovery_target_cities: str = (
-        "Mumbai,Delhi,Bengaluru,Hyderabad,Chennai,Kolkata,Pune,Ahmedabad,"
-        "Jaipur,Chandigarh,Kochi,Indore,Lucknow,Surat,Nagpur"
+        "London,New York,San Francisco,Singapore,Tokyo,Dubai,Sydney,Toronto,"
+        "Berlin,Paris,Bengaluru,Mumbai,Delhi,Amsterdam,Chicago,Frankfurt"
     )
     discovery_target_states: str = (
-        "Maharashtra,Delhi,Karnataka,Telangana,Tamil Nadu,West Bengal,Gujarat,"
-        "Rajasthan,Punjab,Kerala,Madhya Pradesh,Uttar Pradesh"
+        "California,New York,England,Maharashtra,Karnataka,Bavaria,Ontario,"
+        "New South Wales,Tokyo Prefecture,Dubai Emirate,Île-de-France"
     )
     discovery_target_categories: str = (
-        "Technology,Business,Startup,Healthcare,Finance,Education,Career,"
-        "Arts & Culture,Music,Sports"
+        "Pharmaceuticals,Healthcare,Energy and Power Generation,"
+        "Telecommunications,Construction,Mining,Finance,Packaging,Transport and Logistics,"
+        "Oil and Gas,Textiles,Manufacturing"
     )
     discovery_search_depth: int = 40  # max search queries issued per run
     discovery_sources_per_query: int = 5  # max candidate URLs pulled from each query
     discovery_daily_limit: int = 200  # max new DiscoveredEvent rows created per day
     discovery_confidence_threshold: int = 60  # below this -> verification_status=NEEDS_REVIEW
     discovery_scan_interval_minutes: int = 60
+    discovery_require_organizer_email: bool = True  # Mandatory public organizer email rule
     # Re-open pages that come back empty/thin (JavaScript-rendered sites) in
     # headless Chromium via Playwright. Needs `playwright install chromium`;
     # without it discovery silently keeps the plain HTTP result.
@@ -110,11 +140,30 @@ class Settings(BaseSettings):
     # DISCOVERY_TARGET_CITIES entry. Empty = AI web search only.
     discovery_listing_urls: str = (
         "https://allevents.in/{city},"
-        "https://www.eventbrite.com/d/india--{city}/events/,"
-        "https://www.meetup.com/find/?location=in--{city}&source=EVENTS,"
+        "https://www.eventbrite.com/d/{country}--{city}/events/,"
+        "https://www.eventbrite.com/d/{city}/events/,"
+        "https://www.meetup.com/find/?location={city}&source=EVENTS,"
+        "https://10times.com/{city},"
         "https://www.skillboxes.com/events"
     )
     discovery_events_per_listing: int = 25
+
+    # Community Discovery Agent ("Agent 5") — public web search (same DuckDuckGo
+    # approach as Agent 1, no AI key required) for Telegram groups/channels and
+    # Discord servers relevant to 100Times' event categories. Reuses
+    # discovery_target_cities/states/categories above as its default scope.
+    community_discovery_search_depth: int = 30  # max search queries issued per run
+    community_discovery_sources_per_query: int = 5  # max candidate URLs pulled from each query
+    community_discovery_daily_limit: int = 100  # max new DiscoveredCommunity rows created per day
+    community_discovery_confidence_threshold: int = 60  # below this -> approval_status=NEEDS_REVIEW
+    community_discovery_scan_interval_minutes: int = 60
+
+    # Agent 4 extension — Community Promotion (event x approved-community matching,
+    # drafting standalone posts; publishing stays human-approval-gated, same as
+    # outreach). Reuses outreach_scan_interval_minutes-style cadence.
+    community_promotion_max_candidates_per_run: int = 20
+    community_promotion_scan_interval_minutes: int = 60
+    community_promotion_match_threshold: int = 60  # min score to draft a post
 
     # Background scheduler — makes both agents run continuously without any
     # manual dashboard trigger (n8n's Schedule Trigger workflows remain a
@@ -170,17 +219,55 @@ class Settings(BaseSettings):
     def validate_database_url(cls, value: str) -> str:
         """Accept the SQLAlchemy URLs supported by this application."""
         supported_prefixes = (
-            "postgres://",
-            "postgresql://",
-            "postgresql+psycopg://",
+            "mysql://",
+            "mysql+pymysql://",
             "sqlite://",
         )
         if not value.startswith(supported_prefixes):
             raise ValueError(
-                "DATABASE_URL must use PostgreSQL (postgresql:// or "
-                "postgresql+psycopg://) or SQLite (sqlite:///...)"
+                "DATABASE_URL must use MySQL (mysql:// or mysql+pymysql://) or SQLite (sqlite:///...)"
             )
         return value
+
+    @model_validator(mode="after")
+    def validate_production_hardening(self) -> "Settings":
+        if self.environment.lower() == "production":
+            insecure_jwt_defaults = {
+                "dev-insecure-secret-key-100times-development",
+                "insecure-dev-jwt-secret-change-in-prod-please-use-strong-secret-key",
+                "secret",
+                "changeme",
+                "test-secret",
+            }
+            if not self.jwt_secret or self.jwt_secret in insecure_jwt_defaults or len(self.jwt_secret) < 32:
+                raise ValueError(
+                    "In production, JWT_SECRET must be set to a strong, high-entropy secret with at least 32 characters."
+                )
+
+            insecure_webhook_defaults = {
+                "dev-n8n-webhook-secret-100times",
+                "dev-webhook-secret-change-in-production",
+                "secret",
+                "changeme",
+            }
+            if self.n8n_webhooks_enabled and (
+                not self.n8n_webhook_secret or self.n8n_webhook_secret in insecure_webhook_defaults or len(self.n8n_webhook_secret) < 16
+            ):
+                raise ValueError(
+                    "In production when N8N_WEBHOOKS_ENABLED is true, N8N_WEBHOOK_SECRET must be set to a strong secret key."
+                )
+
+            if self.cors_origins.strip() == "*":
+                raise ValueError(
+                    "In production, CORS_ORIGINS cannot be '*' (wildcard). Set explicit trusted domains."
+                )
+
+            if self.seed_demo_data:
+                raise ValueError(
+                    "In production, SEED_DEMO_DATA must be false to prevent demo user credentials from being seeded."
+                )
+
+        return self
 
     @property
     def cors_origin_list(self) -> list[str]:

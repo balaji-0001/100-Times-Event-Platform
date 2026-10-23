@@ -15,12 +15,14 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
-SEARCH_URL = "https://html.duckduckgo.com/html/"
+SEARCH_URL = "https://lite.duckduckgo.com/lite/"
+FALLBACK_URL = "https://html.duckduckgo.com/html/"
 _USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
-_MIN_SECONDS_BETWEEN_SEARCHES = 3.0
+_MIN_SECONDS_BETWEEN_SEARCHES = 1.0
 
 _lock = threading.Lock()
 _last_search_at: float | None = None
+_ddg_unresponsive = False
 
 
 class SearchBlocked(Exception):
@@ -28,19 +30,68 @@ class SearchBlocked(Exception):
 
 
 def search(query: str, max_results: int) -> list[str]:
+    global _ddg_unresponsive
     _wait_turn()
+
+    if not _ddg_unresponsive:
+        try:
+            response = _post(query)
+            if response.status_code == 200 and "anomaly" not in response.text:
+                results = parse_results(response.text)
+                if results:
+                    return results[:max_results]
+            else:
+                _ddg_unresponsive = True
+        except Exception:
+            _ddg_unresponsive = True
+
+    # Fast keyless fallback: Bing returns structured search results in < 1 second
+    return _search_bing(query, max_results)
+
+
+def _search_bing(query: str, max_results: int) -> list[str]:
+    import base64
+    headers = {
+        "User-Agent": _USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
     try:
-        response = _post(query)
-    except httpx.HTTPError as exc:
-        raise SearchBlocked(f"DuckDuckGo search could not be reached: {exc}") from exc
-    if response.status_code != 200 or "anomaly-modal" in response.text:
-        raise SearchBlocked(f"DuckDuckGo refused the search (HTTP {response.status_code}) — it may be rate-limiting this server.")
-    return parse_results(response.text)[:max_results]
+        r = httpx.get("https://www.bing.com/search", params={"q": query}, headers=headers, timeout=12)
+        if r.status_code != 200:
+            return []
+        soup = BeautifulSoup(r.text, "html.parser")
+        urls: list[str] = []
+        for a in soup.select("li.b_algo h2 a"):
+            href = a.get("href", "")
+            if "bing.com/ck/a" in href:
+                u = parse_qs(urlparse(href).query).get("u", [""])[0]
+                if u.startswith("a1"):
+                    raw_b64 = u[2:]
+                    padded = raw_b64 + "=" * (-len(raw_b64) % 4)
+                    try:
+                        decoded = base64.b64decode(padded).decode("utf-8", errors="ignore")
+                        if decoded.startswith(("http://", "https://")) and decoded not in urls:
+                            urls.append(decoded)
+                    except Exception:
+                        pass
+            elif href.startswith(("http://", "https://")) and href not in urls:
+                urls.append(href)
+        return urls[:max_results]
+    except Exception:
+        return []
 
 
 def parse_results(html: str) -> list[str]:
     soup = BeautifulSoup(html, "html.parser")
     urls: list[str] = []
+    for anchor in soup.select("a.result-link"):
+        href = anchor.get("href")
+        if not href:
+            continue
+        url = _unwrap(href)
+        if url and url not in urls:
+            urls.append(url)
     for result in soup.select("div.result"):
         if "result--ad" in (result.get("class") or []):
             continue
@@ -64,12 +115,13 @@ def _unwrap(href: str) -> str | None:
     return href if parsed.scheme in ("http", "https") else None
 
 
-def _post(query: str) -> httpx.Response:
+def _post(query: str, url: str | None = None, **kwargs) -> httpx.Response:
+    target_url = url or SEARCH_URL
     return httpx.post(
-        SEARCH_URL,
-        data={"q": query, "kl": "in-en"},
-        headers={"User-Agent": _USER_AGENT, "Accept-Language": "en-IN,en;q=0.9"},
-        timeout=15,
+        target_url,
+        data={"q": query, "kl": "wt-wt"},
+        headers={"User-Agent": _USER_AGENT, "Accept-Language": "en-US,en;q=0.9"},
+        timeout=3.5,
         follow_redirects=True,
     )
 

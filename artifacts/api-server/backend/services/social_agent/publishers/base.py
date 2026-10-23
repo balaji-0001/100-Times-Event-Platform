@@ -8,6 +8,13 @@ After human approval, the flow is always exactly these four steps (see
 `routes/acquisition.py`'s `/publish` endpoint):
   validate_connection -> validate_publish_permission -> publish_reply -> verify_publication
 
+`publish_post` is the same flow's standalone-post sibling, added for Agent
+4's community-promotion extension: a proactive announcement into a
+destination with no inbound discussion to reply to (`target_ref` is just
+the chat/channel, no message id — see each platform's publisher for the
+exact format). Same approval gate, same connection/permission checks, same
+never-fabricate-success rule.
+
 Nothing here is ever called without an explicit human click. Nothing here
 is ever allowed to fabricate a success result.
 """
@@ -40,7 +47,14 @@ class PlatformPublisher(ABC):
 
     @abstractmethod
     def publish_reply(self, text: str, target_ref: str) -> PublishResult:
-        """Attempts the real publish. Must never fabricate success."""
+        """Attempts the real publish, as a reply. Must never fabricate success."""
+
+    def publish_post(self, text: str, target_ref: str, **kwargs: Any) -> PublishResult:
+        """Attempts the real publish as a standalone post (no reply target).
+        Base implementation reports an honest "not supported" failure, like
+        every other not-yet-implemented capability here; platforms with a
+        real integration override this."""
+        return PublishResult(success=False, platform=self.platform, published_url=None, message=f"{self.platform} has no standalone-post publish integration configured.")
 
     def verify_publication(self, result: PublishResult) -> PublishResult:
         """Optional post-publish confirmation (e.g. re-checking the post

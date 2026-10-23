@@ -52,9 +52,14 @@ flowchart TB
 ### 2.2 Backend API & Agent Layer (`artifacts/api-server/backend`)
 - **Framework:** Python 3.11+ / FastAPI (`port 8000`) / SQLAlchemy 2.0 ORM / Pydantic v2.
 - **Core Services:**
-  - `services/trust_agent/agent.py` — **Trust Agent (Agent 3)** (`evaluate_event_trust`, `admin_decide_trust_review`).
+  - `services/discovery_agent/orchestrator.py` & `services/discovery_agent/validation.py` — Autonomous multi-source discovery across the 12 approved sectors, contact enrichment, and **Mandatory Contact Qualification Gate** (enforces that events must possess at least one organizer contact: email OR phone; events lacking both are disqualified).
+  - `services/trust_agent/agent.py` — **Trust Agent (Agent 3)** (`evaluate_event_trust`, `admin_decide_trust_review`, contact completeness check).
   - `services/attendee_agent/agent.py` — **Attendee Agent** (`extract_attendee_intent`, `match_events_for_intent`, `process_attendee_signal`, `run_attendee_discovery_cycle`).
   - `services/registration_automation.py` — Registration state machine, overbooking guard, `zoneinfo.ZoneInfo` reminder scheduler (`T-7d`, `T-24h`, `T-1h`), cancellation, reschedule, attendance/no-show, and organizer multi-touch follow-up engine.
+  - `services/community_agent/orchestrator.py` & `services/community_agent/query_seeds.py` — **Community Discovery Agent (Agent 5)**: Automated discovery of public Telegram channels/groups and Discord servers targeted strictly at the 12 approved platform sectors via two-stage ingestion (Stage 1 sector seed directories + Stage 2 round-robin query seeds) and strict category qualification gate (skipping non-approved domains/Other).
+  - `services/social_agent/publishers/` — **Multi-Mode Social Publishers**:
+    - **Bot Mode:** `DiscordPublisher` (Discord Bot REST API) & `TelegramPublisher` (Telegram Bot API).
+    - **User Automation Mode:** `DiscordUserPublisher` (`publishers/discord_user.py` — hands-free user account posting into external joined servers via `DISCORD_USER_TOKEN` with human-like typing simulation and invite code auto-join) & `TelegramUserPublisher` (`publishers/telegram_user.py` — Telegram MTProto User Client via `Telethon` for auto-joining public groups and posting event updates on autopilot).
   - `services/notifications.py` — 16 notification templates + RFC 5545 `.ics` / Google Calendar / Outlook generator.
   - `services/lifecycle.py` — Event 13-state machine & Organizer 12-stage progression engine.
   - `services/audit.py` — Recursive secret-redacting audit logger (`record_audit_log`).
@@ -62,7 +67,7 @@ flowchart TB
 ### 2.3 Persistence Layer (`models.py` & `db.py`)
 - **Dual-Dialect Support:** PostgreSQL (production/local) and SQLite (isolated test suites) with automatic non-destructive column synchronization (`sync_schema_columns(engine)`).
 - **30+ Domain Models:**
-  - *Core & Discovery:* `User`, `Organizer`, `Organization`, `OrganizerProfile`, `DiscoveredEvent`, `DiscoveryQuery`, `OrganizerLead`, `OutreachMessage`, `AttributionRecord`, `PipelineRun`.
+  - *Core & Discovery:* `User`, `Organizer`, `Organization`, `OrganizerProfile`, `DiscoveredEvent`, `DiscoveryQuery`, `OrganizerLead`, `OutreachMessage`, `AttributionRecord`, `PipelineRun`, `DiscoveredCommunity`, `CommunitySource`.
   - *Events & Locations:* `Event`, `EventLocation`, `Ticket`.
   - *Trust & Safety:* `TrustReview`, `TrustDecision`, `DuplicateCandidate`.
   - *Attendees & Automation:* `Registration`, `Attendee`, `AttendeeIntent`, `EventMatch`, `AgentMessage`, `EventReminder`, `OrganizerFollowup`, `AttendeeFeedback`, `Notification`, `AutomationRun`, `AuditLog`.
