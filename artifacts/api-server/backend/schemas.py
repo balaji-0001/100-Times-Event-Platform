@@ -812,6 +812,8 @@ class DiscoveryRunRequest(BaseModel):
     countries: list[str] | None = None
     country: str | None = None
     categories: list[str] | None = None
+    sources: list[str] | None = None
+    events_per_run: int | None = Field(default=None, alias="eventsPerRun", ge=1, le=1000)
     search_depth: int | None = Field(default=None, alias="searchDepth", ge=1, le=200)
     sources_per_query: int | None = Field(default=None, alias="sourcesPerQuery", ge=1, le=20)
     daily_limit: int | None = Field(default=None, alias="dailyLimit", ge=1)
@@ -819,6 +821,22 @@ class DiscoveryRunRequest(BaseModel):
     require_organizer_email: bool | None = Field(default=None, alias="requireOrganizerEmail")
     date_from: str | None = Field(default=None, alias="dateFrom")
     date_to: str | None = Field(default=None, alias="dateTo")
+
+    # Rejection & Sector Fallback rules
+    fallback_to_other_sector: bool | None = Field(default=None, alias="fallbackToOtherSector")
+    reject_no_organizer: bool | None = Field(default=None, alias="rejectNoOrganizer")
+    require_organizer_phone: bool | None = Field(default=None, alias="requireOrganizerPhone")
+    require_organizer_website: bool | None = Field(default=None, alias="requireOrganizerWebsite")
+    reject_past_events: bool | None = Field(default=None, alias="rejectPastEvents")
+    reject_unparseable_dates: bool | None = Field(default=None, alias="rejectUnparseableDates")
+    reject_missing_location: bool | None = Field(default=None, alias="rejectMissingLocation")
+    reject_missing_ticket_url: bool | None = Field(default=None, alias="rejectMissingTicketUrl")
+    reject_unmatched_category: bool | None = Field(default=None, alias="rejectUnmatchedCategory")
+    min_title_length: int | None = Field(default=None, alias="minTitleLength")
+    min_description_length: int | None = Field(default=None, alias="minDescriptionLength")
+    min_confidence_score: int | None = Field(default=None, alias="minConfidenceScore")
+    blacklisted_keywords: list[str] | None = Field(default=None, alias="blacklistedKeywords")
+    excluded_domains: list[str] | None = Field(default=None, alias="excludedDomains")
 
 
 # --- Community Discovery Agent ("Agent 5") ---
@@ -964,6 +982,8 @@ class DiscoveryAutoStatusOut(APIModel):
     sources: list[str] = Field(default_factory=lambda: ["web", "linkedin", "facebook", "instagram", "twitter", "telegram", "reddit", "event_platforms"])
     search_depth: int | None = Field(default=None, alias="searchDepth")
     daily_limit: int | None = Field(default=None, alias="dailyLimit")
+    events_per_run: int | None = Field(default=None, alias="eventsPerRun")
+    events_per_run: int | None = Field(default=50, alias="eventsPerRun")
 
     # Event rejection and quality filter rules
     reject_no_organizer: bool = Field(default=True, alias="rejectNoOrganizer")
@@ -993,6 +1013,7 @@ class DiscoveryAutoToggleRequest(BaseModel):
     sources: list[str] | None = None
     search_depth: int | None = Field(default=None, alias="searchDepth")
     daily_limit: int | None = Field(default=None, alias="dailyLimit")
+    events_per_run: int | None = Field(default=None, alias="eventsPerRun")
 
     # Event rejection and quality filter rules
     reject_no_organizer: bool | None = Field(default=None, alias="rejectNoOrganizer")

@@ -146,6 +146,7 @@ export interface DiscoveryAutoStatus {
   sources?: string[];
   searchDepth?: number | null;
   dailyLimit?: number | null;
+  eventsPerRun?: number | null;
   // Event rejection rules
   rejectNoOrganizer?: boolean;
   requireOrganizerEmail?: boolean;
@@ -545,10 +546,40 @@ export function useCreateAutomationRequest() {
   });
 }
 
+export interface DiscoveryRunPayload {
+  cities?: string[];
+  states?: string[];
+  categories?: string[];
+  country?: string | null;
+  countries?: string[];
+  sources?: string[];
+  eventsPerRun?: number;
+  searchDepth?: number;
+  sourcesPerQuery?: number;
+  dailyLimit?: number;
+  dateFrom?: string;
+  dateTo?: string;
+  fallbackToOtherSector?: boolean;
+  rejectNoOrganizer?: boolean;
+  requireOrganizerEmail?: boolean;
+  requireOrganizerPhone?: boolean;
+  requireOrganizerWebsite?: boolean;
+  rejectPastEvents?: boolean;
+  rejectUnparseableDates?: boolean;
+  rejectMissingLocation?: boolean;
+  rejectMissingTicketUrl?: boolean;
+  rejectUnmatchedCategory?: boolean;
+  minTitleLength?: number;
+  minDescriptionLength?: number;
+  minConfidenceScore?: number;
+  blacklistedKeywords?: string[];
+  excludedDomains?: string[];
+}
+
 export function useRunDiscovery() {
   const invalidate = useInvalidate();
   return useMutation({
-    mutationFn: (body: { cities?: string[]; states?: string[]; categories?: string[]; country?: string; countries?: string[]; searchDepth?: number; sourcesPerQuery?: number; dateFrom?: string; dateTo?: string } = {}) =>
+    mutationFn: (body: DiscoveryRunPayload = {}) =>
       customFetch<Record<string, unknown>>('/api/discovery/run', { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => invalidate(keys.events, keys.organizers, keys.discoveryRuns, keys.outreachStats, keys.discoveryStats),
   });

@@ -106,6 +106,38 @@ def trigger_discovery_run(
             config.date_from = payload.date_from
         if payload.date_to is not None:
             config.date_to = payload.date_to
+        if payload.sources is not None:
+            config.sources = payload.sources
+        if payload.events_per_run is not None:
+            config.events_per_run = payload.events_per_run
+        if payload.fallback_to_other_sector is not None:
+            config.fallback_to_other_sector = payload.fallback_to_other_sector
+        if payload.reject_no_organizer is not None:
+            config.reject_no_organizer = payload.reject_no_organizer
+        if payload.require_organizer_phone is not None:
+            config.require_organizer_phone = payload.require_organizer_phone
+        if payload.require_organizer_website is not None:
+            config.require_organizer_website = payload.require_organizer_website
+        if payload.reject_past_events is not None:
+            config.reject_past_events = payload.reject_past_events
+        if payload.reject_unparseable_dates is not None:
+            config.reject_unparseable_dates = payload.reject_unparseable_dates
+        if payload.reject_missing_location is not None:
+            config.reject_missing_location = payload.reject_missing_location
+        if payload.reject_missing_ticket_url is not None:
+            config.reject_missing_ticket_url = payload.reject_missing_ticket_url
+        if payload.reject_unmatched_category is not None:
+            config.reject_unmatched_category = payload.reject_unmatched_category
+        if payload.min_title_length is not None:
+            config.min_title_length = payload.min_title_length
+        if payload.min_description_length is not None:
+            config.min_description_length = payload.min_description_length
+        if payload.min_confidence_score is not None:
+            config.min_confidence_score = payload.min_confidence_score
+        if payload.blacklisted_keywords is not None:
+            config.blacklisted_keywords = payload.blacklisted_keywords
+        if payload.excluded_domains is not None:
+            config.excluded_domains = payload.excluded_domains
 
     summary = run_discovery_agent(db, config)
 
@@ -137,6 +169,7 @@ def get_discovery_auto(db: Session = Depends(get_db), _user: User = _admin) -> D
         sources=auto_scope.get("sources") or ["web", "linkedin", "facebook", "instagram", "twitter", "telegram", "reddit", "event_platforms"],
         search_depth=auto_scope.get("search_depth"),
         daily_limit=auto_scope.get("daily_limit"),
+        events_per_run=auto_scope.get("events_per_run", 50),
         reject_no_organizer=auto_scope.get("reject_no_organizer", True),
         require_organizer_email=auto_scope.get("require_organizer_email", True),
         require_organizer_phone=auto_scope.get("require_organizer_phone", False),
@@ -182,6 +215,8 @@ def set_discovery_auto(payload: DiscoveryAutoToggleRequest, db: Session = Depend
         settings_updates["search_depth"] = payload.search_depth
     if payload.daily_limit is not None:
         settings_updates["daily_limit"] = payload.daily_limit
+    if payload.events_per_run is not None:
+        settings_updates["events_per_run"] = payload.events_per_run
 
     # Rejection settings
     for field in (
@@ -221,6 +256,7 @@ def set_discovery_auto(payload: DiscoveryAutoToggleRequest, db: Session = Depend
         sources=auto_scope.get("sources") or ["web", "linkedin", "facebook", "instagram", "twitter", "telegram", "reddit", "event_platforms"],
         search_depth=auto_scope.get("search_depth"),
         daily_limit=auto_scope.get("daily_limit"),
+        events_per_run=auto_scope.get("events_per_run", 50),
         reject_no_organizer=auto_scope.get("reject_no_organizer", True),
         require_organizer_email=auto_scope.get("require_organizer_email", True),
         require_organizer_phone=auto_scope.get("require_organizer_phone", False),

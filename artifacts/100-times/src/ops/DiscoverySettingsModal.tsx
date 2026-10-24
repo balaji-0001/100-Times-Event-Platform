@@ -181,6 +181,7 @@ export function DiscoverySettingsDrawer({
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [depth, setDepth] = useState('20');
   const [dailyLimit, setDailyLimit] = useState('200');
+  const [eventsPerRun, setEventsPerRun] = useState('50');
 
   // Discovery Sources state
   const [selectedSources, setSelectedSources] = useState<string[]>([
@@ -228,6 +229,7 @@ export function DiscoverySettingsDrawer({
       setSelectedCategories(auto.data.categories || []);
       setDepth(auto.data.searchDepth ? String(auto.data.searchDepth) : '20');
       setDailyLimit(auto.data.dailyLimit ? String(auto.data.dailyLimit) : '200');
+      setEventsPerRun(auto.data.eventsPerRun ? String(auto.data.eventsPerRun) : '50');
 
       // Sync sources
       if (auto.data.sources && auto.data.sources.length > 0) {
@@ -321,6 +323,7 @@ export function DiscoverySettingsDrawer({
         sources: selectedSources.length ? selectedSources : ['web'],
         searchDepth: Number(depth) || 20,
         dailyLimit: Number(dailyLimit) || 200,
+        eventsPerRun: Number(eventsPerRun) || 50,
         // Rejection & Fallback settings
         fallbackToOtherSector,
         rejectNoOrganizer,
@@ -458,9 +461,9 @@ export function DiscoverySettingsDrawer({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             <label>
-              <span className="font-semibold text-foreground">Search queries per cycle</span>
+              <span className="font-semibold text-foreground">Queries per cycle</span>
               <input
                 type="number"
                 min={1}
@@ -472,7 +475,19 @@ export function DiscoverySettingsDrawer({
               />
             </label>
             <label>
-              <span className="font-semibold text-foreground">Daily event limit</span>
+              <span className="font-semibold text-foreground">Events per run</span>
+              <input
+                type="number"
+                min={1}
+                max={500}
+                value={eventsPerRun}
+                onChange={(e) => setEventsPerRun(e.target.value)}
+                className={`${inputClass} mt-1`}
+                disabled={setAuto.isPending}
+              />
+            </label>
+            <label>
+              <span className="font-semibold text-foreground">Daily total limit</span>
               <input
                 type="number"
                 min={1}
