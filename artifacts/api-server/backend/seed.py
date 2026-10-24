@@ -65,6 +65,7 @@ def seed() -> None:
             ("Oil and Gas", "oil-and-gas", "Oil and gas industry news, operations, technology, and business developments.", "flame"),
             ("Textiles", "textiles", "Textile industry news and developments, including businesses and professionals across the textile value chain.", "scissors"),
             ("Manufacturing", "manufacturing", "Manufacturing industry news, industrial operations, technology, and business developments.", "factory"),
+            ("Other", "other", "Other industry events, summits, conferences, and exhibitions.", "layers"),
         ]
         categories = [
             get_or_create(db, Category, {"slug": slug}, {"name": name, "description": description, "icon": icon})

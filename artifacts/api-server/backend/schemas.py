@@ -961,6 +961,7 @@ class DiscoveryAutoStatusOut(APIModel):
     cities: list[str] = Field(default_factory=list)
     states: list[str] = Field(default_factory=list)
     categories: list[str] = Field(default_factory=list)
+    sources: list[str] = Field(default_factory=lambda: ["web", "linkedin", "facebook", "instagram", "twitter", "telegram", "reddit", "event_platforms"])
     search_depth: int | None = Field(default=None, alias="searchDepth")
     daily_limit: int | None = Field(default=None, alias="dailyLimit")
 
@@ -973,7 +974,8 @@ class DiscoveryAutoStatusOut(APIModel):
     reject_unparseable_dates: bool = Field(default=True, alias="rejectUnparseableDates")
     reject_missing_location: bool = Field(default=False, alias="rejectMissingLocation")
     reject_missing_ticket_url: bool = Field(default=False, alias="rejectMissingTicketUrl")
-    reject_unmatched_category: bool = Field(default=True, alias="rejectUnmatchedCategory")
+    reject_unmatched_category: bool = Field(default=False, alias="rejectUnmatchedCategory")
+    fallback_to_other_sector: bool = Field(default=True, alias="fallbackToOtherSector")
     min_title_length: int = Field(default=8, alias="minTitleLength")
     min_description_length: int = Field(default=20, alias="minDescriptionLength")
     min_confidence_score: int = Field(default=50, alias="minConfidenceScore")
@@ -988,6 +990,7 @@ class DiscoveryAutoToggleRequest(BaseModel):
     cities: list[str] | None = None
     states: list[str] | None = None
     categories: list[str] | None = None
+    sources: list[str] | None = None
     search_depth: int | None = Field(default=None, alias="searchDepth")
     daily_limit: int | None = Field(default=None, alias="dailyLimit")
 
@@ -1001,6 +1004,7 @@ class DiscoveryAutoToggleRequest(BaseModel):
     reject_missing_location: bool | None = Field(default=None, alias="rejectMissingLocation")
     reject_missing_ticket_url: bool | None = Field(default=None, alias="rejectMissingTicketUrl")
     reject_unmatched_category: bool | None = Field(default=None, alias="rejectUnmatchedCategory")
+    fallback_to_other_sector: bool | None = Field(default=None, alias="fallbackToOtherSector")
     min_title_length: int | None = Field(default=None, alias="minTitleLength")
     min_description_length: int | None = Field(default=None, alias="minDescriptionLength")
     min_confidence_score: int | None = Field(default=None, alias="minConfidenceScore")

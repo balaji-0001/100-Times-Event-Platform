@@ -4,17 +4,27 @@ import {
   Building2,
   CalendarX,
   Check,
+  Compass,
+  Facebook,
   FilterX,
   Globe,
+  Instagram,
   Layers,
+  Linkedin,
   MapPin,
   Mail,
+  MessageCircle,
   Phone,
+  Radio,
+  Send,
   Settings,
+  Share2,
   Shield,
   ShieldAlert,
   Sliders,
   Tag,
+  Ticket,
+  Twitter,
 } from 'lucide-react';
 import { useCategories, useDiscoveryAutoStatus, useSetDiscoveryAuto } from './api';
 import { GeoChecklistSelector } from './GeoChecklistSelector';
@@ -91,6 +101,66 @@ function FilterRuleRow({
   );
 }
 
+interface SourceOption {
+  id: string;
+  name: string;
+  description: string;
+  icon: any;
+  badge?: string;
+}
+
+const AVAILABLE_SOURCES: SourceOption[] = [
+  {
+    id: 'web',
+    name: 'Web & Industry Portals',
+    description: 'Conference listing sites, trade associations, industry councils, and sector publications.',
+    icon: Globe,
+    badge: 'Primary',
+  },
+  {
+    id: 'linkedin',
+    name: 'LinkedIn Events & Posts',
+    description: 'Public LinkedIn events, conference announcements, and organizer company updates.',
+    icon: Linkedin,
+  },
+  {
+    id: 'facebook',
+    name: 'Facebook Events',
+    description: 'Public Facebook events, industry groups, and conference pages.',
+    icon: Facebook,
+  },
+  {
+    id: 'instagram',
+    name: 'Instagram Announcements',
+    description: 'Event promo flyers, summit registration posts, and conference handles.',
+    icon: Instagram,
+  },
+  {
+    id: 'twitter',
+    name: 'Twitter / X',
+    description: 'Official conference handles, event announcement hashtags, and summit threads.',
+    icon: Twitter,
+  },
+  {
+    id: 'telegram',
+    name: 'Telegram Channels & Groups',
+    description: 'Public Telegram channels, event broadcasts, and conference community hubs.',
+    icon: Send,
+  },
+  {
+    id: 'reddit',
+    name: 'Reddit Megathreads & Communities',
+    description: 'Industry conference megathreads, regional meetup calendars, and event roundups.',
+    icon: MessageCircle,
+  },
+  {
+    id: 'event_platforms',
+    name: 'Ticketing & Event Portals',
+    description: 'Eventbrite, Meetup, Lu.ma, Townscript, and Allevents public listings.',
+    icon: Ticket,
+  },
+];
+
 export function DiscoverySettingsDrawer({
   open,
   onClose,
@@ -102,7 +172,7 @@ export function DiscoverySettingsDrawer({
   const setAuto = useSetDiscoveryAuto();
   const categoriesQuery = useCategories();
 
-  const [activeTab, setActiveTab] = useState<'scope' | 'rejection'>('scope');
+  const [activeTab, setActiveTab] = useState<'scope' | 'sources' | 'rejection'>('scope');
 
   // Geographic and sector scope state
   const [selectedCountries, setSelectedCountries] = useState<string[]>([]);
@@ -112,7 +182,20 @@ export function DiscoverySettingsDrawer({
   const [depth, setDepth] = useState('20');
   const [dailyLimit, setDailyLimit] = useState('200');
 
-  // Rejection rules state
+  // Discovery Sources state
+  const [selectedSources, setSelectedSources] = useState<string[]>([
+    'web',
+    'linkedin',
+    'facebook',
+    'instagram',
+    'twitter',
+    'telegram',
+    'reddit',
+    'event_platforms',
+  ]);
+
+  // Rejection rules & Sector Fallback state
+  const [fallbackToOtherSector, setFallbackToOtherSector] = useState(true);
   const [rejectNoOrganizer, setRejectNoOrganizer] = useState(true);
   const [requireOrganizerEmail, setRequireOrganizerEmail] = useState(true);
   const [requireOrganizerPhone, setRequireOrganizerPhone] = useState(false);
@@ -121,7 +204,7 @@ export function DiscoverySettingsDrawer({
   const [rejectUnparseableDates, setRejectUnparseableDates] = useState(true);
   const [rejectMissingLocation, setRejectMissingLocation] = useState(false);
   const [rejectMissingTicketUrl, setRejectMissingTicketUrl] = useState(false);
-  const [rejectUnmatchedCategory, setRejectUnmatchedCategory] = useState(true);
+  const [rejectUnmatchedCategory, setRejectUnmatchedCategory] = useState(false);
   const [minTitleLength, setMinTitleLength] = useState('8');
   const [minDescriptionLength, setMinDescriptionLength] = useState('20');
   const [minConfidenceScore, setMinConfidenceScore] = useState('50');
@@ -146,7 +229,24 @@ export function DiscoverySettingsDrawer({
       setDepth(auto.data.searchDepth ? String(auto.data.searchDepth) : '20');
       setDailyLimit(auto.data.dailyLimit ? String(auto.data.dailyLimit) : '200');
 
-      // Sync rejection rules
+      // Sync sources
+      if (auto.data.sources && auto.data.sources.length > 0) {
+        setSelectedSources(auto.data.sources);
+      } else {
+        setSelectedSources([
+          'web',
+          'linkedin',
+          'facebook',
+          'instagram',
+          'twitter',
+          'telegram',
+          'reddit',
+          'event_platforms',
+        ]);
+      }
+
+      // Sync rejection rules & sector fallback
+      setFallbackToOtherSector(auto.data.fallbackToOtherSector ?? true);
       setRejectNoOrganizer(auto.data.rejectNoOrganizer ?? true);
       setRequireOrganizerEmail(auto.data.requireOrganizerEmail ?? true);
       setRequireOrganizerPhone(auto.data.requireOrganizerPhone ?? false);
@@ -155,7 +255,7 @@ export function DiscoverySettingsDrawer({
       setRejectUnparseableDates(auto.data.rejectUnparseableDates ?? true);
       setRejectMissingLocation(auto.data.rejectMissingLocation ?? false);
       setRejectMissingTicketUrl(auto.data.rejectMissingTicketUrl ?? false);
-      setRejectUnmatchedCategory(auto.data.rejectUnmatchedCategory ?? true);
+      setRejectUnmatchedCategory(auto.data.rejectUnmatchedCategory ?? false);
       setMinTitleLength(String(auto.data.minTitleLength ?? 8));
       setMinDescriptionLength(String(auto.data.minDescriptionLength ?? 20));
       setMinConfidenceScore(String(auto.data.minConfidenceScore ?? 50));
@@ -177,6 +277,7 @@ export function DiscoverySettingsDrawer({
     'Telecommunications',
     'Textiles',
     'Transport and Logistics',
+    'Other',
   ];
 
   const toggleCategory = (cat: string) => {
@@ -187,6 +288,15 @@ export function DiscoverySettingsDrawer({
 
   const selectAllCategories = () => setSelectedCategories([...allAvailableCategories]);
   const clearCategories = () => setSelectedCategories([]);
+
+  const toggleSource = (sourceId: string) => {
+    setSelectedSources((prev) =>
+      prev.includes(sourceId) ? prev.filter((s) => s !== sourceId) : [...prev, sourceId]
+    );
+  };
+
+  const selectAllSources = () => setSelectedSources(AVAILABLE_SOURCES.map((s) => s.id));
+  const clearSources = () => setSelectedSources(['web']);
 
   const handleSave = () => {
     setSaveSuccess(false);
@@ -208,9 +318,11 @@ export function DiscoverySettingsDrawer({
         states: selectedStates,
         cities: selectedCities,
         categories: selectedCategories.length ? selectedCategories : allAvailableCategories,
+        sources: selectedSources.length ? selectedSources : ['web'],
         searchDepth: Number(depth) || 20,
         dailyLimit: Number(dailyLimit) || 200,
-        // Rejection settings
+        // Rejection & Fallback settings
+        fallbackToOtherSector,
         rejectNoOrganizer,
         requireOrganizerEmail,
         requireOrganizerPhone,
@@ -253,7 +365,21 @@ export function DiscoverySettingsDrawer({
               : 'text-muted-foreground hover:bg-foreground/5 hover:text-foreground'
           }`}
         >
-          <Globe size={13} /> Scope & Geographic Targets
+          <Compass size={13} /> Scope & Geography
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('sources')}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+            activeTab === 'sources'
+              ? 'bg-accent text-accent-foreground shadow-sm'
+              : 'text-muted-foreground hover:bg-foreground/5 hover:text-foreground'
+          }`}
+        >
+          <Share2 size={13} /> Discovery Sources
+          <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-background/40 font-bold">
+            {selectedSources.length}
+          </span>
         </button>
         <button
           type="button"
@@ -264,14 +390,14 @@ export function DiscoverySettingsDrawer({
               : 'text-muted-foreground hover:bg-foreground/5 hover:text-foreground'
           }`}
         >
-          <ShieldAlert size={13} /> Event Rejection & Quality Rules
+          <ShieldAlert size={13} /> Event Rejection & Sector Rules
         </button>
       </div>
 
       {activeTab === 'scope' && (
         <div className="grid gap-4 text-xs">
           <p className="text-xs text-muted-foreground">
-            Configure the geographic checklists (countries, states, cities) and sectors used by the background discovery loop before turning on Automatic Discovery.
+            Configure the geographic checklists (countries, states, cities) and target sectors used by the background discovery loop before turning on Automatic Discovery.
           </p>
 
           <GeoChecklistSelector
@@ -308,7 +434,7 @@ export function DiscoverySettingsDrawer({
               </div>
             </div>
             <span className="block text-[11px] text-muted-foreground mt-0.5 mb-2">
-              Click to toggle which 100 TIMES sectors are discovered
+              Click to toggle which 100 TIMES sectors are prioritized for discovery
             </span>
             <div className="flex flex-wrap gap-1.5">
               {allAvailableCategories.map((cat) => {
@@ -361,6 +487,86 @@ export function DiscoverySettingsDrawer({
         </div>
       )}
 
+      {activeTab === 'sources' && (
+        <div className="grid gap-4 text-xs">
+          <div className="flex items-center justify-between">
+            <div>
+              <h4 className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                <Radio size={13} className="text-accent" /> Enabled Fetching Sources
+              </h4>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Choose which channels the Event Discovery Agent searches and fetches events from for the user end.
+              </p>
+            </div>
+            <div className="flex gap-2 text-[10px]">
+              <button
+                type="button"
+                onClick={selectAllSources}
+                className="text-accent hover:underline font-medium"
+              >
+                Select all
+              </button>
+              <span>•</span>
+              <button
+                type="button"
+                onClick={clearSources}
+                className="text-muted-foreground hover:underline"
+              >
+                Reset to default
+              </button>
+            </div>
+          </div>
+
+          <div className="grid gap-2">
+            {AVAILABLE_SOURCES.map((source) => {
+              const active = selectedSources.includes(source.id);
+              const Icon = source.icon;
+              return (
+                <div
+                  key={source.id}
+                  onClick={() => !setAuto.isPending && toggleSource(source.id)}
+                  className={`flex items-start justify-between gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                    active
+                      ? 'border-accent/40 bg-accent/5 hover:bg-accent/10'
+                      : 'border-foreground/10 bg-card/60 hover:bg-card/90 opacity-70'
+                  }`}
+                >
+                  <div className="flex items-start gap-2.5">
+                    <div
+                      className={`p-1.5 rounded-md mt-0.5 shrink-0 ${
+                        active ? 'bg-accent/15 text-accent' : 'bg-foreground/10 text-muted-foreground'
+                      }`}
+                    >
+                      <Icon size={14} />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-foreground text-xs">{source.name}</span>
+                        {source.badge && (
+                          <span className="px-1.5 py-0.2 text-[9px] font-medium tracking-wide uppercase rounded bg-accent/20 text-accent">
+                            {source.badge}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
+                        {source.description}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="pt-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+                    <ToggleSwitch
+                      checked={active}
+                      onChange={() => toggleSource(source.id)}
+                      disabled={setAuto.isPending}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {activeTab === 'rejection' && (
         <div className="grid gap-4 text-xs">
           <div className="p-3 rounded-lg border border-amber-500/20 bg-amber-500/5 text-amber-600 dark:text-amber-400">
@@ -368,8 +574,36 @@ export function DiscoverySettingsDrawer({
               <Shield size={13} /> Automated Quality & Rejection Gate
             </div>
             <p className="text-[11px] leading-relaxed">
-              Discovered events that violate any enabled rejection criteria will be automatically rejected by the Discovery Agent and recorded in audit logs with a clear reason.
+              Discovered events that violate any enabled rejection criteria will be rejected by the Discovery Agent and recorded in audit logs with a clear reason.
             </p>
+          </div>
+
+          {/* Sector Handling & Other Sector Fallback */}
+          <div>
+            <h4 className="text-xs font-semibold text-foreground mb-2 flex items-center gap-1.5">
+              <Layers size={13} className="text-accent" /> Sector Assignment & Unmatched Events
+            </h4>
+            <div className="grid gap-2">
+              <FilterRuleRow
+                icon={Layers}
+                title="Add Unmatched Events to 'Other' Sector"
+                description="When events outside the standard target sectors are found, automatically assign them to the 'Other' sector instead of discarding them, making them visible on the platform."
+                checked={fallbackToOtherSector}
+                onChange={setFallbackToOtherSector}
+                badge="Recommended"
+                disabled={setAuto.isPending}
+              />
+              {!fallbackToOtherSector && (
+                <FilterRuleRow
+                  icon={FilterX}
+                  title="Reject Unmatched Categories / Sectors"
+                  description="Outright rejects events whose industry sector does not match the 100 TIMES target categories."
+                  checked={rejectUnmatchedCategory}
+                  onChange={setRejectUnmatchedCategory}
+                  disabled={setAuto.isPending}
+                />
+              )}
+            </div>
           </div>
 
           {/* Organizer Criteria */}
@@ -464,15 +698,6 @@ export function DiscoverySettingsDrawer({
                 onChange={setRejectMissingTicketUrl}
                 disabled={setAuto.isPending}
               />
-              <FilterRuleRow
-                icon={FilterX}
-                title="Reject Unmatched Categories / Sectors"
-                description="Rejects events whose sector does not match the 100 TIMES supported categories or is marked 'Other'."
-                checked={rejectUnmatchedCategory}
-                onChange={setRejectUnmatchedCategory}
-                badge="Active"
-                disabled={setAuto.isPending}
-              />
             </div>
           </div>
 
@@ -565,7 +790,7 @@ export function DiscoverySettingsDrawer({
       {saveSuccess && (
         <div className="mt-4">
           <Notice tone="info">
-            Discovery settings and rejection rules saved successfully! They are now active in the automated agent loop.
+            Discovery settings, source channels, and rejection rules saved successfully! They are now active in the automated agent loop.
           </Notice>
         </div>
       )}

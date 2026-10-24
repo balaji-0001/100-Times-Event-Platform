@@ -14,6 +14,7 @@ class DiscoveryConfig:
     cities: list[str] = field(default_factory=list)
     states: list[str] = field(default_factory=list)
     categories: list[str] = field(default_factory=list)
+    sources: list[str] = field(default_factory=lambda: ["web", "linkedin", "facebook", "instagram", "twitter", "telegram", "reddit", "event_platforms"])
     countries: list[str] = field(default_factory=list)
     country: str | None = None
     search_depth: int = 20  # max search queries this run issues
@@ -35,7 +36,8 @@ class DiscoveryConfig:
     reject_unparseable_dates: bool = True
     reject_missing_location: bool = False
     reject_missing_ticket_url: bool = False
-    reject_unmatched_category: bool = True
+    reject_unmatched_category: bool = False
+    fallback_to_other_sector: bool = True
     min_title_length: int = 8
     min_description_length: int = 20
     min_confidence_score: int = 50

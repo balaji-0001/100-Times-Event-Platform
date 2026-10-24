@@ -64,6 +64,7 @@ def config_from_settings(settings: Settings, db: Session | None = None) -> Disco
         cities=cities,
         states=states,
         categories=target_categories,
+        sources=auto_scope.get("sources") or ["web", "linkedin", "facebook", "instagram", "twitter", "telegram", "reddit", "event_platforms"],
         countries=countries,
         country=country,
         search_depth=search_depth,
@@ -80,7 +81,8 @@ def config_from_settings(settings: Settings, db: Session | None = None) -> Disco
         reject_unparseable_dates=auto_scope.get("reject_unparseable_dates", True),
         reject_missing_location=auto_scope.get("reject_missing_location", False),
         reject_missing_ticket_url=auto_scope.get("reject_missing_ticket_url", False),
-        reject_unmatched_category=auto_scope.get("reject_unmatched_category", True),
+        reject_unmatched_category=auto_scope.get("reject_unmatched_category", False),
+        fallback_to_other_sector=auto_scope.get("fallback_to_other_sector", True),
         min_title_length=auto_scope.get("min_title_length", 8),
         min_description_length=auto_scope.get("min_description_length", 20),
         min_confidence_score=auto_scope.get("min_confidence_score", 50),
@@ -116,10 +118,13 @@ def _process_candidate(
         db=db,
     )
 
-    # Strictly enforce target categories: skip unlisted/Other categories for this run
-    if config.require_organizer_email:
-        target_categories = set(config.categories) if config.categories else set(supported_categories)
-        if candidate.category not in target_categories or candidate.category.lower() == "other":
+    # Category handling: check if candidate matches target categories or falls back to 'Other' sector
+    target_categories = set(config.categories) if config.categories else set(supported_categories)
+    is_unmatched = candidate.category not in target_categories or candidate.category.lower() == "other"
+    if is_unmatched:
+        if getattr(config, "fallback_to_other_sector", True):
+            candidate.category = "Other"
+        elif getattr(config, "reject_unmatched_category", False):
             summary.unsupported_category += 1
             summary.rejected_events += 1
             run.summary = summary.as_dict()
@@ -158,7 +163,8 @@ def _process_candidate(
         reject_unparseable_dates=getattr(config, "reject_unparseable_dates", True),
         reject_missing_location=getattr(config, "reject_missing_location", False),
         reject_missing_ticket_url=getattr(config, "reject_missing_ticket_url", False),
-        reject_unmatched_category=getattr(config, "reject_unmatched_category", True),
+        reject_unmatched_category=getattr(config, "reject_unmatched_category", False),
+        fallback_to_other_sector=getattr(config, "fallback_to_other_sector", True),
         min_title_length=getattr(config, "min_title_length", 8),
         min_description_length=getattr(config, "min_description_length", 20),
         min_confidence_score=getattr(config, "min_confidence_score", 50),

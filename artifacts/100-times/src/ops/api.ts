@@ -143,6 +143,7 @@ export interface DiscoveryAutoStatus {
   cities?: string[];
   states?: string[];
   categories?: string[];
+  sources?: string[];
   searchDepth?: number | null;
   dailyLimit?: number | null;
   // Event rejection rules
@@ -155,6 +156,7 @@ export interface DiscoveryAutoStatus {
   rejectMissingLocation?: boolean;
   rejectMissingTicketUrl?: boolean;
   rejectUnmatchedCategory?: boolean;
+  fallbackToOtherSector?: boolean;
   minTitleLength?: number;
   minDescriptionLength?: number;
   minConfidenceScore?: number;

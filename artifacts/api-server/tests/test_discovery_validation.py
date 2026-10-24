@@ -224,3 +224,10 @@ def test_validate_event_configurable_rejection_rules():
     res = validate_event(low_conf_cand, 60, organizer=organizer, min_confidence_score=50)
     assert res.status == "REJECTED"
     assert res.rejection_reason == "LOW_CONFIDENCE"
+
+    # 8. Fallback to Other sector when unmatched
+    fallback_cand = _complete_candidate(future)
+    fallback_cand.category = "Unknown Emerging Industry"
+    res = validate_event(fallback_cand, 60, organizer=organizer, fallback_to_other_sector=True, supported_categories=["Technology", "Finance"])
+    assert res.status == "VERIFIED"
+    assert fallback_cand.category == "Other"

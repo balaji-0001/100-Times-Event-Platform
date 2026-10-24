@@ -87,6 +87,7 @@ def validate_event(
     reject_missing_location: bool = False,
     reject_missing_ticket_url: bool = False,
     reject_unmatched_category: bool = False,
+    fallback_to_other_sector: bool = False,
     min_title_length: int = 3,
     min_description_length: int = 0,
     min_confidence_score: int = 0,
@@ -222,14 +223,29 @@ def validate_event(
     if candidate.category:
         cat_clean = candidate.category.strip()
         if cat_clean.lower() in ("other", "none", "unknown"):
-            category_unsupported = True
-            notes.append(f"Event category {cat_clean!r} does not match any category listed on 100 TIMES — manual review required.")
+            if fallback_to_other_sector:
+                candidate.category = "Other"
+                notes.append("Event categorized under 'Other' sector.")
+                category_unsupported = False
+            else:
+                category_unsupported = True
+                notes.append(f"Event category {cat_clean!r} does not match any category listed on 100 TIMES — manual review required.")
         elif supported_categories and cat_clean not in supported_categories:
-            category_unsupported = True
-            notes.append(f"Event category {cat_clean!r} is not among the supported categories on 100 TIMES — manual review required.")
+            if fallback_to_other_sector:
+                candidate.category = "Other"
+                notes.append(f"Event category {cat_clean!r} outside target sectors — assigned to 'Other' sector.")
+                category_unsupported = False
+            else:
+                category_unsupported = True
+                notes.append(f"Event category {cat_clean!r} is not among the supported categories on 100 TIMES — manual review required.")
     else:
-        category_unsupported = True
-        notes.append("No matching category identified on 100 TIMES — manual review required.")
+        if fallback_to_other_sector:
+            candidate.category = "Other"
+            notes.append("No matching category identified — assigned to 'Other' sector.")
+            category_unsupported = False
+        else:
+            category_unsupported = True
+            notes.append("No matching category identified on 100 TIMES — manual review required.")
 
     if reject_unmatched_category and category_unsupported:
         return ValidationResult(

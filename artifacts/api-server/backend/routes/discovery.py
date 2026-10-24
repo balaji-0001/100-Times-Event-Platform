@@ -134,6 +134,7 @@ def get_discovery_auto(db: Session = Depends(get_db), _user: User = _admin) -> D
         cities=auto_scope.get("cities") or [],
         states=auto_scope.get("states") or [],
         categories=auto_scope.get("categories") or [],
+        sources=auto_scope.get("sources") or ["web", "linkedin", "facebook", "instagram", "twitter", "telegram", "reddit", "event_platforms"],
         search_depth=auto_scope.get("search_depth"),
         daily_limit=auto_scope.get("daily_limit"),
         reject_no_organizer=auto_scope.get("reject_no_organizer", True),
@@ -144,7 +145,8 @@ def get_discovery_auto(db: Session = Depends(get_db), _user: User = _admin) -> D
         reject_unparseable_dates=auto_scope.get("reject_unparseable_dates", True),
         reject_missing_location=auto_scope.get("reject_missing_location", False),
         reject_missing_ticket_url=auto_scope.get("reject_missing_ticket_url", False),
-        reject_unmatched_category=auto_scope.get("reject_unmatched_category", True),
+        reject_unmatched_category=auto_scope.get("reject_unmatched_category", False),
+        fallback_to_other_sector=auto_scope.get("fallback_to_other_sector", True),
         min_title_length=auto_scope.get("min_title_length", 8),
         min_description_length=auto_scope.get("min_description_length", 20),
         min_confidence_score=auto_scope.get("min_confidence_score", 50),
@@ -174,6 +176,8 @@ def set_discovery_auto(payload: DiscoveryAutoToggleRequest, db: Session = Depend
         settings_updates["states"] = payload.states
     if payload.categories is not None:
         settings_updates["categories"] = payload.categories
+    if payload.sources is not None:
+        settings_updates["sources"] = payload.sources
     if payload.search_depth is not None:
         settings_updates["search_depth"] = payload.search_depth
     if payload.daily_limit is not None:
@@ -190,6 +194,7 @@ def set_discovery_auto(payload: DiscoveryAutoToggleRequest, db: Session = Depend
         "reject_missing_location",
         "reject_missing_ticket_url",
         "reject_unmatched_category",
+        "fallback_to_other_sector",
         "min_title_length",
         "min_description_length",
         "min_confidence_score",
@@ -213,6 +218,7 @@ def set_discovery_auto(payload: DiscoveryAutoToggleRequest, db: Session = Depend
         cities=auto_scope.get("cities") or [],
         states=auto_scope.get("states") or [],
         categories=auto_scope.get("categories") or [],
+        sources=auto_scope.get("sources") or ["web", "linkedin", "facebook", "instagram", "twitter", "telegram", "reddit", "event_platforms"],
         search_depth=auto_scope.get("search_depth"),
         daily_limit=auto_scope.get("daily_limit"),
         reject_no_organizer=auto_scope.get("reject_no_organizer", True),
@@ -223,7 +229,8 @@ def set_discovery_auto(payload: DiscoveryAutoToggleRequest, db: Session = Depend
         reject_unparseable_dates=auto_scope.get("reject_unparseable_dates", True),
         reject_missing_location=auto_scope.get("reject_missing_location", False),
         reject_missing_ticket_url=auto_scope.get("reject_missing_ticket_url", False),
-        reject_unmatched_category=auto_scope.get("reject_unmatched_category", True),
+        reject_unmatched_category=auto_scope.get("reject_unmatched_category", False),
+        fallback_to_other_sector=auto_scope.get("fallback_to_other_sector", True),
         min_title_length=auto_scope.get("min_title_length", 8),
         min_description_length=auto_scope.get("min_description_length", 20),
         min_confidence_score=auto_scope.get("min_confidence_score", 50),
