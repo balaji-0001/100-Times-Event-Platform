@@ -110,6 +110,8 @@ def trigger_discovery_run(
             config.sources = payload.sources
         if payload.events_per_run is not None:
             config.events_per_run = payload.events_per_run
+        if payload.target_valid_events is not None:
+            config.target_valid_events = payload.target_valid_events
         if payload.fallback_to_other_sector is not None:
             config.fallback_to_other_sector = payload.fallback_to_other_sector
         if payload.reject_no_organizer is not None:
@@ -170,6 +172,7 @@ def get_discovery_auto(db: Session = Depends(get_db), _user: User = _admin) -> D
         search_depth=auto_scope.get("search_depth"),
         daily_limit=auto_scope.get("daily_limit"),
         events_per_run=auto_scope.get("events_per_run", 50),
+        target_valid_events=auto_scope.get("target_valid_events", 25),
         reject_no_organizer=auto_scope.get("reject_no_organizer", True),
         require_organizer_email=auto_scope.get("require_organizer_email", True),
         require_organizer_phone=auto_scope.get("require_organizer_phone", False),
@@ -217,6 +220,8 @@ def set_discovery_auto(payload: DiscoveryAutoToggleRequest, db: Session = Depend
         settings_updates["daily_limit"] = payload.daily_limit
     if payload.events_per_run is not None:
         settings_updates["events_per_run"] = payload.events_per_run
+    if payload.target_valid_events is not None:
+        settings_updates["target_valid_events"] = payload.target_valid_events
 
     # Rejection settings
     for field in (
@@ -257,6 +262,7 @@ def set_discovery_auto(payload: DiscoveryAutoToggleRequest, db: Session = Depend
         search_depth=auto_scope.get("search_depth"),
         daily_limit=auto_scope.get("daily_limit"),
         events_per_run=auto_scope.get("events_per_run", 50),
+        target_valid_events=auto_scope.get("target_valid_events", 25),
         reject_no_organizer=auto_scope.get("reject_no_organizer", True),
         require_organizer_email=auto_scope.get("require_organizer_email", True),
         require_organizer_phone=auto_scope.get("require_organizer_phone", False),

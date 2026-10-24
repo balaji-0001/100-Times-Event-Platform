@@ -71,6 +71,7 @@ def config_from_settings(settings: Settings, db: Session | None = None) -> Disco
         sources_per_query=settings.discovery_sources_per_query,
         daily_limit=daily_limit,
         events_per_run=auto_scope.get("events_per_run") or 50,
+        target_valid_events=auto_scope.get("target_valid_events", 25),
         confidence_threshold=settings.discovery_confidence_threshold,
         listing_urls=_split(settings.discovery_listing_urls),
         events_per_listing=settings.discovery_events_per_listing,
@@ -200,8 +201,11 @@ def _process_candidate(
 
 
 def _limit_reached(already_today: int, summary: RunSummary, config: DiscoveryConfig) -> bool:
+    target_valid = getattr(config, "target_valid_events", None)
+    if target_valid and (summary.accepted_events >= target_valid or summary.new_events >= target_valid):
+        return True
     max_for_run = getattr(config, "events_per_run", None)
-    if max_for_run and summary.new_events >= max_for_run:
+    if max_for_run and summary.events_discovered >= max_for_run:
         return True
     return summary.new_events >= config.daily_limit
 

@@ -202,6 +202,7 @@ export function ManualResearchForm() {
   const [depth, setDepth] = useState('6');
   const [perQuery, setPerQuery] = useState('4');
   const [eventsPerRun, setEventsPerRun] = useState('50');
+  const [targetValidEvents, setTargetValidEvents] = useState('25');
 
   // Sources state
   const [selectedSources, setSelectedSources] = useState<string[]>([
@@ -248,6 +249,7 @@ export function ManualResearchForm() {
       if (auto.data.sources && auto.data.sources.length > 0) setSelectedSources(auto.data.sources);
 
       if (auto.data.eventsPerRun) setEventsPerRun(String(auto.data.eventsPerRun));
+      if (auto.data.targetValidEvents) setTargetValidEvents(String(auto.data.targetValidEvents));
       if (auto.data.fallbackToOtherSector !== undefined) setFallbackToOtherSector(auto.data.fallbackToOtherSector);
       if (auto.data.rejectNoOrganizer !== undefined) setRejectNoOrganizer(auto.data.rejectNoOrganizer);
       if (auto.data.requireOrganizerEmail !== undefined) setRequireOrganizerEmail(auto.data.requireOrganizerEmail);
@@ -305,6 +307,7 @@ export function ManualResearchForm() {
       categories: selectedCategories.length > 0 ? selectedCategories : undefined,
       sources: selectedSources.length ? selectedSources : ['web'],
       eventsPerRun: num(eventsPerRun, 50),
+      targetValidEvents: num(targetValidEvents, 25),
       searchDepth: num(depth, 6),
       sourcesPerQuery: num(perQuery, 4),
       dateFrom: dateFrom || undefined,
@@ -456,7 +459,7 @@ export function ManualResearchForm() {
             </label>
           </div>
 
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             <label>
               <span className="font-semibold text-foreground text-[11px]">Events for this run</span>
               <input
@@ -469,6 +472,19 @@ export function ManualResearchForm() {
                 disabled={run.isPending}
               />
               <span className="text-[10px] text-muted-foreground mt-0.5 block">Max events to discover</span>
+            </label>
+            <label>
+              <span className="font-semibold text-foreground text-[11px]">Valid events to find</span>
+              <input
+                type="number"
+                min={1}
+                max={500}
+                value={targetValidEvents}
+                onChange={(e) => setTargetValidEvents(e.target.value)}
+                className={`${inputClass} mt-1`}
+                disabled={run.isPending}
+              />
+              <span className="text-[10px] text-muted-foreground mt-0.5 block">Stop when target verified</span>
             </label>
             <label>
               <span className="font-semibold text-foreground text-[11px]">Search queries</span>

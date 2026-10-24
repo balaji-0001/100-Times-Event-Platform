@@ -814,6 +814,7 @@ class DiscoveryRunRequest(BaseModel):
     categories: list[str] | None = None
     sources: list[str] | None = None
     events_per_run: int | None = Field(default=None, alias="eventsPerRun", ge=1, le=1000)
+    target_valid_events: int | None = Field(default=None, alias="targetValidEvents", ge=1, le=1000)
     search_depth: int | None = Field(default=None, alias="searchDepth", ge=1, le=200)
     sources_per_query: int | None = Field(default=None, alias="sourcesPerQuery", ge=1, le=20)
     daily_limit: int | None = Field(default=None, alias="dailyLimit", ge=1)
@@ -982,8 +983,8 @@ class DiscoveryAutoStatusOut(APIModel):
     sources: list[str] = Field(default_factory=lambda: ["web", "linkedin", "facebook", "instagram", "twitter", "telegram", "reddit", "event_platforms"])
     search_depth: int | None = Field(default=None, alias="searchDepth")
     daily_limit: int | None = Field(default=None, alias="dailyLimit")
-    events_per_run: int | None = Field(default=None, alias="eventsPerRun")
     events_per_run: int | None = Field(default=50, alias="eventsPerRun")
+    target_valid_events: int | None = Field(default=25, alias="targetValidEvents")
 
     # Event rejection and quality filter rules
     reject_no_organizer: bool = Field(default=True, alias="rejectNoOrganizer")
@@ -1014,6 +1015,7 @@ class DiscoveryAutoToggleRequest(BaseModel):
     search_depth: int | None = Field(default=None, alias="searchDepth")
     daily_limit: int | None = Field(default=None, alias="dailyLimit")
     events_per_run: int | None = Field(default=None, alias="eventsPerRun")
+    target_valid_events: int | None = Field(default=None, alias="targetValidEvents")
 
     # Event rejection and quality filter rules
     reject_no_organizer: bool | None = Field(default=None, alias="rejectNoOrganizer")

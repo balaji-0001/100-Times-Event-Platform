@@ -147,6 +147,7 @@ export interface DiscoveryAutoStatus {
   searchDepth?: number | null;
   dailyLimit?: number | null;
   eventsPerRun?: number | null;
+  targetValidEvents?: number | null;
   // Event rejection rules
   rejectNoOrganizer?: boolean;
   requireOrganizerEmail?: boolean;
@@ -554,6 +555,7 @@ export interface DiscoveryRunPayload {
   countries?: string[];
   sources?: string[];
   eventsPerRun?: number;
+  targetValidEvents?: number;
   searchDepth?: number;
   sourcesPerQuery?: number;
   dailyLimit?: number;

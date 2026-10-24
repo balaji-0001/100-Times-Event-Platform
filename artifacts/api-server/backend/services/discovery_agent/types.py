@@ -20,7 +20,8 @@ class DiscoveryConfig:
     search_depth: int = 20  # max search queries this run issues
     sources_per_query: int = 5  # max candidate URLs pulled from each query
     daily_limit: int = 200  # max new DiscoveredEvent rows this run may create
-    events_per_run: int = 50  # max events to discover in a single run
+    events_per_run: int = 50  # max events/candidates to discover in a single run
+    target_valid_events: int | None = 25  # stop run early once this many valid/accepted events are found
     confidence_threshold: int = 60  # below this, verification_status becomes NEEDS_REVIEW
     listing_urls: list[str] = field(default_factory=list)  # listing-page templates read without AI; may contain {city}
     events_per_listing: int = 25  # max events taken from one listing page

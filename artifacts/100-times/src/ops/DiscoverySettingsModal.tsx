@@ -182,6 +182,7 @@ export function DiscoverySettingsDrawer({
   const [depth, setDepth] = useState('20');
   const [dailyLimit, setDailyLimit] = useState('200');
   const [eventsPerRun, setEventsPerRun] = useState('50');
+  const [targetValidEvents, setTargetValidEvents] = useState('25');
 
   // Discovery Sources state
   const [selectedSources, setSelectedSources] = useState<string[]>([
@@ -230,6 +231,7 @@ export function DiscoverySettingsDrawer({
       setDepth(auto.data.searchDepth ? String(auto.data.searchDepth) : '20');
       setDailyLimit(auto.data.dailyLimit ? String(auto.data.dailyLimit) : '200');
       setEventsPerRun(auto.data.eventsPerRun ? String(auto.data.eventsPerRun) : '50');
+      setTargetValidEvents(auto.data.targetValidEvents ? String(auto.data.targetValidEvents) : '25');
 
       // Sync sources
       if (auto.data.sources && auto.data.sources.length > 0) {
@@ -324,6 +326,7 @@ export function DiscoverySettingsDrawer({
         searchDepth: Number(depth) || 20,
         dailyLimit: Number(dailyLimit) || 200,
         eventsPerRun: Number(eventsPerRun) || 50,
+        targetValidEvents: Number(targetValidEvents) || 25,
         // Rejection & Fallback settings
         fallbackToOtherSector,
         rejectNoOrganizer,
@@ -461,19 +464,7 @@ export function DiscoverySettingsDrawer({
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-2">
-            <label>
-              <span className="font-semibold text-foreground">Queries per cycle</span>
-              <input
-                type="number"
-                min={1}
-                max={200}
-                value={depth}
-                onChange={(e) => setDepth(e.target.value)}
-                className={`${inputClass} mt-1`}
-                disabled={setAuto.isPending}
-              />
-            </label>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             <label>
               <span className="font-semibold text-foreground">Events per run</span>
               <input
@@ -485,6 +476,33 @@ export function DiscoverySettingsDrawer({
                 className={`${inputClass} mt-1`}
                 disabled={setAuto.isPending}
               />
+              <span className="text-[10px] text-muted-foreground mt-0.5 block">Max events to discover</span>
+            </label>
+            <label>
+              <span className="font-semibold text-foreground">Valid events to find</span>
+              <input
+                type="number"
+                min={1}
+                max={500}
+                value={targetValidEvents}
+                onChange={(e) => setTargetValidEvents(e.target.value)}
+                className={`${inputClass} mt-1`}
+                disabled={setAuto.isPending}
+              />
+              <span className="text-[10px] text-muted-foreground mt-0.5 block">Stop when target verified</span>
+            </label>
+            <label>
+              <span className="font-semibold text-foreground">Queries per cycle</span>
+              <input
+                type="number"
+                min={1}
+                max={200}
+                value={depth}
+                onChange={(e) => setDepth(e.target.value)}
+                className={`${inputClass} mt-1`}
+                disabled={setAuto.isPending}
+              />
+              <span className="text-[10px] text-muted-foreground mt-0.5 block">Search queries issued</span>
             </label>
             <label>
               <span className="font-semibold text-foreground">Daily total limit</span>
@@ -497,6 +515,7 @@ export function DiscoverySettingsDrawer({
                 className={`${inputClass} mt-1`}
                 disabled={setAuto.isPending}
               />
+              <span className="text-[10px] text-muted-foreground mt-0.5 block">24h platform cap</span>
             </label>
           </div>
         </div>
