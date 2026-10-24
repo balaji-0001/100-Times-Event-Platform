@@ -168,3 +168,59 @@ def test_try_parse_date_reads_real_world_formats():
     assert try_parse_date("August 26-30, 2026") == date(2026, 8, 26)
     assert try_parse_date("14-16 June 2026") == date(2026, 6, 14)
     assert try_parse_date("Sept 3 2026") == date(2026, 9, 3)
+
+
+def test_validate_event_configurable_rejection_rules():
+    future = (date.today() + timedelta(days=30)).isoformat()
+    organizer = OrganizerCandidate(found=True, name="Pune Tech Collective", email="hello@punetech.test")
+
+    # 1. Blacklisted keyword
+    spam_candidate = _complete_candidate(future)
+    spam_candidate.name = "Crypto Airdrop Giveaway Summit"
+    res = validate_event(spam_candidate, 60, organizer=organizer, blacklisted_keywords=["airdrop", "giveaway"])
+    assert res.status == "REJECTED"
+    assert res.rejection_reason == "BLACKLISTED_KEYWORD"
+
+    # 2. Excluded domain
+    spam_domain_candidate = _complete_candidate(future)
+    spam_domain_candidate.url = "https://spammy-links.biz/events/123"
+    res = validate_event(spam_domain_candidate, 60, organizer=organizer, excluded_domains=["spammy-links.biz"])
+    assert res.status == "REJECTED"
+    assert res.rejection_reason == "EXCLUDED_DOMAIN"
+
+    # 3. Reject unmatched category
+    unmatched_cand = _complete_candidate(future)
+    unmatched_cand.category = "Unknown Sector"
+    res = validate_event(unmatched_cand, 60, organizer=organizer, reject_unmatched_category=True, supported_categories=["Technology", "Finance"])
+    assert res.status == "REJECTED"
+    assert res.rejection_reason == "UNMATCHED_CATEGORY"
+
+    # 4. Reject unparseable date
+    unparseable_cand = _complete_candidate(future)
+    unparseable_cand.date = "Coming soon late this year"
+    res = validate_event(unparseable_cand, 60, organizer=organizer, reject_unparseable_dates=True)
+    assert res.status == "REJECTED"
+    assert res.rejection_reason == "UNPARSEABLE_DATE"
+
+    # 5. Reject missing location
+    no_loc_cand = _complete_candidate(future)
+    no_loc_cand.venue = None
+    no_loc_cand.city = None
+    no_loc_cand.event_format = "offline"
+    res = validate_event(no_loc_cand, 60, organizer=organizer, reject_missing_location=True)
+    assert res.status == "REJECTED"
+    assert res.rejection_reason == "MISSING_LOCATION"
+
+    # 6. Reject min title length
+    short_cand = _complete_candidate(future)
+    short_cand.name = "AI"
+    res = validate_event(short_cand, 60, organizer=organizer, min_title_length=10)
+    assert res.status == "REJECTED"
+    assert res.rejection_reason == "TITLE_TOO_SHORT"
+
+    # 7. Reject low confidence score
+    low_conf_cand = _complete_candidate(future)
+    low_conf_cand.extraction_confidence = 25
+    res = validate_event(low_conf_cand, 60, organizer=organizer, min_confidence_score=50)
+    assert res.status == "REJECTED"
+    assert res.rejection_reason == "LOW_CONFIDENCE"

@@ -78,21 +78,75 @@ def validate_event(
     supported_categories: list[str] | tuple[str, ...] | None = None,
     date_from: date | str | None = None,
     date_to: date | str | None = None,
+    # Configurable rejection & quality filter rules
+    reject_no_organizer: bool = False,
+    require_organizer_phone: bool = False,
+    require_organizer_website: bool = False,
+    reject_past_events: bool = True,
+    reject_unparseable_dates: bool = False,
+    reject_missing_location: bool = False,
+    reject_missing_ticket_url: bool = False,
+    reject_unmatched_category: bool = False,
+    min_title_length: int = 3,
+    min_description_length: int = 0,
+    min_confidence_score: int = 0,
+    blacklisted_keywords: list[str] | None = None,
+    excluded_domains: list[str] | None = None,
 ) -> ValidationResult:
     """Validates an event candidate against 100 TIMES event discovery rules.
 
-    Mandatory Rules:
-    - Non-empty event title.
-    - Category matching an active category listed on 100 TIMES.
-    - Upcoming event date (past events rejected).
-    - Mandatory organizer email address (if require_organizer_email=True):
-      IF organizer_email is missing OR invalid OR unverified -> REJECT.
-      A contact form, phone number, social profile, or website URL alone
-      does not satisfy this requirement.
+    Configurable rejection rules:
+    - Minimum title & description lengths.
+    - Blacklisted keywords & excluded domain blocklists.
+    - Category matching against supported 100 TIMES sectors.
+    - Past/unparseable dates and custom date windows.
+    - Missing location & missing ticket URLs.
+    - Organizer requirements (identity, email, phone, website).
+    - Minimum confidence threshold.
     """
     notes: list[str] = []
 
-    # 1. Event title
+    # 1. Blacklisted keywords check (anti-spam / scam)
+    if blacklisted_keywords:
+        haystack = f"{candidate.name or ''} {candidate.event_description or ''}".lower()
+        for kw in blacklisted_keywords:
+            cleaned_kw = kw.strip().lower()
+            if cleaned_kw and cleaned_kw in haystack:
+                return ValidationResult(
+                    "REJECTED",
+                    [f"Event content matches blacklisted keyword {kw!r}."],
+                    0,
+                    None,
+                    rejection_reason="BLACKLISTED_KEYWORD",
+                )
+
+    # 2. Excluded domains check
+    if excluded_domains:
+        urls_to_check: list[str] = []
+        if candidate.url:
+            urls_to_check.append(candidate.url)
+        if candidate.ticket_url:
+            urls_to_check.append(candidate.ticket_url)
+        if candidate.primary_source and candidate.primary_source.url:
+            urls_to_check.append(candidate.primary_source.url)
+        for s in candidate.sources:
+            if s.url:
+                urls_to_check.append(s.url)
+
+        for raw_url in urls_to_check:
+            url_lower = raw_url.lower()
+            for domain in excluded_domains:
+                clean_domain = domain.strip().lower()
+                if clean_domain and clean_domain in url_lower:
+                    return ValidationResult(
+                        "REJECTED",
+                        [f"Event source or link matches excluded domain {domain!r}."],
+                        0,
+                        None,
+                        rejection_reason="EXCLUDED_DOMAIN",
+                    )
+
+    # 3. Event title & min length
     if not candidate.name or not candidate.name.strip():
         return ValidationResult(
             "REJECTED",
@@ -101,10 +155,38 @@ def validate_event(
             None,
             rejection_reason="MISSING_TITLE",
         )
+    if min_title_length > 0 and len(candidate.name.strip()) < min_title_length:
+        return ValidationResult(
+            "REJECTED",
+            [f"Event title {candidate.name!r} is shorter than minimum {min_title_length} characters."],
+            0,
+            None,
+            rejection_reason="TITLE_TOO_SHORT",
+        )
 
-    # 2. Upcoming date sanity & optional date window
+    # 4. Description min length (if present or required)
+    if min_description_length > 0 and candidate.event_description:
+        if len(candidate.event_description.strip()) < min_description_length:
+            return ValidationResult(
+                "REJECTED",
+                [f"Event description is shorter than minimum {min_description_length} characters."],
+                0,
+                None,
+                rejection_reason="DESCRIPTION_TOO_SHORT",
+            )
+
+    # 5. Upcoming date sanity & date parsing
     parsed_date = try_parse_date(candidate.date)
-    if parsed_date is not None and parsed_date < date.today():
+    if reject_unparseable_dates and parsed_date is None:
+        return ValidationResult(
+            "REJECTED",
+            [f"Event date could not be parsed confidently from {candidate.date!r}."],
+            0,
+            None,
+            rejection_reason="UNPARSEABLE_DATE",
+        )
+
+    if reject_past_events and parsed_date is not None and parsed_date < date.today():
         return ValidationResult(
             "REJECTED",
             [f"Extracted event date ({candidate.date}) is in the past."],
@@ -135,7 +217,7 @@ def validate_event(
                     rejection_reason="OUT_OF_DATE_RANGE",
                 )
 
-    # 3. Category matching against supported categories
+    # 6. Category matching against supported categories
     category_unsupported = False
     if candidate.category:
         cat_clean = candidate.category.strip()
@@ -149,7 +231,47 @@ def validate_event(
         category_unsupported = True
         notes.append("No matching category identified on 100 TIMES — manual review required.")
 
-    # 4. Mandatory Organiser Details & Email Validation
+    if reject_unmatched_category and category_unsupported:
+        return ValidationResult(
+            "REJECTED",
+            [f"Event category {candidate.category!r} is not among supported categories on 100 TIMES."],
+            0,
+            parsed_date,
+            rejection_reason="UNMATCHED_CATEGORY",
+        )
+
+    # 7. Location verification
+    if reject_missing_location:
+        fmt = (candidate.event_format or "").strip().lower()
+        if fmt not in ("online", "virtual") and not candidate.venue and not candidate.city:
+            return ValidationResult(
+                "REJECTED",
+                ["In-person or hybrid event is missing both venue and city."],
+                0,
+                parsed_date,
+                rejection_reason="MISSING_LOCATION",
+            )
+
+    # 8. Ticket URL verification
+    if reject_missing_ticket_url and not candidate.ticket_url and not candidate.url:
+        return ValidationResult(
+            "REJECTED",
+            ["Event is missing registration, ticket, or source URL."],
+            0,
+            parsed_date,
+            rejection_reason="MISSING_TICKET_URL",
+        )
+
+    # 9. Organiser Details & Email/Phone/Website Validation
+    if reject_no_organizer and (organizer is None or not organizer.found):
+        return ValidationResult(
+            "REJECTED",
+            ["No identifiable organizer details found on the source page."],
+            0,
+            parsed_date,
+            rejection_reason="MISSING_ORGANIZER",
+        )
+
     if require_organizer_email and organizer is not None:
         if not organizer.found or not organizer.email:
             email_notes = ["Missing valid public organizer email address — public organizer email is mandatory."]
@@ -173,6 +295,24 @@ def validate_event(
                 rejection_reason="INVALID_ORGANIZER_EMAIL",
             )
         organizer.email = norm_email
+
+    if require_organizer_phone and organizer is not None and not organizer.phone:
+        return ValidationResult(
+            "REJECTED",
+            ["Organizer phone number was not found."],
+            0,
+            parsed_date,
+            rejection_reason="MISSING_ORGANIZER_PHONE",
+        )
+
+    if require_organizer_website and organizer is not None and not organizer.website:
+        return ValidationResult(
+            "REJECTED",
+            ["Organizer official website was not found."],
+            0,
+            parsed_date,
+            rejection_reason="MISSING_ORGANIZER_WEBSITE",
+        )
 
     # Date parse guidance for non-rejected events
     if parsed_date is None and candidate.date:
@@ -202,6 +342,15 @@ def validate_event(
         if no_organizer_contact:
             confidence = max(0, confidence - 15)
             notes.append("No organizer contact (email or phone) was found — this event can't be used for outreach until one is.")
+
+    if min_confidence_score > 0 and confidence < min_confidence_score:
+        return ValidationResult(
+            "REJECTED",
+            [f"Event confidence score ({confidence}) is below configured minimum threshold ({min_confidence_score})."],
+            confidence,
+            parsed_date,
+            rejection_reason="LOW_CONFIDENCE",
+        )
 
     if confidence < confidence_threshold or parsed_date is None or candidate.best_effort or category_unsupported or no_organizer_contact:
         status = "NEEDS_REVIEW"

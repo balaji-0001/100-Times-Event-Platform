@@ -27,6 +27,21 @@ class DiscoveryConfig:
     date_to: str | None = None  # optional end date filter (YYYY-MM-DD)
     is_manual: bool = False  # True when manually triggered by an admin from Ops / Manual Research
 
+    # Configurable rejection & quality filter rules
+    reject_no_organizer: bool = True
+    require_organizer_phone: bool = False
+    require_organizer_website: bool = False
+    reject_past_events: bool = True
+    reject_unparseable_dates: bool = True
+    reject_missing_location: bool = False
+    reject_missing_ticket_url: bool = False
+    reject_unmatched_category: bool = True
+    min_title_length: int = 8
+    min_description_length: int = 20
+    min_confidence_score: int = 50
+    blacklisted_keywords: list[str] = field(default_factory=list)
+    excluded_domains: list[str] = field(default_factory=list)
+
 
 @dataclass
 class CandidateSource:

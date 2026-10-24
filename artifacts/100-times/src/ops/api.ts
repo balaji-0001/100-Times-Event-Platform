@@ -145,6 +145,21 @@ export interface DiscoveryAutoStatus {
   categories?: string[];
   searchDepth?: number | null;
   dailyLimit?: number | null;
+  // Event rejection rules
+  rejectNoOrganizer?: boolean;
+  requireOrganizerEmail?: boolean;
+  requireOrganizerPhone?: boolean;
+  requireOrganizerWebsite?: boolean;
+  rejectPastEvents?: boolean;
+  rejectUnparseableDates?: boolean;
+  rejectMissingLocation?: boolean;
+  rejectMissingTicketUrl?: boolean;
+  rejectUnmatchedCategory?: boolean;
+  minTitleLength?: number;
+  minDescriptionLength?: number;
+  minConfidenceScore?: number;
+  blacklistedKeywords?: string[];
+  excludedDomains?: string[];
 }
 
 export interface OutreachAutoStatus {
@@ -465,16 +480,9 @@ export function useSetDiscoveryAuto() {
     mutationFn: (
       payload:
         | boolean
-        | {
+        | (Partial<DiscoveryAutoStatus> & {
             enabled?: boolean;
-            country?: string | null;
-            countries?: string[];
-            cities?: string[];
-            states?: string[];
-            categories?: string[];
-            searchDepth?: number;
-            dailyLimit?: number;
-          }
+          })
     ) => {
       const body = typeof payload === 'boolean' ? { enabled: payload } : payload;
       return customFetch<DiscoveryAutoStatus>('/api/discovery/auto', {

@@ -72,7 +72,20 @@ def config_from_settings(settings: Settings, db: Session | None = None) -> Disco
         confidence_threshold=settings.discovery_confidence_threshold,
         listing_urls=_split(settings.discovery_listing_urls),
         events_per_listing=settings.discovery_events_per_listing,
-        require_organizer_email=getattr(settings, "discovery_require_organizer_email", True),
+        require_organizer_email=auto_scope.get("require_organizer_email", getattr(settings, "discovery_require_organizer_email", True)),
+        reject_no_organizer=auto_scope.get("reject_no_organizer", True),
+        require_organizer_phone=auto_scope.get("require_organizer_phone", False),
+        require_organizer_website=auto_scope.get("require_organizer_website", False),
+        reject_past_events=auto_scope.get("reject_past_events", True),
+        reject_unparseable_dates=auto_scope.get("reject_unparseable_dates", True),
+        reject_missing_location=auto_scope.get("reject_missing_location", False),
+        reject_missing_ticket_url=auto_scope.get("reject_missing_ticket_url", False),
+        reject_unmatched_category=auto_scope.get("reject_unmatched_category", True),
+        min_title_length=auto_scope.get("min_title_length", 8),
+        min_description_length=auto_scope.get("min_description_length", 20),
+        min_confidence_score=auto_scope.get("min_confidence_score", 50),
+        blacklisted_keywords=auto_scope.get("blacklisted_keywords") or [],
+        excluded_domains=auto_scope.get("excluded_domains") or [],
     )
 
 
@@ -138,6 +151,19 @@ def _process_candidate(
         supported_categories=supported_categories,
         date_from=getattr(config, "date_from", None),
         date_to=getattr(config, "date_to", None),
+        reject_no_organizer=getattr(config, "reject_no_organizer", True),
+        require_organizer_phone=getattr(config, "require_organizer_phone", False),
+        require_organizer_website=getattr(config, "require_organizer_website", False),
+        reject_past_events=getattr(config, "reject_past_events", True),
+        reject_unparseable_dates=getattr(config, "reject_unparseable_dates", True),
+        reject_missing_location=getattr(config, "reject_missing_location", False),
+        reject_missing_ticket_url=getattr(config, "reject_missing_ticket_url", False),
+        reject_unmatched_category=getattr(config, "reject_unmatched_category", True),
+        min_title_length=getattr(config, "min_title_length", 8),
+        min_description_length=getattr(config, "min_description_length", 20),
+        min_confidence_score=getattr(config, "min_confidence_score", 50),
+        blacklisted_keywords=getattr(config, "blacklisted_keywords", None),
+        excluded_domains=getattr(config, "excluded_domains", None),
     )
     status, notes, confidence, event_date = val_result
     rejection_reason = getattr(val_result, "rejection_reason", None)

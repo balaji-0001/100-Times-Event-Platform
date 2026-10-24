@@ -964,6 +964,22 @@ class DiscoveryAutoStatusOut(APIModel):
     search_depth: int | None = Field(default=None, alias="searchDepth")
     daily_limit: int | None = Field(default=None, alias="dailyLimit")
 
+    # Event rejection and quality filter rules
+    reject_no_organizer: bool = Field(default=True, alias="rejectNoOrganizer")
+    require_organizer_email: bool = Field(default=True, alias="requireOrganizerEmail")
+    require_organizer_phone: bool = Field(default=False, alias="requireOrganizerPhone")
+    require_organizer_website: bool = Field(default=False, alias="requireOrganizerWebsite")
+    reject_past_events: bool = Field(default=True, alias="rejectPastEvents")
+    reject_unparseable_dates: bool = Field(default=True, alias="rejectUnparseableDates")
+    reject_missing_location: bool = Field(default=False, alias="rejectMissingLocation")
+    reject_missing_ticket_url: bool = Field(default=False, alias="rejectMissingTicketUrl")
+    reject_unmatched_category: bool = Field(default=True, alias="rejectUnmatchedCategory")
+    min_title_length: int = Field(default=8, alias="minTitleLength")
+    min_description_length: int = Field(default=20, alias="minDescriptionLength")
+    min_confidence_score: int = Field(default=50, alias="minConfidenceScore")
+    blacklisted_keywords: list[str] = Field(default_factory=list, alias="blacklistedKeywords")
+    excluded_domains: list[str] = Field(default_factory=list, alias="excludedDomains")
+
 
 class DiscoveryAutoToggleRequest(BaseModel):
     enabled: bool | None = None
@@ -974,6 +990,22 @@ class DiscoveryAutoToggleRequest(BaseModel):
     categories: list[str] | None = None
     search_depth: int | None = Field(default=None, alias="searchDepth")
     daily_limit: int | None = Field(default=None, alias="dailyLimit")
+
+    # Event rejection and quality filter rules
+    reject_no_organizer: bool | None = Field(default=None, alias="rejectNoOrganizer")
+    require_organizer_email: bool | None = Field(default=None, alias="requireOrganizerEmail")
+    require_organizer_phone: bool | None = Field(default=None, alias="requireOrganizerPhone")
+    require_organizer_website: bool | None = Field(default=None, alias="requireOrganizerWebsite")
+    reject_past_events: bool | None = Field(default=None, alias="rejectPastEvents")
+    reject_unparseable_dates: bool | None = Field(default=None, alias="rejectUnparseableDates")
+    reject_missing_location: bool | None = Field(default=None, alias="rejectMissingLocation")
+    reject_missing_ticket_url: bool | None = Field(default=None, alias="rejectMissingTicketUrl")
+    reject_unmatched_category: bool | None = Field(default=None, alias="rejectUnmatchedCategory")
+    min_title_length: int | None = Field(default=None, alias="minTitleLength")
+    min_description_length: int | None = Field(default=None, alias="minDescriptionLength")
+    min_confidence_score: int | None = Field(default=None, alias="minConfidenceScore")
+    blacklisted_keywords: list[str] | None = Field(default=None, alias="blacklistedKeywords")
+    excluded_domains: list[str] | None = Field(default=None, alias="excludedDomains")
 
 
 class OutreachAutoStatusOut(APIModel):

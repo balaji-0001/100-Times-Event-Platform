@@ -136,6 +136,20 @@ def get_discovery_auto(db: Session = Depends(get_db), _user: User = _admin) -> D
         categories=auto_scope.get("categories") or [],
         search_depth=auto_scope.get("search_depth"),
         daily_limit=auto_scope.get("daily_limit"),
+        reject_no_organizer=auto_scope.get("reject_no_organizer", True),
+        require_organizer_email=auto_scope.get("require_organizer_email", True),
+        require_organizer_phone=auto_scope.get("require_organizer_phone", False),
+        require_organizer_website=auto_scope.get("require_organizer_website", False),
+        reject_past_events=auto_scope.get("reject_past_events", True),
+        reject_unparseable_dates=auto_scope.get("reject_unparseable_dates", True),
+        reject_missing_location=auto_scope.get("reject_missing_location", False),
+        reject_missing_ticket_url=auto_scope.get("reject_missing_ticket_url", False),
+        reject_unmatched_category=auto_scope.get("reject_unmatched_category", True),
+        min_title_length=auto_scope.get("min_title_length", 8),
+        min_description_length=auto_scope.get("min_description_length", 20),
+        min_confidence_score=auto_scope.get("min_confidence_score", 50),
+        blacklisted_keywords=auto_scope.get("blacklisted_keywords", []),
+        excluded_domains=auto_scope.get("excluded_domains", []),
     )
 
 
@@ -165,6 +179,27 @@ def set_discovery_auto(payload: DiscoveryAutoToggleRequest, db: Session = Depend
     if payload.daily_limit is not None:
         settings_updates["daily_limit"] = payload.daily_limit
 
+    # Rejection settings
+    for field in (
+        "reject_no_organizer",
+        "require_organizer_email",
+        "require_organizer_phone",
+        "require_organizer_website",
+        "reject_past_events",
+        "reject_unparseable_dates",
+        "reject_missing_location",
+        "reject_missing_ticket_url",
+        "reject_unmatched_category",
+        "min_title_length",
+        "min_description_length",
+        "min_confidence_score",
+        "blacklisted_keywords",
+        "excluded_domains",
+    ):
+        val = getattr(payload, field, None)
+        if val is not None:
+            settings_updates[field] = val
+
     if settings_updates:
         set_discovery_auto_settings(db, settings_updates)
 
@@ -180,6 +215,20 @@ def set_discovery_auto(payload: DiscoveryAutoToggleRequest, db: Session = Depend
         categories=auto_scope.get("categories") or [],
         search_depth=auto_scope.get("search_depth"),
         daily_limit=auto_scope.get("daily_limit"),
+        reject_no_organizer=auto_scope.get("reject_no_organizer", True),
+        require_organizer_email=auto_scope.get("require_organizer_email", True),
+        require_organizer_phone=auto_scope.get("require_organizer_phone", False),
+        require_organizer_website=auto_scope.get("require_organizer_website", False),
+        reject_past_events=auto_scope.get("reject_past_events", True),
+        reject_unparseable_dates=auto_scope.get("reject_unparseable_dates", True),
+        reject_missing_location=auto_scope.get("reject_missing_location", False),
+        reject_missing_ticket_url=auto_scope.get("reject_missing_ticket_url", False),
+        reject_unmatched_category=auto_scope.get("reject_unmatched_category", True),
+        min_title_length=auto_scope.get("min_title_length", 8),
+        min_description_length=auto_scope.get("min_description_length", 20),
+        min_confidence_score=auto_scope.get("min_confidence_score", 50),
+        blacklisted_keywords=auto_scope.get("blacklisted_keywords", []),
+        excluded_domains=auto_scope.get("excluded_domains", []),
     )
 
 
