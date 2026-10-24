@@ -27,12 +27,14 @@ CATEGORIES = (
     "Oil and Gas",
     "Textiles",
     "Manufacturing",
+    "Technology",
     "Other",
 )
 
 _KEYWORDS: dict[str, tuple[str, ...]] = {
     "Technology": (
         "tech", "technology", "software", "computing", "developer", "coding", "ai", "cloud", "data", "cyber",
+        "hackathon", "machine learning", "devops", "web3", "digital", "deep learning", "nlp", "iot", "robotics",
     ),
     "Pharmaceuticals": (
         "pharma", "pharmaceutic", "drug discover", "drug manufactur", "clinical trial", "=api", "=apis",
@@ -43,21 +45,21 @@ _KEYWORDS: dict[str, tuple[str, ...]] = {
         "digital health", "clinic", "health system", "medical device", "wellness", "doctor",
         "medical science", "medicine", "biomedical", "genom", "patholog", "cardio", "oncolog",
         "neurolog", "pediatric", "radiolog", "surgery", "surgical", "immunolog", "clinical research",
-        "crispr", "genetics", "life science",
+        "crispr", "genetics", "life science", "medical", "dental", "pharma",
     ),
     "Energy and Power Generation": (
         "energy", "power generation", "renewable energy", "solar", "wind energy", "thermal power",
         "hydropower", "clean energy", "electricity", "power plant", "grid", "smart grid", "battery storage",
-        "nuclear power", "power grid", "photovoltaic",
+        "nuclear power", "power grid", "photovoltaic", "ev", "electric vehicle",
     ),
     "Telecommunications": (
         "telecom", "telecommunication", "=5g", "=6g", "wireless", "broadband", "optical fiber",
         "network", "satellite", "operator", "spectrum", "cellular", "enterprise it", "cloud telecom", "=voip",
     ),
     "Construction": (
-        "construction", "infrastructure", "civil engineering", "civilengineering", "civil engineer", "builder", "building technology", "contech",
+        "construction", "infrastructure", "civil engineering", "civilengineer", "civil engineer", "builder", "building technology", "contech",
         "cement", "concrete", "smart cities", "architecture", "highway", "bridge", "urban planning",
-        "real estate development",
+        "real estate development", "property", "real estate", "proptech", "interior design", "housing", "architect",
     ),
     "Mining": (
         "mining", "mineral", "extraction", "ore", "coal mining", "gold mining", "iron ore", "quarry",
@@ -66,7 +68,7 @@ _KEYWORDS: dict[str, tuple[str, ...]] = {
     "Finance": (
         "finance", "fintech", "banking", "=bank", "invest", "investment", "capital markets", "wealth",
         "asset management", "insurance", "insurtech", "private equity", "venture capital", "accounting",
-        "=tax", "stock market", "mutual fund", "trade", "trading",
+        "=tax", "stock market", "mutual fund", "trade", "trading", "startup", "entrepreneur", "founder", "pitch", "business", "commerce",
     ),
     "Packaging": (
         "packaging", "packtech", "packmach", "packplus", "propak", "corrugated", "flexible packaging", "carton", "bottling", "labeling",
@@ -74,7 +76,7 @@ _KEYWORDS: dict[str, tuple[str, ...]] = {
     ),
     "Transport and Logistics": (
         "transport", "logistics", "supply chain", "freight", "cargo", "shipping", "railway", "aviation",
-        "airline", "maritime", "=port", "fleet", "warehouse", "warehousing", "cold chain", "trucking",
+        "airline", "maritime", "=port", "fleet", "warehouse", "warehousing", "cold chain", "trucking", "mobility", "automotive", "vehicle",
     ),
     "Oil and Gas": (
         "oil and gas", "oilandgas", "petroleum", "upstream", "downstream", "refinery", "pipeline", "drilling",
@@ -82,17 +84,18 @@ _KEYWORDS: dict[str, tuple[str, ...]] = {
     ),
     "Textiles": (
         "textile", "fabric", "garment", "apparel", "spinning", "weaving", "yarn", "cotton",
-        "fashion technology", "fiber", "dyeing", "loom", "technical textile",
+        "fashion technology", "fiber", "dyeing", "loom", "technical textile", "fashion",
     ),
     "Manufacturing": (
         "manufacturing", "industrial", "industry 4.0", "machinery", "automation", "robotics", "=cnc",
         "tooling", "casting", "forging", "factory", "assembly line", "smart manufacturing", "precision engineering",
-        "autotech", "autotechnicia", "metalworking",
+        "autotech", "autotechnicia", "metalworking", "food processing", "beverage", "food", "foodtech",
     ),
 }
 
 # Tie-break order: more specific categories first.
 _PRIORITY = (
+    "Technology",
     "Pharmaceuticals",
     "Healthcare",
     "Energy and Power Generation",

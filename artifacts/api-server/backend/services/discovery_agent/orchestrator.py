@@ -281,10 +281,12 @@ def run_discovery_agent(db: Session, config: DiscoveryConfig | None = None) -> R
         # In manual research runs (or low search depth), cap to at most 2 listing pages.
         # In background runs, cap to at most 6 listing pages.
         is_manual = getattr(config, "is_manual", False)
-        listing_budget = 2 if (is_manual or config.search_depth <= 6) else 6
+        target_valid = getattr(config, "target_valid_events", None) or 25
+        listing_budget = max(10, min(30, target_valid // 3)) if target_valid >= 50 else (2 if is_manual else 6)
+        city_slice = config.cities[:8] if len(config.cities) > 8 else config.cities
         all_listing_urls = listing_sources.build_listing_urls(
             config.listing_urls,
-            config.cities[:3] if len(config.cities) > 3 else config.cities,
+            city_slice,
             countries=getattr(config, "countries", None),
             country=getattr(config, "country", None),
         )

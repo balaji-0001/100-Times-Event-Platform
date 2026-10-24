@@ -93,7 +93,7 @@ def _http_get(url: str) -> str | None:
         return None
     try:
         response = httpx.get(url, timeout=10, follow_redirects=True, headers=DEFAULT_HEADERS)
-    except httpx.HTTPError:
+    except Exception:
         return None
     if response.status_code != 200:
         return None
