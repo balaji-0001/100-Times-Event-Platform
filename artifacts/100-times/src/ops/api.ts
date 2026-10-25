@@ -407,6 +407,14 @@ export function useOutreachStats() {
   });
 }
 
+export function useDiscoveryRunEvents(runId: number | null) {
+  return useQuery({
+    queryKey: ['discoveryRunEvents', runId],
+    queryFn: () => customFetch<DiscoveredEvent[]>(`/api/discovery/runs/${runId}/events`),
+    enabled: Boolean(runId),
+  });
+}
+
 export function useDiscoveryRuns() {
   return useQuery({
     queryKey: keys.discoveryRuns,

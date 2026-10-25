@@ -192,4 +192,6 @@ def persist_event(
         )
 
     db.commit()
+    if hasattr(summary, 'event_ids'):
+        summary.event_ids.append(event.id)
     return event

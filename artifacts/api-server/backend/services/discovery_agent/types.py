@@ -4,6 +4,7 @@ already used by `outreach/types.py` and `connectors/types.py`.
 """
 
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -126,8 +127,9 @@ class RunSummary:
     new_organizers: int = 0
     contacts_found: int = 0
     events_needing_review: int = 0
+    event_ids: list[int] = field(default_factory=list)
 
-    def as_dict(self) -> dict[str, int]:
+    def as_dict(self) -> dict[str, Any]:
         return {
             "events_discovered": self.events_discovered,
             "accepted_events": self.accepted_events or self.new_events,
@@ -141,4 +143,5 @@ class RunSummary:
             "new_organizers": self.new_organizers,
             "contacts_found": self.contacts_found,
             "events_needing_review": self.events_needing_review,
+            "event_ids": self.event_ids,
         }

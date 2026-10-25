@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useSearch } from 'wouter';
-import { Download, RotateCcw, Square } from 'lucide-react';
-import { useActiveDiscoveryRun, useStopDiscoveryRun } from './api';
+import { ArrowLeft, Download, RotateCcw, Square, X } from 'lucide-react';
+import { useActiveDiscoveryRun, useDiscoveryRunEvents, useDiscoveryRuns, useStopDiscoveryRun } from './api';
 import { ALL_WORLD_COUNTRIES, getReferenceStatesForCountry, getReferenceCitiesForState, getReferenceCitiesForCountry } from '@/lib/countries';
 import { type DiscoveredEvent, messagesForEvent, organizerById, PLATFORM_CATEGORIES, useCategories, useDiscoveredEvents, useDiscoveredOrganizers, useDiscoveryStats, useDownloadDiscoveredEvents, useOutreachMessages } from './api';
-import { AdminTable, Badge, Btn, ConfidenceBar, ErrorState, EmptyState, LoadingState, NA, PageHeader, Pager, SearchBox, SelectFilter, StatCard, cell, cellMuted, fmtDate, useDebounce, usePagination, verificationTone } from './ui';
+import { AdminTable, Badge, Btn, ConfidenceBar, ErrorState, EmptyState, LoadingState, NA, PageHeader, Pager, SearchBox, SelectFilter, StatCard, cell, cellMuted, fmtDate, fmtDateTime, useDebounce, usePagination, verificationTone } from './ui';
 import { EventDrawer, sourceTypeLabel } from './EventDrawer';
 import { ManualResearchButton } from './ManualResearch';
 
@@ -22,6 +22,14 @@ export function DiscoveryPage({ mode }: { mode: 'new' | 'events' }) {
   const [, setLocation] = useLocation();
   const search = useSearch();
   const selectedId = Number(new URLSearchParams(search).get('event')) || null;
+  const runParam = new URLSearchParams(search).get('run');
+  const runId = runParam ? Number(runParam) : null;
+  const discoveryRuns = useDiscoveryRuns();
+  const runEvents = useDiscoveryRunEvents(runId);
+  const targetRun = useMemo(() => {
+    if (!runId || !discoveryRuns.data) return null;
+    return discoveryRuns.data.find((r) => r.id === runId) ?? null;
+  }, [runId, discoveryRuns.data]);
 
   const [q, setQ] = useState(''); const term = useDebounce(q.trim().toLowerCase());
   // Dashboard stat cards deep-link here with ?verification=… / ?format=… so the list opens already filtered.
@@ -85,6 +93,29 @@ export function DiscoveryPage({ mode }: { mode: 'new' | 'events' }) {
   const rows = useMemo(() => {
     let list = country !== ALL ? [...countryFilteredEvents] : [...all];
     list.sort((a, b) => (b.discoveredAt ?? '').localeCompare(a.discoveredAt ?? ''));
+
+    // Filter by run if ?run=... is present
+    if (runId) {
+      if (runEvents.data && runEvents.data.length > 0) {
+        const idSet = new Set(runEvents.data.map((e) => e.id));
+        list = list.filter((e) => idSet.has(e.id));
+      } else if (targetRun) {
+        const eventIds = Array.isArray(targetRun.summary?.event_ids) ? (targetRun.summary.event_ids as number[]) : [];
+        if (eventIds.length > 0) {
+          const idSet = new Set(eventIds);
+          list = list.filter((e) => idSet.has(e.id));
+        } else if (targetRun.startedAt) {
+          const s = new Date(targetRun.startedAt).getTime() - 60000;
+          const c = (targetRun.completedAt ? new Date(targetRun.completedAt).getTime() : Date.now()) + 60000;
+          list = list.filter((e) => {
+            if (!e.discoveredAt) return false;
+            const t = new Date(e.discoveredAt).getTime();
+            return t >= s && t <= c;
+          });
+        }
+      }
+    }
+
     if (mode === 'new') return list.filter((e) => e.verificationStatus !== 'REJECTED');
     if (state !== ALL) list = list.filter((e) => e.state === state);
     if (city !== ALL) list = list.filter((e) => e.city === city);
@@ -99,7 +130,7 @@ export function DiscoveryPage({ mode }: { mode: 'new' | 'events' }) {
     if (eventTo) list = list.filter((e) => e.eventDate && e.eventDate <= eventTo);
     if (term) list = list.filter((e) => [e.name, e.city, e.state, e.category, e.subcategory, e.venue, organizerById(organizers.data, e.organizerId)?.name, organizerById(organizers.data, e.organizerId)?.email].some((v) => v?.toLowerCase().includes(term)));
     return list;
-  }, [all, countryFilteredEvents, country, mode, state, city, category, verification, organizerFilter, format, minConfidence, discoveredFrom, discoveredTo, eventFrom, eventTo, term, organizers.data]);
+  }, [all, countryFilteredEvents, country, mode, state, city, category, verification, organizerFilter, format, minConfidence, discoveredFrom, discoveredTo, eventFrom, eventTo, term, organizers.data, runId, runEvents.data, targetRun]);
 
   const categoriesQuery = useCategories();
   const categoryOptions = useMemo(() => {
@@ -119,8 +150,8 @@ export function DiscoveryPage({ mode }: { mode: 'new' | 'events' }) {
 
   const pager = usePagination(rows, mode === 'new' ? 20 : 25);
   const selected = selectedId ? all.find((e) => e.id === selectedId) ?? null : null;
-  const openEvent = (e: DiscoveredEvent) => setLocation(`${mode === 'new' ? '/admin/discovery' : '/admin/discovery/events'}?event=${e.id}`);
-  const closeEvent = () => setLocation(mode === 'new' ? '/admin/discovery' : '/admin/discovery/events');
+  const openEvent = (e: DiscoveredEvent) => setLocation(`${mode === 'new' ? '/admin/discovery' : '/admin/discovery/events'}?${runId ? `run=${runId}&` : ''}event=${e.id}`);
+  const closeEvent = () => setLocation(`${mode === 'new' ? '/admin/discovery' : '/admin/discovery/events'}${runId ? `?run=${runId}` : ''}`);
   useEffect(() => { if (selectedId && events.isSuccess && !selected) closeEvent(); }, [selectedId, events.isSuccess, selected]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (events.isLoading || organizers.isLoading) return <LoadingState label="Loading discovered events" />;
@@ -131,7 +162,27 @@ export function DiscoveryPage({ mode }: { mode: 'new' | 'events' }) {
   // (those are for the browsing table), so these keep growing correctly past that cap.
   const ds = discoveryStats.data;
 
-  const resetFilters = () => { setQ(''); setCountry(ALL); setState(ALL); setCity(ALL); setCategory(ALL); setVerification(ALL); setMinConfidence('0'); setOrganizerFilter(ALL); setFormat(ALL); setDiscoveredFrom(''); setDiscoveredTo(''); setEventFrom(''); setEventTo(''); };
+  const resetFilters = () => {
+    setQ('');
+    setCountry(ALL);
+    setState(ALL);
+    setCity(ALL);
+    setCategory(ALL);
+    setVerification(ALL);
+    setMinConfidence('0');
+    setOrganizerFilter(ALL);
+    setFormat(ALL);
+    setDiscoveredFrom('');
+    setDiscoveredTo('');
+    setEventFrom('');
+    setEventTo('');
+    if (runId) {
+      const p = new URLSearchParams(search);
+      p.delete('run');
+      const qStr = p.toString();
+      setLocation(`${mode === 'new' ? '/admin/discovery' : '/admin/discovery/events'}${qStr ? `?${qStr}` : ''}`);
+    }
+  };
   const dateInput = 'rounded-lg border border-foreground/15 bg-background px-2 py-1.5 text-xs text-foreground outline-none focus:border-accent';
 
   return (
@@ -173,6 +224,42 @@ export function DiscoveryPage({ mode }: { mode: 'new' | 'events' }) {
               onClick={() => stopRun.mutate(activeRun.data.run!.id)}
             >
               <Square size={11} className="fill-current" /> Stop Discovery Run
+            </Btn>
+          </div>
+        </div>
+      )}
+
+      {runId && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-accent/40 bg-accent/10 px-4 py-3 shadow-sm">
+          <div className="flex items-center gap-2.5">
+            <Badge tone="accent">Run #{runId}</Badge>
+            <span className="text-xs font-semibold text-foreground">
+              Showing {rows.length} event{rows.length === 1 ? '' : 's'} discovered in Run #{runId}
+            </span>
+            {targetRun && (
+              <span className="text-xs text-muted-foreground">
+                ({fmtDateTime(targetRun.startedAt)} · status: {targetRun.status})
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Link href="/admin/activity">
+              <Btn variant="ghost" size="sm" className="h-7 text-xs">
+                <ArrowLeft size={12} className="mr-1" /> Back to Agent Runs
+              </Btn>
+            </Link>
+            <Btn
+              variant="secondary"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => {
+                const p = new URLSearchParams(search);
+                p.delete('run');
+                const qStr = p.toString();
+                setLocation(`${mode === 'new' ? '/admin/discovery' : '/admin/discovery/events'}${qStr ? `?${qStr}` : ''}`);
+              }}
+            >
+              <X size={12} className="mr-1" /> Clear Run Filter
             </Btn>
           </div>
         </div>

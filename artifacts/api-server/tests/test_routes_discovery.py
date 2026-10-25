@@ -179,3 +179,44 @@ def test_stats_requires_admin():
     app.include_router(discovery_routes.router, prefix="/api")
     with TestClient(app) as unauthenticated_client:
         assert unauthenticated_client.get("/api/discovery/stats").status_code == 401
+
+
+def test_get_run_discovered_events(client, db_session):
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    run = AgentRun(
+        agent_type="discovery",
+        status="completed",
+        started_at=now - timedelta(minutes=5),
+        completed_at=now - timedelta(minutes=4),
+        summary={"events_discovered": 1, "new_events": 1, "event_ids": []},
+        created_at=now,
+    )
+    db_session.add(run)
+    db_session.flush()
+
+    ev = DiscoveredEvent(
+        name="Test Run Discovery Event",
+        category="Tech",
+        city="Bengaluru",
+        country="India",
+        discovered_by="web_discovery_agent",
+        discovered_at=now - timedelta(minutes=4, seconds=30),
+        created_at=now,
+    )
+    db_session.add(ev)
+    db_session.commit()
+    db_session.refresh(run)
+
+    resp = client.get(f"/api/discovery/runs/{run.id}/events")
+    assert resp.status_code == 200
+    events = resp.json()
+    assert len(events) >= 1
+    assert any(e["id"] == ev.id for e in events)
+
+    run.summary = {"events_discovered": 1, "new_events": 1, "event_ids": [ev.id]}
+    db_session.commit()
+    resp = client.get(f"/api/discovery/runs/{run.id}/events")
+    assert resp.status_code == 200
+    assert len(resp.json()) == 1
+    assert resp.json()[0]["id"] == ev.id

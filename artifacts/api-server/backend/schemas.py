@@ -822,6 +822,7 @@ class DiscoveryRunRequest(BaseModel):
     require_organizer_email: bool | None = Field(default=None, alias="requireOrganizerEmail")
     date_from: str | None = Field(default=None, alias="dateFrom")
     date_to: str | None = Field(default=None, alias="dateTo")
+    background: bool | None = None
 
     # Rejection & Sector Fallback rules
     fallback_to_other_sector: bool | None = Field(default=None, alias="fallbackToOtherSector")
@@ -897,6 +898,7 @@ class CommunityDiscoveryRunRequest(BaseModel):
     require_organizer_email: bool | None = Field(default=None, alias="requireOrganizerEmail")
     date_from: str | None = Field(default=None, alias="dateFrom")
     date_to: str | None = Field(default=None, alias="dateTo")
+    background: bool | None = None
     seed_urls: list[str] | None = Field(default=None, alias="seedUrls")
 
 

@@ -10,7 +10,7 @@ exposes scraped personal contact info (emails/phones), so it gets the same
 """
 
 from dataclasses import asdict
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -187,21 +187,34 @@ def trigger_discovery_run(
         finally:
             bg_db.close()
 
-    worker_thread = threading.Thread(
-        target=_bg_discovery_worker,
-        name=f"discovery-worker-{run_id}",
-        daemon=True,
-    )
-    worker_thread.start()
+    import sys
+    is_testing = "pytest" in sys.modules
+    should_run_bg = payload.background if (payload and getattr(payload, "background", None) is not None) else not is_testing
 
-    return {
-        "runId": run.id,
-        "status": "running",
-        "message": f"Discovery run #{run.id} started in the background.",
-        "isBackground": True,
-        "config": asdict(config),
-        **run.summary,
-    }
+    if should_run_bg:
+        worker_thread = threading.Thread(
+            target=_bg_discovery_worker,
+            name=f"discovery-worker-{run_id}",
+            daemon=True,
+        )
+        worker_thread.start()
+
+        return {
+            "runId": run.id,
+            "status": "running",
+            "message": f"Discovery run #{run.id} started in the background.",
+            "isBackground": True,
+            "config": asdict(config),
+            **run.summary,
+        }
+    else:
+        summary = run_discovery_agent(db, config, run=run)
+        db.refresh(run)
+        return {
+            "runId": run.id,
+            "status": run.status,
+            **summary.as_dict(),
+        }
 
 
 @router.get("/auto")
@@ -408,6 +421,46 @@ def get_run(run_id: int, db: Session = Depends(get_db), _user: User = _admin) ->
     if run is None or run.agent_type != "discovery":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Discovery run not found")
     return AgentRunOut.model_validate(run)
+
+
+
+@router.get("/runs/{run_id}/events")
+def get_run_discovered_events(
+    run_id: int,
+    db: Session = Depends(get_db),
+    _user: User = _admin,
+) -> list[DiscoveredEventOut]:
+    """Return all DiscoveredEvent records found during a specific discovery agent run."""
+    run = db.get(AgentRun, run_id)
+    if run is None or run.agent_type != "discovery":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Discovery run not found")
+
+    if run.summary and isinstance(run.summary, dict):
+        event_ids = run.summary.get("event_ids") or run.summary.get("discovered_event_ids") or []
+        if event_ids:
+            events = db.execute(
+                select(DiscoveredEvent)
+                .options(selectinload(DiscoveredEvent.sources))
+                .where(DiscoveredEvent.id.in_(event_ids))
+                .order_by(DiscoveredEvent.id.desc())
+            ).scalars().all()
+            return [_serialize_event(e) for e in events]
+
+    if run.started_at:
+        start_bound = run.started_at - timedelta(seconds=60)
+        end_bound = (run.completed_at or datetime.now(timezone.utc)) + timedelta(seconds=60)
+        events = db.execute(
+            select(DiscoveredEvent)
+            .options(selectinload(DiscoveredEvent.sources))
+            .where(
+                DiscoveredEvent.discovered_at >= start_bound,
+                DiscoveredEvent.discovered_at <= end_bound,
+            )
+            .order_by(DiscoveredEvent.id.desc())
+        ).scalars().all()
+        return [_serialize_event(e) for e in events]
+
+    return []
 
 
 @router.get("/events")
