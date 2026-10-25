@@ -3,6 +3,7 @@ import { Link } from 'wouter';
 import {
   AlertTriangle,
   Building2,
+  Eye,
   Calendar,
   CalendarX,
   Check,
@@ -221,7 +222,7 @@ export function ManualResearchForm() {
 
   // Rejection rules state
   const [fallbackToOtherSector, setFallbackToOtherSector] = useState(true);
-  const [rejectNoOrganizer, setRejectNoOrganizer] = useState(true);
+  const [rejectNoOrganizer, setRejectNoOrganizer] = useState(false);
   const [requireOrganizerEmail, setRequireOrganizerEmail] = useState(false);
   const [requireOrganizerPhone, setRequireOrganizerPhone] = useState(false);
   const [requireOrganizerWebsite, setRequireOrganizerWebsite] = useState(false);
@@ -887,6 +888,11 @@ export function ManualResearchForm() {
         >
           <Search size={13} /> {run.isPending ? 'Starting…' : active ? 'Run Already In Progress' : 'Run manual research'}
         </Btn>
+        <Link href="/admin/discovery/events">
+          <Btn variant="secondary">
+            <Eye size={13} /> View Discoveries
+          </Btn>
+        </Link>
         {active && (
           <Btn
             variant="danger"
@@ -942,7 +948,12 @@ export function ManualResearchButton({ size = 'md' }: { size?: 'sm' | 'md' }) {
   const acceptedCount = activeRun.data?.run?.summary?.accepted_events ?? 0;
 
   return (
-    <>
+    <div className="flex items-center gap-2">
+      <Link href="/admin/discovery/events">
+        <Btn variant="secondary" size={size}>
+          <Eye size={size === 'sm' ? 11 : 13} /> View Discoveries
+        </Btn>
+      </Link>
       <Btn
         variant={isRunning ? "secondary" : "primary"}
         size={size}
@@ -975,6 +986,6 @@ export function ManualResearchButton({ size = 'md' }: { size?: 'sm' | 'md' }) {
         </p>
         <ManualResearchForm />
       </Drawer>
-    </>
+    </div>
   );
 }
