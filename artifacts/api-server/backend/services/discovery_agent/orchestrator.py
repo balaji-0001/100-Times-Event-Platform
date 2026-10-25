@@ -30,6 +30,31 @@ from backend.services.discovery_agent.types import DiscoveryConfig, RunSummary
 
 logger = logging.getLogger("discovery_agent.orchestrator")
 
+_CANCELLED_RUN_IDS: set[int] = set()
+
+
+def cancel_discovery_run(run_id: int | None = None) -> bool:
+    """Signals an active discovery run to stop immediately."""
+    global _CANCELLED_RUN_IDS
+    if run_id is not None:
+        _CANCELLED_RUN_IDS.add(run_id)
+    return True
+
+
+def is_run_cancelled(run_id: int | None, db: Session | None = None) -> bool:
+    """Checks in-memory flag or database status to see if a run was requested to stop."""
+    if run_id and run_id in _CANCELLED_RUN_IDS:
+        return True
+    if run_id and db is not None:
+        try:
+            st = db.scalar(select(AgentRun.status).where(AgentRun.id == run_id))
+            if st in ("stopped", "cancelled", "stopping"):
+                return True
+        except Exception:
+            pass
+    return False
+
+
 
 def _split(csv: str) -> list[str]:
     return [item.strip() for item in csv.split(",") if item.strip()]
@@ -195,9 +220,12 @@ def _process_candidate(
 
     run.summary = summary.as_dict()
     db.add(run)
-    # Commit periodically to keep run summary fresh without thrashing disk I/O on every candidate
-    if summary.events_discovered % 10 == 0:
-        db.commit()
+    # Commit periodically to keep run summary fresh in real time for background polling
+    if summary.events_discovered % 2 == 0 or val_result.status != "REJECTED":
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
 
 
 def _limit_reached(already_today: int, summary: RunSummary, config: DiscoveryConfig) -> bool:
@@ -230,80 +258,140 @@ def _read_page(
         _process_candidate(db, run, candidate, config, summary, supported_categories)
 
 
-def run_discovery_agent(db: Session, config: DiscoveryConfig | None = None) -> RunSummary:
+def run_discovery_agent(
+    db: Session,
+    config: DiscoveryConfig | None = None,
+    run: AgentRun | None = None,
+) -> RunSummary:
     config = config or config_from_settings(get_settings(), db=db)
     supported_categories = categorizer.get_supported_categories(db)
     effective_categories = list(dict.fromkeys(supported_categories + (config.categories or [])))
     if not config.categories:
         config.categories = supported_categories
 
-    run = AgentRun(
-        agent_type="discovery",
-        status="running",
-        started_at=datetime.now(timezone.utc),
-        config_snapshot=asdict(config),
-        summary=RunSummary().as_dict(),
-        created_at=datetime.now(timezone.utc),
-    )
-    db.add(run)
-    db.commit()
-    db.refresh(run)
+    if run is None:
+        run = AgentRun(
+            agent_type="discovery",
+            status="running",
+            started_at=datetime.now(timezone.utc),
+            config_snapshot=asdict(config),
+            summary=RunSummary().as_dict(),
+            created_at=datetime.now(timezone.utc),
+        )
+        db.add(run)
+        db.commit()
+        db.refresh(run)
+    else:
+        # Re-attach or refresh existing run (e.g. initiated by background endpoint)
+        run = db.get(AgentRun, run.id) or run
+        run.status = "running"
+        run.config_snapshot = asdict(config)
+        db.add(run)
+        db.commit()
+        db.refresh(run)
 
     summary = RunSummary()
     try:
         already_today = _todays_new_event_count(db)
         pages_read: set[str] = set()
 
-        # 1. Targeted web search: prioritized first so manual and automated runs find
-        # high-precision sector-matched events (LinkedIn, Facebook, Twitter, and
-        # conference queries) directly without wasting time crawling generic directories.
-        search_error: str | None = None
-        for query in query_seeds.build_search_queries(config):
-            if _limit_reached(already_today, summary, config):
-                logger.info("Daily discovery limit (%d) reached — stopping run early.", config.daily_limit)
-                break
-            try:
-                result_urls = web_search.search(query, config.sources_per_query)
-            except web_search.SearchBlocked as exc:
-                search_error = str(exc)
-                logger.warning("Web search stopped: %s", exc)
-                break
-            except Exception:
-                logger.exception("Web search failed for query %r — skipping this query.", query)
-                continue
-            for url in result_urls:
-                if url in pages_read or _limit_reached(already_today, summary, config):
-                    continue
-                pages_read.add(url)
-                _read_page(db, run, url, config, summary, already_today, effective_categories)
+        # ------------------------------------------------------------------
+        # 1. HIGH-YIELD STRUCTURED EVENT LISTING PLATFORMS (FAST FIRST)
+        # ------------------------------------------------------------------
+        # Event listing platforms (Allevents, Eventbrite, 10Times, Meetup) return
+        # rich schema.org JSON-LD arrays directly authored by organizers. Running
+        # these first allows the run to discover 30-80 valid events in 15-25 seconds,
+        # dramatically cutting user wait times.
+        target_valid = getattr(config, "target_valid_events", None) or 50
+        city_slice = config.cities[:8] if len(config.cities) > 8 else (config.cities or ["Mumbai", "Bengaluru", "Delhi"])
+        listing_budget = max(8, min(40, target_valid // 2))
 
-        # 2. Known event-listing sites, with an adaptive budget so a run never hangs for 45+ minutes.
-        # In manual research runs (or low search depth), cap to at most 2 listing pages.
-        # In background runs, cap to at most 6 listing pages.
-        is_manual = getattr(config, "is_manual", False)
-        target_valid = getattr(config, "target_valid_events", None) or 25
-        listing_budget = max(10, min(30, target_valid // 3)) if target_valid >= 50 else (2 if is_manual else 6)
-        city_slice = config.cities[:8] if len(config.cities) > 8 else config.cities
         all_listing_urls = listing_sources.build_listing_urls(
             config.listing_urls,
             city_slice,
             countries=getattr(config, "countries", None),
             country=getattr(config, "country", None),
         )
+
         for listing_url in all_listing_urls[:listing_budget]:
+            if is_run_cancelled(run.id, db):
+                logger.info("Discovery run #%s stopped by user.", run.id)
+                run.status = "stopped"
+                run.completed_at = datetime.now(timezone.utc)
+                run.summary = summary.as_dict()
+                db.add(run)
+                db.commit()
+                _CANCELLED_RUN_IDS.discard(run.id)
+                return summary
+
             if _limit_reached(already_today, summary, config):
+                logger.info("Target limit reached during listing phase (%d events) — stopping early.", summary.accepted_events)
                 break
+
             if listing_url in pages_read:
                 continue
             pages_read.add(listing_url)
             _read_page(db, run, listing_url, config, summary, already_today, effective_categories)
 
+        # ------------------------------------------------------------------
+        # 2. TARGETED WEB & SOCIAL MEDIA SEARCH QUERIES
+        # ------------------------------------------------------------------
+        # If the valid event quota has not yet been satisfied, search queries
+        # targeting social platforms (LinkedIn, Facebook, Twitter, Telegram,
+        # Reddit) and professional sector portals are dispatched.
+        search_error: str | None = None
+        if not _limit_reached(already_today, summary, config):
+            for query in query_seeds.build_search_queries(config):
+                if is_run_cancelled(run.id, db):
+                    logger.info("Discovery run #%s stopped by user.", run.id)
+                    run.status = "stopped"
+                    run.completed_at = datetime.now(timezone.utc)
+                    run.summary = summary.as_dict()
+                    db.add(run)
+                    db.commit()
+                    _CANCELLED_RUN_IDS.discard(run.id)
+                    return summary
+
+                if _limit_reached(already_today, summary, config):
+                    break
+
+                try:
+                    result_urls = web_search.search(query, config.sources_per_query)
+                except web_search.SearchBlocked as exc:
+                    search_error = str(exc)
+                    logger.warning("Web search stopped: %s", exc)
+                    break
+                except Exception:
+                    logger.exception("Web search failed for query %r — skipping this query.", query)
+                    continue
+
+                for url in result_urls:
+                    if is_run_cancelled(run.id, db):
+                        logger.info("Discovery run #%s stopped by user.", run.id)
+                        run.status = "stopped"
+                        run.completed_at = datetime.now(timezone.utc)
+                        run.summary = summary.as_dict()
+                        db.add(run)
+                        db.commit()
+                        _CANCELLED_RUN_IDS.discard(run.id)
+                        return summary
+
+                    if url in pages_read or _limit_reached(already_today, summary, config):
+                        continue
+                    pages_read.add(url)
+                    _read_page(db, run, url, config, summary, already_today, effective_categories)
+
+        # Mark run finished cleanly
+        if is_run_cancelled(run.id, db):
+            run.status = "stopped"
+        else:
+            run.status = "completed"
         run.error = f"Web search stopped early: {search_error}" if search_error else None
-        run.status = "completed"
         run.completed_at = datetime.now(timezone.utc)
         run.summary = summary.as_dict()
         db.add(run)
         db.commit()
+        _CANCELLED_RUN_IDS.discard(run.id)
 
     except Exception as exc:
         db.rollback()
@@ -313,6 +401,7 @@ def run_discovery_agent(db: Session, config: DiscoveryConfig | None = None) -> R
         run.summary = summary.as_dict()
         db.add(run)
         db.commit()
+        _CANCELLED_RUN_IDS.discard(run.id)
         logger.exception("Discovery Agent run #%s failed", run.id)
 
     return summary

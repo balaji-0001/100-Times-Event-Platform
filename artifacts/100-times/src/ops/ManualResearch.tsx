@@ -25,10 +25,11 @@ import {
   ShieldAlert,
   Sliders,
   Tag,
+  Square,
   Ticket,
   Twitter,
 } from 'lucide-react';
-import { useCategories, useDiscoveryAutoStatus, useRunDiscovery } from './api';
+import { useCategories, useDiscoveryAutoStatus, useRunDiscovery, useActiveDiscoveryRun, useStopDiscoveryRun } from './api';
 import { GeoChecklistSelector } from './GeoChecklistSelector';
 import { Btn, DL, Drawer, ErrorState, Notice, inputClass } from './ui';
 
@@ -187,6 +188,8 @@ function FilterRuleRow({
 export function ManualResearchForm() {
   const run = useRunDiscovery();
   const auto = useDiscoveryAutoStatus();
+  const activeRun = useActiveDiscoveryRun();
+  const stopRun = useStopDiscoveryRun();
   const categoriesQuery = useCategories();
   const allAvailableCategories = categoriesQuery.data?.map((c) => c.name) || DEFAULT_CATEGORIES;
 
@@ -199,10 +202,10 @@ export function ManualResearchForm() {
   const [selectedCategories, setSelectedCategories] = useState<string[]>(allAvailableCategories);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [depth, setDepth] = useState('6');
-  const [perQuery, setPerQuery] = useState('4');
-  const [eventsPerRun, setEventsPerRun] = useState('50');
-  const [targetValidEvents, setTargetValidEvents] = useState('25');
+  const [depth, setDepth] = useState('12');
+  const [perQuery, setPerQuery] = useState('5');
+  const [eventsPerRun, setEventsPerRun] = useState('100');
+  const [targetValidEvents, setTargetValidEvents] = useState('50');
 
   // Sources state
   const [selectedSources, setSelectedSources] = useState<string[]>([
@@ -219,7 +222,7 @@ export function ManualResearchForm() {
   // Rejection rules state
   const [fallbackToOtherSector, setFallbackToOtherSector] = useState(true);
   const [rejectNoOrganizer, setRejectNoOrganizer] = useState(true);
-  const [requireOrganizerEmail, setRequireOrganizerEmail] = useState(true);
+  const [requireOrganizerEmail, setRequireOrganizerEmail] = useState(false);
   const [requireOrganizerPhone, setRequireOrganizerPhone] = useState(false);
   const [requireOrganizerWebsite, setRequireOrganizerWebsite] = useState(false);
   const [rejectPastEvents, setRejectPastEvents] = useState(true);
@@ -229,7 +232,7 @@ export function ManualResearchForm() {
   const [rejectUnmatchedCategory, setRejectUnmatchedCategory] = useState(false);
   const [minTitleLength, setMinTitleLength] = useState('8');
   const [minDescriptionLength, setMinDescriptionLength] = useState('20');
-  const [minConfidenceScore, setMinConfidenceScore] = useState('50');
+  const [minConfidenceScore, setMinConfidenceScore] = useState('20');
   const [blacklistedKeywords, setBlacklistedKeywords] = useState('');
   const [excludedDomains, setExcludedDomains] = useState('');
 
@@ -330,8 +333,78 @@ export function ManualResearchForm() {
     });
   };
 
+  const active = activeRun.data?.active ? activeRun.data.run : null;
+  const activeSummary = active?.summary || {};
+
   return (
     <div className="grid gap-4 text-xs">
+      {active && (
+        <div className="rounded-xl border border-accent/40 bg-accent/5 p-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-accent"></span>
+              </span>
+              <span className="font-semibold text-foreground text-sm">
+                Discovery Run #{active.id} Executing in Backend
+              </span>
+            </div>
+            <span className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider rounded bg-accent/20 text-accent">
+              Active Background Task
+            </span>
+          </div>
+
+          <div className="mt-3 rounded-lg border border-accent/20 bg-background/80 p-3">
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              ⚡ <strong>Safe to close or switch tabs:</strong> This research run is processing autonomously on the server. You can close this drawer or navigate anywhere in 100 TIMES — it will not be interrupted.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 mt-4">
+            <div className="rounded-lg border border-foreground/10 bg-card p-3">
+              <span className="text-[10px] text-muted-foreground block font-mono uppercase">Candidates Explored</span>
+              <span className="text-xl font-bold text-foreground mt-1 block">{activeSummary.events_discovered ?? 0}</span>
+            </div>
+            <div className="rounded-lg border border-accent/30 bg-accent/10 p-3">
+              <span className="text-[10px] text-accent block font-mono uppercase font-semibold">Valid Events Accepted</span>
+              <span className="text-xl font-bold text-accent mt-1 block">{activeSummary.accepted_events ?? activeSummary.new_events ?? 0}</span>
+            </div>
+            <div className="rounded-lg border border-foreground/10 bg-card p-3">
+              <span className="text-[10px] text-muted-foreground block font-mono uppercase">Needs Review</span>
+              <span className="text-xl font-bold text-foreground mt-1 block">{activeSummary.events_needing_review ?? 0}</span>
+            </div>
+            <div className="rounded-lg border border-foreground/10 bg-card p-3">
+              <span className="text-[10px] text-muted-foreground block font-mono uppercase">Duplicates Skipped</span>
+              <span className="text-xl font-bold text-muted-foreground mt-1 block">{activeSummary.duplicate_events ?? 0}</span>
+            </div>
+            <div className="rounded-lg border border-foreground/10 bg-card p-3">
+              <span className="text-[10px] text-muted-foreground block font-mono uppercase">Rejected</span>
+              <span className="text-xl font-bold text-red-500 mt-1 block">{activeSummary.rejected_events ?? 0}</span>
+            </div>
+            <div className="rounded-lg border border-foreground/10 bg-card p-3">
+              <span className="text-[10px] text-muted-foreground block font-mono uppercase">Organizers Found</span>
+              <span className="text-xl font-bold text-foreground mt-1 block">{activeSummary.organizers_found ?? 0}</span>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between gap-3 mt-4 pt-3 border-t border-accent/20">
+            <Btn
+              variant="danger"
+              size="sm"
+              loading={stopRun.isPending}
+              onClick={() => stopRun.mutate(active.id)}
+            >
+              <Square size={12} className="fill-current" /> Stop Discovery Run
+            </Btn>
+            <div className="flex items-center gap-3 font-mono-face text-[10px] uppercase tracking-wider">
+              <Link href="/admin/discovery/events" className="text-accent hover:underline font-bold">
+                View Discovered Events →
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="flex items-center gap-2 border-b border-foreground/10 pb-3">
         <button
           type="button"
@@ -805,13 +878,28 @@ export function ManualResearchForm() {
         Limits this run to <strong>{num(eventsPerRun, 50)} events</strong> and <strong>{num(depth, 6)} search queries</strong>.
       </Notice>
 
-      <div className="flex items-center gap-2 pt-2 border-t border-foreground/10">
-        <Btn variant="primary" loading={run.isPending} onClick={start}>
-          <Search size={13} /> {run.isPending ? 'Researching…' : 'Run manual research'}
+      <div className="flex items-center gap-3 pt-2 border-t border-foreground/10">
+        <Btn
+          variant="primary"
+          loading={run.isPending}
+          disabled={Boolean(active)}
+          onClick={start}
+        >
+          <Search size={13} /> {run.isPending ? 'Starting…' : active ? 'Run Already In Progress' : 'Run manual research'}
         </Btn>
+        {active && (
+          <Btn
+            variant="danger"
+            size="sm"
+            loading={stopRun.isPending}
+            onClick={() => stopRun.mutate(active.id)}
+          >
+            <Square size={12} className="fill-current" /> Stop Run
+          </Btn>
+        )}
         {run.isPending && (
           <span className="text-[11px] text-muted-foreground animate-pulse">
-            Researching sources and extracting events... Leave this drawer open.
+            Starting background discovery run...
           </span>
         )}
       </div>
@@ -849,10 +937,31 @@ export function ManualResearchForm() {
 
 export function ManualResearchButton({ size = 'md' }: { size?: 'sm' | 'md' }) {
   const [open, setOpen] = useState(false);
+  const activeRun = useActiveDiscoveryRun();
+  const isRunning = Boolean(activeRun.data?.active);
+  const acceptedCount = activeRun.data?.run?.summary?.accepted_events ?? 0;
+
   return (
     <>
-      <Btn variant="primary" size={size} onClick={() => setOpen(true)}>
-        <Search size={size === 'sm' ? 11 : 13} /> Run manual research
+      <Btn
+        variant={isRunning ? "secondary" : "primary"}
+        size={size}
+        onClick={() => setOpen(true)}
+        className={isRunning ? "relative border-accent/50 text-accent font-semibold" : ""}
+      >
+        {isRunning ? (
+          <>
+            <span className="relative flex h-2 w-2 mr-1">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-accent"></span>
+            </span>
+            Running ({acceptedCount} found)
+          </>
+        ) : (
+          <>
+            <Search size={size === 'sm' ? 11 : 13} /> Run manual research
+          </>
+        )}
       </Btn>
       <Drawer
         open={open}

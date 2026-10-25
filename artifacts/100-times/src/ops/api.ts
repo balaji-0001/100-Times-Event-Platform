@@ -127,7 +127,7 @@ export interface OutreachStats {
 export interface AgentRun {
   id: number;
   agentType: 'discovery' | 'outreach';
-  status: 'running' | 'completed' | 'failed';
+  status: 'running' | 'completed' | 'failed' | 'stopped';
   startedAt: string;
   completedAt?: string | null;
   configSnapshot?: Record<string, unknown> | null;
@@ -321,6 +321,7 @@ export const keys = {
   discoveryAuto: ['ops', 'discovery-auto'] as const,
   outreachAuto: ['ops', 'outreach-auto'] as const,
   discoveryStats: ['ops', 'discovery-stats'] as const,
+  discoveryActiveRun: ['ops', 'discovery-active-run'] as const,
   automationRequests: ['ops', 'automation-requests'] as const,
   smtpConfig: ['ops', 'smtp-config'] as const,
   emailOutbox: ['ops', 'email-outbox'] as const,
@@ -435,6 +436,19 @@ export function useDiscoveryStats() {
     // events entirely server-side — no mutation in this tab to invalidate the cache off of.
     // Poll so the overview reflects what the background automation just did without a manual refresh.
     refetchInterval: 60_000,
+  });
+}
+
+export interface ActiveDiscoveryRunResponse {
+  active: boolean;
+  run: AgentRun | null;
+}
+
+export function useActiveDiscoveryRun() {
+  return useQuery({
+    queryKey: keys.discoveryActiveRun,
+    queryFn: () => customFetch<ActiveDiscoveryRunResponse>('/api/discovery/runs/active'),
+    refetchInterval: (query) => (query.state.data?.active ? 2000 : 8000),
   });
 }
 
@@ -583,7 +597,20 @@ export function useRunDiscovery() {
   return useMutation({
     mutationFn: (body: DiscoveryRunPayload = {}) =>
       customFetch<Record<string, unknown>>('/api/discovery/run', { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: () => invalidate(keys.events, keys.organizers, keys.discoveryRuns, keys.outreachStats, keys.discoveryStats),
+    onSuccess: () => invalidate(keys.events, keys.organizers, keys.discoveryRuns, keys.outreachStats, keys.discoveryStats, keys.discoveryActiveRun),
+  });
+}
+
+export function useStopDiscoveryRun() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (runId?: number) =>
+      customFetch<{ stopped: boolean; runId?: number; message?: string }>(
+        runId ? `/api/discovery/runs/${runId}/stop` : '/api/discovery/runs/stop',
+        { method: 'POST' }
+      ),
+    onSuccess: () =>
+      invalidate(keys.discoveryActiveRun, keys.discoveryRuns, keys.events, keys.discoveryStats),
   });
 }
 

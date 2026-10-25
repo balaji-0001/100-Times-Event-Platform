@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useSearch } from 'wouter';
-import { Download, RotateCcw } from 'lucide-react';
+import { Download, RotateCcw, Square } from 'lucide-react';
+import { useActiveDiscoveryRun, useStopDiscoveryRun } from './api';
 import { ALL_WORLD_COUNTRIES, getReferenceStatesForCountry, getReferenceCitiesForState, getReferenceCitiesForCountry } from '@/lib/countries';
 import { type DiscoveredEvent, messagesForEvent, organizerById, PLATFORM_CATEGORIES, useCategories, useDiscoveredEvents, useDiscoveredOrganizers, useDiscoveryStats, useDownloadDiscoveredEvents, useOutreachMessages } from './api';
 import { AdminTable, Badge, Btn, ConfidenceBar, ErrorState, EmptyState, LoadingState, NA, PageHeader, Pager, SearchBox, SelectFilter, StatCard, cell, cellMuted, fmtDate, useDebounce, usePagination, verificationTone } from './ui';
@@ -16,6 +17,8 @@ export function DiscoveryPage({ mode }: { mode: 'new' | 'events' }) {
   const messages = useOutreachMessages();
   const discoveryStats = useDiscoveryStats();
   const download = useDownloadDiscoveredEvents();
+  const activeRun = useActiveDiscoveryRun();
+  const stopRun = useStopDiscoveryRun();
   const [, setLocation] = useLocation();
   const search = useSearch();
   const selectedId = Number(new URLSearchParams(search).get('event')) || null;
@@ -147,6 +150,33 @@ export function DiscoveryPage({ mode }: { mode: 'new' | 'events' }) {
           </div>
         )}
       />
+
+      {activeRun.data?.active && activeRun.data.run && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-accent/40 bg-accent/10 px-4 py-3 shadow-sm">
+          <div className="flex items-center gap-2.5">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-accent"></span>
+            </span>
+            <span className="text-xs font-semibold text-foreground">
+              Background Discovery Run #{activeRun.data.run.id} Active:
+            </span>
+            <span className="text-xs text-muted-foreground">
+              <strong>{activeRun.data.run.summary?.accepted_events ?? 0} valid events found</strong> ({activeRun.data.run.summary?.events_discovered ?? 0} candidates explored)
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Btn
+              variant="danger"
+              size="sm"
+              loading={stopRun.isPending}
+              onClick={() => stopRun.mutate(activeRun.data.run!.id)}
+            >
+              <Square size={11} className="fill-current" /> Stop Discovery Run
+            </Btn>
+          </div>
+        </div>
+      )}
 
       {mode === 'new' && (
         <div className="mt-8 grid grid-cols-2 gap-3 lg:grid-cols-4">

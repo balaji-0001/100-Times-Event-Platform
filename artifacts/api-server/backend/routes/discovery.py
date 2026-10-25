@@ -1,3 +1,4 @@
+import threading
 """Event Discovery & Organizer Research Agent admin API — manual trigger,
 run history, and read access to what the agent has found so far.
 
@@ -9,11 +10,11 @@ exposes scraped personal contact info (emails/phones), so it gets the same
 """
 
 from dataclasses import asdict
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from backend.core.config import get_settings
@@ -141,14 +142,65 @@ def trigger_discovery_run(
         if payload.excluded_domains is not None:
             config.excluded_domains = payload.excluded_domains
 
-    summary = run_discovery_agent(db, config)
+    # Check if a discovery run is already executing in the background
+    active_run = db.execute(
+        select(AgentRun)
+        .where(AgentRun.agent_type == "discovery", AgentRun.status == "running")
+        .order_by(AgentRun.id.desc())
+    ).scalars().first()
 
-    run = db.execute(select(AgentRun).where(AgentRun.agent_type == "discovery").order_by(AgentRun.id.desc())).scalars().first()
+    if active_run is not None:
+        return {
+            "runId": active_run.id,
+            "status": "running",
+            "message": f"Discovery run #{active_run.id} is already executing in the background.",
+            "isBackground": True,
+            "config": active_run.config_snapshot or asdict(config),
+            **(active_run.summary or {}),
+        }
+
+    # Initialize new AgentRun in running state
+    from backend.services.discovery_agent.types import RunSummary
+    run = AgentRun(
+        agent_type="discovery",
+        status="running",
+        started_at=datetime.now(timezone.utc),
+        config_snapshot=asdict(config),
+        summary=RunSummary().as_dict(),
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+
+    run_id = run.id
+
+    def _bg_discovery_worker():
+        from backend.db import SessionLocal
+        bg_db = SessionLocal()
+        try:
+            bg_run = bg_db.get(AgentRun, run_id)
+            run_discovery_agent(bg_db, config, run=bg_run)
+        except Exception:
+            import logging
+            logging.getLogger("discovery_agent.worker").exception("Background discovery worker failed for run #%s", run_id)
+        finally:
+            bg_db.close()
+
+    worker_thread = threading.Thread(
+        target=_bg_discovery_worker,
+        name=f"discovery-worker-{run_id}",
+        daemon=True,
+    )
+    worker_thread.start()
+
     return {
-        "runId": run.id if run else None,
-        "status": run.status if run else "unknown",
+        "runId": run.id,
+        "status": "running",
+        "message": f"Discovery run #{run.id} started in the background.",
+        "isBackground": True,
         "config": asdict(config),
-        **summary.as_dict(),
+        **run.summary,
     }
 
 
@@ -279,6 +331,65 @@ def set_discovery_auto(payload: DiscoveryAutoToggleRequest, db: Session = Depend
         blacklisted_keywords=auto_scope.get("blacklisted_keywords", []),
         excluded_domains=auto_scope.get("excluded_domains", []),
     )
+
+
+@router.get("/runs/active")
+def get_active_discovery_run(
+    db: Session = Depends(get_db),
+    _user: User = _admin,
+) -> dict[str, Any]:
+    """Returns the currently active background discovery run, or active: false if none."""
+    active_run = db.execute(
+        select(AgentRun)
+        .where(AgentRun.agent_type == "discovery", AgentRun.status == "running")
+        .order_by(AgentRun.id.desc())
+    ).scalars().first()
+
+    if active_run is None:
+        return {"active": False, "run": None}
+
+    return {
+        "active": True,
+        "run": AgentRunOut.model_validate(active_run).model_dump(by_alias=True),
+    }
+
+
+@router.post("/runs/stop")
+@router.post("/runs/{run_id}/stop")
+def stop_discovery_run(
+    run_id: int | None = None,
+    db: Session = Depends(get_db),
+    _user: User = _admin,
+) -> dict[str, Any]:
+    """Signals an active discovery run to stop immediately and preserves all progress."""
+    from backend.services.discovery_agent.orchestrator import cancel_discovery_run
+
+    if run_id is None:
+        target_run = db.execute(
+            select(AgentRun)
+            .where(AgentRun.agent_type == "discovery", AgentRun.status == "running")
+            .order_by(AgentRun.id.desc())
+        ).scalars().first()
+        if target_run is None:
+            return {"stopped": False, "message": "No active discovery run found to stop."}
+    else:
+        target_run = db.get(AgentRun, run_id)
+        if target_run is None or target_run.agent_type != "discovery":
+            raise HTTPException(status_code=404, detail="Discovery run not found")
+
+    cancel_discovery_run(target_run.id)
+    target_run.status = "stopped"
+    target_run.completed_at = datetime.now(timezone.utc)
+    db.add(target_run)
+    db.commit()
+
+    return {
+        "stopped": True,
+        "runId": target_run.id,
+        "status": "stopped",
+        "message": f"Discovery run #{target_run.id} has been stopped.",
+        "summary": target_run.summary,
+    }
 
 
 @router.get("/runs")
