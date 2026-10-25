@@ -81,14 +81,12 @@ export function DiscoveryPage({ mode }: { mode: 'new' | 'events' }) {
 
   const rows = useMemo(() => {
     let list = country !== ALL ? [...countryFilteredEvents] : [...all];
-    list = list.filter((e) => e.organizerStatus === 'FOUND' && Boolean(e.organizerId));
     list.sort((a, b) => (b.discoveredAt ?? '').localeCompare(a.discoveredAt ?? ''));
     if (mode === 'new') return list.filter((e) => e.verificationStatus !== 'REJECTED');
     if (state !== ALL) list = list.filter((e) => e.state === state);
     if (city !== ALL) list = list.filter((e) => e.city === city);
     if (category !== ALL) list = list.filter((e) => e.category === category);
-    if (verification === ALL) list = list.filter((e) => e.verificationStatus !== 'REJECTED');
-    else list = list.filter((e) => e.verificationStatus === verification);
+    if (verification !== ALL) list = list.filter((e) => e.verificationStatus === verification);
     if (organizerFilter !== ALL) list = list.filter((e) => (organizerFilter === 'found' ? e.organizerStatus === 'FOUND' : e.organizerStatus !== 'FOUND'));
     if (format !== ALL) list = list.filter((e) => (format === 'unspecified' ? !e.eventFormat : e.eventFormat === format));
     const minC = Number(minConfidence) || 0; if (minC > 0) list = list.filter((e) => e.confidenceScore >= minC);
