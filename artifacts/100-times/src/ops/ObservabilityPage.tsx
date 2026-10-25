@@ -357,6 +357,18 @@ export function ObservabilityPage() {
               />
             </div>
             <select
+              value={traceAgentFilter}
+              onChange={(e) => setTraceAgentFilter(e.target.value)}
+              className="rounded-xl border border-foreground/15 bg-background px-3 py-2 text-xs outline-none"
+            >
+              <option value="ALL">All Agents</option>
+              <option value="Discovery">Discovery Agent</option>
+              <option value="Trust">Trust & Safety Agent</option>
+              <option value="Outreach">Outreach Agent</option>
+              <option value="Attendee">Attendee Concierge</option>
+              <option value="Promotions">Promotions Agent</option>
+            </select>
+            <select
               value={traceStatusFilter}
               onChange={(e) => setTraceStatusFilter(e.target.value)}
               className="rounded-xl border border-foreground/15 bg-background px-3 py-2 text-xs outline-none"

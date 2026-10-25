@@ -226,6 +226,7 @@ app.include_router(platform_ops.router, prefix="/api")
 app.include_router(webhooks_n8n.router, prefix="/api")
 app.include_router(observability.router, prefix="/api")
 app.include_router(observability.public_metrics_router, prefix="/api")
+app.include_router(observability.public_metrics_router)  # both /metrics and /api/metrics for Prometheus
 app.include_router(redirect.router)  # no /api prefix: short /r/{id} tracking links
 
 
