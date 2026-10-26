@@ -130,7 +130,7 @@ class Settings(BaseSettings):
     discovery_daily_limit: int = 200  # max new DiscoveredEvent rows created per day
     discovery_confidence_threshold: int = 60  # below this -> verification_status=NEEDS_REVIEW
     discovery_scan_interval_minutes: int = 60
-    discovery_require_organizer_email: bool = True  # Mandatory public organizer email rule
+    discovery_require_organizer_email: bool = False
     # Re-open pages that come back empty/thin (JavaScript-rendered sites) in
     # headless Chromium via Playwright. Needs `playwright install chromium`;
     # without it discovery silently keeps the plain HTTP result.

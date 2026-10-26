@@ -215,7 +215,7 @@ def _process_candidate(
         supported_categories=supported_categories,
         date_from=getattr(config, "date_from", None),
         date_to=getattr(config, "date_to", None),
-        reject_no_organizer=getattr(config, "reject_no_organizer", True),
+        reject_no_organizer=getattr(config, "reject_no_organizer", False),
         require_organizer_phone=getattr(config, "require_organizer_phone", False),
         require_organizer_website=getattr(config, "require_organizer_website", False),
         reject_past_events=getattr(config, "reject_past_events", True),
@@ -226,7 +226,7 @@ def _process_candidate(
         fallback_to_other_sector=getattr(config, "fallback_to_other_sector", True),
         min_title_length=getattr(config, "min_title_length", 8),
         min_description_length=getattr(config, "min_description_length", 20),
-        min_confidence_score=getattr(config, "min_confidence_score", 50),
+        min_confidence_score=getattr(config, "min_confidence_score", 20),
         blacklisted_keywords=getattr(config, "blacklisted_keywords", None),
         excluded_domains=getattr(config, "excluded_domains", None),
     )

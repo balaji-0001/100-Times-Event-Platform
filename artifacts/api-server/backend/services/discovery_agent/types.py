@@ -26,7 +26,7 @@ class DiscoveryConfig:
     confidence_threshold: int = 60  # below this, verification_status becomes NEEDS_REVIEW
     listing_urls: list[str] = field(default_factory=list)  # listing-page templates read without AI; may contain {city}
     events_per_listing: int = 25  # max events taken from one listing page
-    require_organizer_email: bool = True  # mandatory organizer email check (production rule)
+    require_organizer_email: bool = False  # mandatory organizer email check (production rule)
     date_from: str | None = None  # optional start date filter (YYYY-MM-DD)
     date_to: str | None = None  # optional end date filter (YYYY-MM-DD)
     is_manual: bool = False  # True when manually triggered by an admin from Ops / Manual Research

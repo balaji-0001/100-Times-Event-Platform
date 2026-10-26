@@ -47,7 +47,7 @@ def seed_observability():
                     input_snippet=snippet,
                     created_at=ts,
                 )
-                db.add(log_entry)
+                db.add(log_entry) 
             print("Seeded 15 guardrail logs.")
 
         # 2. Populate AgentExecutionMetric if fewer than 10 exist

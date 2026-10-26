@@ -990,7 +990,7 @@ class DiscoveryAutoStatusOut(APIModel):
 
     # Event rejection and quality filter rules
     reject_no_organizer: bool = Field(default=True, alias="rejectNoOrganizer")
-    require_organizer_email: bool = Field(default=True, alias="requireOrganizerEmail")
+    require_organizer_email: bool = Field(default=False, alias="requireOrganizerEmail")
     require_organizer_phone: bool = Field(default=False, alias="requireOrganizerPhone")
     require_organizer_website: bool = Field(default=False, alias="requireOrganizerWebsite")
     reject_past_events: bool = Field(default=True, alias="rejectPastEvents")

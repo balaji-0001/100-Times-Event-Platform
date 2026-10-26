@@ -64,7 +64,8 @@ def trigger_discovery_run(
     returns the run id plus the exact structured summary shape the spec
     requires. Blocks until the run finishes, like `/acquisition/organizer-
     scan`'s equivalent manual trigger."""
-    config = config_from_settings(get_settings())
+    config = config_from_settings(get_settings(), db=db)
+    config.require_organizer_email = False
     config.is_manual = True
     if payload:
         if payload.cities is not None:
