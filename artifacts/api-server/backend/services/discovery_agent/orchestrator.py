@@ -338,40 +338,53 @@ def run_discovery_agent(
         pages_read: set[str] = set()
 
         # ------------------------------------------------------------------
-        # 1. HIGH-YIELD STRUCTURED EVENT LISTING PLATFORMS (FAST FIRST)
+        # 1. MODULAR SOURCE ADAPTERS (HIGH-YIELD GLOBAL DIRECTORIES & VENUES FIRST)
         # ------------------------------------------------------------------
         target_valid = getattr(config, "target_valid_events", None)
         target_cities = list(config.cities) if config.cities else [
-            "Mumbai", "Bengaluru", "Delhi", "Pune", "Hyderabad", "Chennai",
-            "Kolkata", "Ahmedabad", "Gurgaon", "Noida", "Jaipur", "Goa"
+            "London", "New York", "San Francisco", "Singapore", "Berlin",
+            "Dubai", "Mumbai", "Bengaluru", "Tokyo", "Paris"
         ]
 
-        all_listing_urls = listing_sources.build_listing_urls(
-            config.listing_urls,
-            target_cities,
-            countries=getattr(config, "countries", None),
-            country=getattr(config, "country", None),
-        )
+        from backend.services.discovery_agent.adapters import adapter_manager
+        from backend.services.discovery_agent.source_registry import ALL_CANDIDATE_SOURCES
+        try:
+            enabled_operational_sources = [
+                src["id"] for src in ALL_CANDIDATE_SOURCES 
+                if src.get("integration_status") == "Operational" and src.get("is_enabled", True)
+                and src["id"] != "ticketmaster_api"
+            ]
+            requested = set(config.sources or [])
+            is_broad_search = (
+                not requested
+                or "all" in requested
+                or "all_sources" in requested
+                or "web" in requested
+                or "event_platforms" in requested
+            )
+            if is_broad_search:
+                selected_sids = enabled_operational_sources
+            else:
+                selected_sids = [s for s in enabled_operational_sources if s in requested]
 
-        for listing_url in all_listing_urls:
-            if is_run_cancelled(run.id, db):
-                logger.info("Discovery run #%s stopped by user.", run.id)
-                run.status = "stopped"
-                run.completed_at = datetime.now(timezone.utc)
-                run.summary = summary.as_dict()
-                db.add(run)
-                db.commit()
-                _CANCELLED_RUN_IDS.discard(run.id)
-                return summary
-
-            if _limit_reached(already_today, summary, config):
-                logger.info("Target valid events quota achieved during listing phase (%d events) — stopping.", summary.accepted_events)
-                break
-
-            if listing_url in pages_read:
-                continue
-            pages_read.add(listing_url)
-            _read_page(db, run, listing_url, config, summary, already_today, effective_categories)
+            if selected_sids and not _limit_reached(already_today, summary, config):
+                logger.info("Executing discovery across operational source adapters: %s", selected_sids)
+                for sid in selected_sids:
+                    if is_run_cancelled(run.id, db) or _limit_reached(already_today, summary, config):
+                        break
+                    adapter = adapter_manager.get_adapter(sid)
+                    if not adapter:
+                        continue
+                    try:
+                        adapter_cands = adapter.discover(config, limit=config.events_per_listing)
+                        for cand in adapter_cands:
+                            if is_run_cancelled(run.id, db) or _limit_reached(already_today, summary, config):
+                                break
+                            _process_candidate(db, run, cand, config, summary, effective_categories)
+                    except Exception:
+                        logger.exception("Adapter discovery error for source %r", sid)
+        except Exception:
+            logger.exception("Modular source adapter stage encountered an error")
 
         # ------------------------------------------------------------------
         # 1.5. TICKETMASTER OFFICIAL DISCOVERY API (FAST & VERIFIED)
@@ -398,48 +411,35 @@ def run_discovery_agent(
                 logger.exception("Ticketmaster API discovery encountered an unexpected error.")
 
         # ------------------------------------------------------------------
-        # 1.6. MODULAR SOURCE ADAPTERS (OPERATIONAL GLOBAL DIRECTORIES & VENUES)
+        # 1.6. STRUCTURED EVENT LISTING PLATFORMS (TARGETED & DEDUP-CHECKED)
         # ------------------------------------------------------------------
         if not _limit_reached(already_today, summary, config):
-            from backend.services.discovery_agent.adapters import adapter_manager
-            from backend.services.discovery_agent.source_registry import ALL_CANDIDATE_SOURCES
-            try:
-                enabled_operational_sources = [
-                    src["id"] for src in ALL_CANDIDATE_SOURCES 
-                    if src.get("integration_status") == "Operational" and src.get("is_enabled", True)
-                    and src["id"] != "ticketmaster_api"
-                ]
-                requested = set(config.sources or [])
-                is_broad_search = (
-                    not requested
-                    or "all" in requested
-                    or "all_sources" in requested
-                    or "web" in requested
-                    or "event_platforms" in requested
-                )
-                if is_broad_search:
-                    selected_sids = enabled_operational_sources[:8]
-                else:
-                    selected_sids = [s for s in enabled_operational_sources if s in requested]
+            all_listing_urls = listing_sources.build_listing_urls(
+                config.listing_urls,
+                target_cities[:8],
+                countries=getattr(config, "countries", None),
+                country=getattr(config, "country", None),
+            )
 
-                if selected_sids:
-                    logger.info("Executing discovery across operational source adapters: %s", selected_sids)
-                    for sid in selected_sids:
-                        if is_run_cancelled(run.id, db) or _limit_reached(already_today, summary, config):
-                            break
-                        adapter = adapter_manager.get_adapter(sid)
-                        if not adapter:
-                            continue
-                        try:
-                            adapter_cands = adapter.discover(config, limit=config.events_per_listing)
-                            for cand in adapter_cands:
-                                if is_run_cancelled(run.id, db) or _limit_reached(already_today, summary, config):
-                                    break
-                                _process_candidate(db, run, cand, config, summary, effective_categories)
-                        except Exception:
-                            logger.exception("Adapter discovery error for source %r", sid)
-            except Exception:
-                logger.exception("Modular source adapter stage encountered an error")
+            for listing_url in all_listing_urls:
+                if is_run_cancelled(run.id, db):
+                    logger.info("Discovery run #%s stopped by user.", run.id)
+                    run.status = "stopped"
+                    run.completed_at = datetime.now(timezone.utc)
+                    run.summary = summary.as_dict()
+                    db.add(run)
+                    db.commit()
+                    _CANCELLED_RUN_IDS.discard(run.id)
+                    return summary
+
+                if _limit_reached(already_today, summary, config):
+                    logger.info("Target valid events quota achieved during listing phase (%d events) — stopping.", summary.accepted_events)
+                    break
+
+                if listing_url in pages_read:
+                    continue
+                pages_read.add(listing_url)
+                _read_page(db, run, listing_url, config, summary, already_today, effective_categories)
 
         # ------------------------------------------------------------------
         # 2. TARGETED WEB & SOCIAL MEDIA SEARCH QUERIES

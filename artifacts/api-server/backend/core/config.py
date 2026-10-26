@@ -180,6 +180,9 @@ class Settings(BaseSettings):
     attendee_scan_interval_minutes: int = 15
     organizer_scan_interval_minutes: int = 30
     outreach_followup_interval_minutes: int = 1440
+    # Attendee notification sweep (reminders, deadlines, changes, new matches).
+    # The loop always runs; each tick is a no-op unless the admin toggle is on.
+    attendee_notifications_interval_minutes: int = 60
 
     # Email sending for Organizer Outreach. No SMTP credential -> the
     # provider factory in services/social_agent/outreach/senders falls back

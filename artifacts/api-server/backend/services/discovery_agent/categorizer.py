@@ -51,11 +51,11 @@ _KEYWORDS: dict[str, tuple[str, ...]] = {
     "Energy and Power Generation": (
         "power generation", "renewable energy", "clean energy", "energy transition", "energy summit", "energy conference", "solar", "wind energy", "thermal power",
         "hydropower", "clean energy", "electricity", "power plant", "grid", "smart grid", "battery storage",
-        "nuclear power", "power grid", "photovoltaic", "ev", "electric vehicle",
+        "nuclear power", "power grid", "photovoltaic", "=ev", "=evs", "electric vehicle",
     ),
     "Telecommunications": (
         "telecom", "telecommunication", "=5g", "=6g", "wireless", "broadband", "optical fiber",
-        "network", "satellite", "operator", "spectrum", "cellular", "enterprise it", "cloud telecom", "=voip",
+        "=network", "=networks", "satellite", "network operator", "mobile operator", "spectrum", "cellular", "enterprise it", "cloud telecom", "=voip",
     ),
     "Construction": (
         "construction", "infrastructure", "civil engineering", "civilengineer", "civil engineer", "builder", "building technology", "contech",
@@ -63,7 +63,7 @@ _KEYWORDS: dict[str, tuple[str, ...]] = {
         "real estate development", "property", "real estate", "proptech", "interior design", "housing", "architect",
     ),
     "Mining": (
-        "mining", "mineral", "extraction", "ore", "coal mining", "gold mining", "iron ore", "quarry",
+        "mining", "mineral", "extraction", "=ore", "coal mining", "gold mining", "iron ore", "quarry",
         "drilling", "metallurg", "geology", "smelting", "mine safety",
     ),
     "Finance": (

@@ -31,13 +31,6 @@ from backend.models import (
 from backend.routes.events import slugify
 from backend.serializers import event_card
 from backend.services import event_creation
-from backend.services.attendee_agent import (
-    extract_attendee_intent,
-    get_attendee_agent_dashboard,
-    process_attendee_signal,
-    run_attendee_discovery_cycle,
-    set_source_enabled,
-)
 from backend.services.audit import record_audit_log
 from backend.services.lifecycle import advance_organizer_stage, transition_event_state
 from backend.services.notifications import generate_calendar_links, send_templated_notification
@@ -162,18 +155,6 @@ class AttendeeFeedbackInput(BaseModel):
     rating: int = Field(default=5, ge=1, le=5)
     feedback: str | None = None
     wants_similar_events: bool = Field(default=True, alias="wantsSimilarEvents")
-
-
-class AttendeeSignalInput(BaseModel):
-    text: str = Field(min_length=3, max_length=2000)
-    platform: str = "reddit"
-    author_handle: str | None = Field(default=None, alias="authorHandle")
-    source_url: str | None = Field(default=None, alias="sourceUrl")
-
-
-class SourceToggleInput(BaseModel):
-    enabled: bool
-    daily_limit: int | None = Field(default=None, alias="dailyLimit")
 
 
 # ---------------------------------------------------------------------------
@@ -831,97 +812,6 @@ def decide_trust_review(
     )
     db.commit()
     return {"id": updated.id, "status": updated.status, "recommendedAction": updated.recommended_action}
-
-
-# ---------------------------------------------------------------------------
-# 5. Attendee Agent Endpoints (Section 7 & 8)
-# ---------------------------------------------------------------------------
-
-
-@router.get("/attendee-agent/dashboard")
-def attendee_agent_dashboard_route(
-    db: Session = Depends(get_db),
-    _: User = Depends(require_roles("ADMIN")),
-) -> dict[str, Any]:
-    return get_attendee_agent_dashboard(db)
-
-
-@router.post("/attendee-agent/extract-intent")
-def extract_intent_route(
-    payload: AttendeeSignalInput,
-) -> dict[str, Any]:
-    res = extract_attendee_intent(payload.text)
-    return res.model_dump()
-
-
-@router.post("/attendee-agent/match")
-def match_attendee_signal_route(
-    payload: AttendeeSignalInput,
-    db: Session = Depends(get_db),
-    _: User | None = Depends(optional_current_user),
-) -> dict[str, Any]:
-    try:
-        intent, matches = process_attendee_signal(
-            db,
-            raw_text=payload.text,
-            source_platform=payload.platform,
-            author_handle=payload.author_handle,
-            source_url=payload.source_url,
-        )
-        db.commit()
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    events_map = {e.id: e for e in db.scalars(select(Event)).all()}
-    return {
-        "intent": {
-            "id": intent.id,
-            "category": intent.event_category,
-            "location": intent.location,
-            "time_range": intent.date_preference,
-            "event_type": intent.event_type,
-            "price_preference": intent.price_preference,
-            "format_preference": intent.format_preference,
-            "keywords": intent.keywords,
-            "inferred_interests": intent.inferred_interests,
-            "confidence": float(intent.confidence),
-        },
-        "matches": [
-            {
-                "id": m.id,
-                "eventId": m.event_id,
-                "eventTitle": events_map[m.event_id].title if m.event_id in events_map else "",
-                "eventSlug": events_map[m.event_id].slug if m.event_id in events_map else "",
-                "matchScore": m.match_score,
-                "matchReasons": m.match_reasons,
-                "recommendationText": m.recommendation_text,
-                "trackingUrl": m.tracking_url,
-            }
-            for m in matches
-        ],
-    }
-
-
-@router.post("/attendee-agent/scan")
-def trigger_attendee_agent_scan(
-    db: Session = Depends(get_db),
-    _: User = Depends(require_roles("ADMIN")),
-) -> dict[str, Any]:
-    summary = run_attendee_discovery_cycle(db)
-    db.commit()
-    return summary
-
-
-@router.patch("/attendee-agent/sources/{source}")
-def toggle_attendee_source(
-    source: str,
-    payload: SourceToggleInput,
-    db: Session = Depends(get_db),
-    _: User = Depends(require_roles("ADMIN")),
-) -> dict[str, Any]:
-    res = set_source_enabled(db, source, payload.enabled, payload.daily_limit)
-    db.commit()
-    return res
 
 
 # ---------------------------------------------------------------------------

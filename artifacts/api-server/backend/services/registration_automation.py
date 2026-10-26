@@ -17,9 +17,9 @@ from sqlalchemy.orm import Session
 
 from backend.core.config import get_settings
 from backend.models import (
+    AttendeePreference,
     AutomationRun,
     Event,
-    EventMatch,
     EventReminder,
     Organizer,
     OrganizerFollowup,
@@ -183,7 +183,6 @@ def automate_registration(
     job_title: str | None = None,
     country: str | None = None,
     allow_waitlist: bool = False,
-    intent_id: int | None = None,
 ) -> dict[str, Any]:
     """Complete end-to-end registration automation (Workflows 1 & 2)."""
     if (event.lifecycle_state or "").upper() == "CANCELLED" or event.status == "cancelled":
@@ -261,22 +260,6 @@ def automate_registration(
     else:
         ticket_row.tier_name = ticket_type
         ticket_row.qr_payload = qr_data
-
-    # Link conversion if driven by Attendee Agent intent (explicit intent_id or active EventMatch for this event)
-    match_row = None
-    if intent_id:
-        match_row = db.scalar(
-            select(EventMatch).where(EventMatch.intent_id == intent_id, EventMatch.event_id == event.id)
-        )
-    if not match_row:
-        match_row = db.scalar(
-            select(EventMatch)
-            .where(EventMatch.event_id == event.id, EventMatch.converted_registration_id.is_(None))
-            .order_by(EventMatch.created_at.desc())
-        )
-    if match_row:
-        match_row.converted_registration_id = registration.id
-        match_row.recommendation_status = "CONVERTED"
 
     calendar_links = generate_calendar_links(event)
     reminders = schedule_event_reminders(db, event=event, registration=registration, user=user) if not is_full else []
@@ -499,6 +482,14 @@ def dispatch_due_reminders(db: Session, now_utc: datetime | None = None) -> dict
         ev = db.get(Event, rem.event_id)
         if not reg or not ev or reg.status in ("cancelled", "CANCELLED") or (ev.lifecycle_state or "").upper() == "CANCELLED":
             rem.status = "CANCELLED"
+            skipped_count += 1
+            continue
+
+        # An attendee who set notification preferences and turned reminders
+        # (or notifications altogether) off is not reminded.
+        prefs = db.get(AttendeePreference, rem.user_id)
+        if prefs is not None and not (prefs.notify_consent and prefs.notify_event_reminders):
+            rem.status = "SKIPPED"
             skipped_count += 1
             continue
 

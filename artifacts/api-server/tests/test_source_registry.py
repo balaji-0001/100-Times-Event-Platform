@@ -138,9 +138,18 @@ def test_adapter_health_check():
 def test_api_sources_endpoints(db_session: Session):
     """Tests REST endpoints: /api/discovery/sources, /stats, /{id}, PATCH, and /health."""
     from backend.db import get_db
+    from backend.dependencies import get_current_user
+    from backend.models import User
+
     app.dependency_overrides[get_db] = lambda: db_session
     client = TestClient(app)
     try:
+        # The registry is admin-only: no session -> 401, attendee -> 403.
+        assert client.get("/api/discovery/sources").status_code == 401
+        app.dependency_overrides[get_current_user] = lambda: User(id=2, name="A", email="a@x.test", password_hash="x", role="USER")
+        assert client.patch("/api/discovery/sources/ticketmaster_api", json={"is_enabled": False}).status_code == 403
+        app.dependency_overrides[get_current_user] = lambda: User(id=1, name="Admin", email="admin@x.test", password_hash="x", role="ADMIN")
+
         # 1. GET /api/discovery/sources
         resp = client.get("/api/discovery/sources")
         assert resp.status_code == 200
@@ -177,3 +186,4 @@ def test_api_sources_endpoints(db_session: Session):
         client.patch("/api/discovery/sources/ticketmaster_api", json={"is_enabled": True})
     finally:
         app.dependency_overrides.pop(get_db, None)
+        app.dependency_overrides.pop(get_current_user, None)

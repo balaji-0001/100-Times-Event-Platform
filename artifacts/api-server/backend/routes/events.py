@@ -294,9 +294,6 @@ def register_for_event(
     if payload.country:
         target_user.country = payload.country
 
-    intent_id_param = request.query_params.get("intent_id")
-    parsed_intent_id = int(intent_id_param) if intent_id_param and intent_id_param.isdigit() else None
-
     try:
         auto_res = automate_registration(
             db,
@@ -309,7 +306,6 @@ def register_for_event(
             company=payload.company,
             job_title=payload.job_title,
             country=payload.country,
-            intent_id=parsed_intent_id,
         )
         registration = auto_res["registration"]
         db.commit()

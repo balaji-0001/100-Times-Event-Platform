@@ -49,11 +49,6 @@ def no_live_ai_calls(monkeypatch, request):
         monkeypatch.setattr(ta, "get_ai_client", lambda: fake)
     except (ImportError, AttributeError):
         pass
-    try:
-        import backend.services.attendee_agent.agent as aa
-        monkeypatch.setattr(aa, "get_ai_client", lambda: fake)
-    except (ImportError, AttributeError):
-        pass
 
 
 

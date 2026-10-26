@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.db import get_db
+from backend.dependencies import require_roles
 from backend.services.discovery_agent.adapters import adapter_manager
 from backend.services.discovery_agent.source_registry import (
     get_registry_summary_stats,
@@ -29,7 +30,13 @@ from backend.services.discovery_agent.source_registry import (
 
 logger = logging.getLogger("routes.discovery_sources")
 
-router = APIRouter(prefix="/api/discovery/sources", tags=["discovery_sources"])
+# Admin-only, like the rest of the discovery console — these endpoints change
+# what Agent 1 crawls and trigger live outbound probes.
+router = APIRouter(
+    prefix="/api/discovery/sources",
+    tags=["discovery_sources"],
+    dependencies=[Depends(require_roles("ADMIN"))],
+)
 
 
 class UpdateSourcePayload(BaseModel):

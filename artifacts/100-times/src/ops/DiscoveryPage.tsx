@@ -91,32 +91,30 @@ export function DiscoveryPage({ mode }: { mode: 'new' | 'events' }) {
   };
 
   const rows = useMemo(() => {
-    let list = country !== ALL ? [...countryFilteredEvents] : [...all];
-    list.sort((a, b) => (b.discoveredAt ?? '').localeCompare(a.discoveredAt ?? ''));
-
-    // Filter by run if ?run=... is present
-    if (runId) {
-      if (runEvents.data && runEvents.data.length > 0) {
-        const idSet = new Set(runEvents.data.map((e) => e.id));
-        list = list.filter((e) => idSet.has(e.id));
-      } else if (targetRun) {
-        const eventIds = Array.isArray(targetRun.summary?.event_ids) ? (targetRun.summary.event_ids as number[]) : [];
-        if (eventIds.length > 0) {
-          const idSet = new Set(eventIds);
-          list = list.filter((e) => idSet.has(e.id));
-        } else if (targetRun.startedAt) {
-          const s = new Date(targetRun.startedAt).getTime() - 60000;
-          const c = (targetRun.completedAt ? new Date(targetRun.completedAt).getTime() : Date.now()) + 60000;
-          list = list.filter((e) => {
-            if (!e.discoveredAt) return false;
-            const t = new Date(e.discoveredAt).getTime();
-            return t >= s && t <= c;
-          });
-        }
+    let list: DiscoveredEvent[] = [];
+    if (runId && runEvents.data && runEvents.data.length > 0) {
+      list = [...runEvents.data];
+    } else if (runId && targetRun) {
+      const eventIds = Array.isArray(targetRun.summary?.event_ids) ? (targetRun.summary.event_ids as number[]) : [];
+      if (eventIds.length > 0) {
+        const idSet = new Set(eventIds);
+        list = all.filter((e) => idSet.has(e.id));
+      } else if (targetRun.startedAt) {
+        const s = new Date(targetRun.startedAt).getTime() - 60000;
+        const c = (targetRun.completedAt ? new Date(targetRun.completedAt).getTime() : Date.now()) + 60000;
+        list = all.filter((e) => {
+          if (!e.discoveredAt) return false;
+          const t = new Date(e.discoveredAt).getTime();
+          return t >= s && t <= c;
+        });
       }
+    } else {
+      list = country !== ALL ? [...countryFilteredEvents] : [...all];
     }
 
-    if (mode === 'new') return list.filter((e) => e.verificationStatus !== 'REJECTED');
+    list.sort((a, b) => (b.discoveredAt ?? '').localeCompare(a.discoveredAt ?? ''));
+
+    if (mode === 'new') list = list.filter((e) => e.verificationStatus !== 'REJECTED');
     if (state !== ALL) list = list.filter((e) => e.state === state);
     if (city !== ALL) list = list.filter((e) => e.city === city);
     if (category !== ALL) list = list.filter((e) => e.category === category);

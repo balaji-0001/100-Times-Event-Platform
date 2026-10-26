@@ -32,12 +32,6 @@ from backend.models import (
     User,
 )
 from backend.routes import webhooks_n8n as webhooks_n8n_routes
-from backend.services.attendee_agent import (
-    extract_attendee_intent,
-    match_events_for_intent,
-    process_attendee_signal,
-    set_source_enabled,
-)
 from backend.services.lifecycle import advance_organizer_stage, transition_event_state
 from backend.services.notifications import generate_calendar_links
 from backend.services.registration_automation import (
@@ -333,71 +327,6 @@ def test_admin_decide_trust_review(db_session, seeded_catalog):
     assert dec is not None
     assert dec.decision == "APPROVE"
     assert "Manually verified" in dec.notes
-
-
-# ---------------------------------------------------------------------------
-# 4. Attendee Agent (Agent 4) Intent Extraction & Matching Tests
-# ---------------------------------------------------------------------------
-
-
-def test_attendee_agent_intent_extraction_and_matching(db_session, seeded_catalog):
-    """Verifies parsing natural language attendee intent and computing relevance scores."""
-    published_event = seeded_catalog["event"]
-
-    # Natural language query
-    user_query = "Looking for a pharmaceuticals conference in Pune next week"
-    extracted = extract_attendee_intent(user_query)
-
-    assert extracted.category.lower() == "pharmaceuticals"
-    assert extracted.location.lower() == "pune"
-    assert extracted.confidence > 0.5
-
-    # Create AttendeeIntent model instance for matching
-    intent = AttendeeIntent(
-        raw_text=user_query,
-        source_platform="community",
-        author_handle="anon",
-        event_category=extracted.category,
-        location=extracted.location,
-        event_type=extracted.event_type,
-        date_preference=extracted.time_range,
-        price_preference=extracted.price_preference,
-        format_preference=extracted.format_preference,
-        keywords=extracted.keywords,
-        inferred_interests=extracted.inferred_interests,
-        confidence=Decimal(str(extracted.confidence)),
-        status="MATCHED",
-    )
-    db_session.add(intent)
-    db_session.flush()
-
-    matches = match_events_for_intent(db_session, intent)
-    assert len(matches) > 0
-    top_match = matches[0]
-    assert top_match.event_id == published_event.id
-    assert top_match.match_score >= 50
-    assert any("location" in r.lower() or "category" in r.lower() or "ai" in r.lower() for r in (top_match.match_reasons or []))
-
-
-def test_attendee_agent_signal_processing_and_source_toggles(db_session, seeded_catalog):
-    """Verifies that public community signals are ingested and source platform limits can be adjusted."""
-    intent, matches = process_attendee_signal(
-        db_session,
-        raw_text="Any upcoming tech summits in Pune?",
-        source_platform="telegram",
-        author_handle="@techdev",
-        source_url="https://t.me/pune_tech/123",
-    )
-    db_session.commit()
-
-    assert intent.id is not None
-    assert intent.source_platform == "telegram"
-    assert intent.author_handle == "@techdev"
-
-    # Verify toggling attendee sources
-    res = set_source_enabled(db_session, "telegram", enabled=False, daily_limit=15)
-    assert res["enabled"] is False
-    assert res["dailyLimit"] == 15
 
 
 # ---------------------------------------------------------------------------

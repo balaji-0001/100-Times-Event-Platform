@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { keys } from './api';
 import { Link } from 'wouter';
 import {
   AlertTriangle,
@@ -188,10 +190,25 @@ function FilterRuleRow({
 }
 
 export function ManualResearchForm() {
+  const queryClient = useQueryClient();
   const run = useRunDiscovery();
   const auto = useDiscoveryAutoStatus();
   const activeRun = useActiveDiscoveryRun();
   const stopRun = useStopDiscoveryRun();
+
+  // Invalidate queries when an active discovery run finishes so newly discovered events display immediately
+  const prevActiveRef = useRef<boolean>(false);
+  useEffect(() => {
+    const isCurrentlyActive = Boolean(activeRun.data?.active);
+    if (prevActiveRef.current && !isCurrentlyActive) {
+      queryClient.invalidateQueries({ queryKey: keys.events });
+      queryClient.invalidateQueries({ queryKey: keys.discoveryRuns });
+      queryClient.invalidateQueries({ queryKey: keys.discoveryStats });
+      queryClient.invalidateQueries({ queryKey: keys.discoveryActiveRun });
+      queryClient.invalidateQueries({ queryKey: ['discoveryRunEvents'] });
+    }
+    prevActiveRef.current = isCurrentlyActive;
+  }, [activeRun.data?.active, queryClient]);
   const categoriesQuery = useCategories();
   const allAvailableCategories = categoriesQuery.data?.map((c) => c.name) || DEFAULT_CATEGORIES;
 
@@ -225,16 +242,16 @@ export function ManualResearchForm() {
   const [ticketmasterEnabled, setTicketmasterEnabled] = useState(false);
 
   // Rejection rules state
-  const [fallbackToOtherSector, setFallbackToOtherSector] = useState(true);
-  const [rejectNoOrganizer, setRejectNoOrganizer] = useState(false);
-  const [requireOrganizerEmail, setRequireOrganizerEmail] = useState(false);
+  const [fallbackToOtherSector, setFallbackToOtherSector] = useState(false);
+  const [rejectNoOrganizer, setRejectNoOrganizer] = useState(true);
+  const [requireOrganizerEmail, setRequireOrganizerEmail] = useState(true);
   const [requireOrganizerPhone, setRequireOrganizerPhone] = useState(false);
   const [requireOrganizerWebsite, setRequireOrganizerWebsite] = useState(false);
   const [rejectPastEvents, setRejectPastEvents] = useState(true);
   const [rejectUnparseableDates, setRejectUnparseableDates] = useState(true);
   const [rejectMissingLocation, setRejectMissingLocation] = useState(false);
   const [rejectMissingTicketUrl, setRejectMissingTicketUrl] = useState(false);
-  const [rejectUnmatchedCategory, setRejectUnmatchedCategory] = useState(false);
+  const [rejectUnmatchedCategory, setRejectUnmatchedCategory] = useState(true);
   const [minTitleLength, setMinTitleLength] = useState('8');
   const [minDescriptionLength, setMinDescriptionLength] = useState('20');
   const [minConfidenceScore, setMinConfidenceScore] = useState('20');

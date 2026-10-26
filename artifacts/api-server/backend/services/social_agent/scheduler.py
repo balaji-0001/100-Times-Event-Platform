@@ -37,6 +37,8 @@ import logging
 
 from backend.core.config import get_settings
 from backend.db import SessionLocal
+from backend.services.attendee_agent.auto_toggle import is_attendee_notifications_auto_enabled
+from backend.services.attendee_agent.notifier import run_attendee_notifications
 from backend.services.community_agent.auto_toggle import is_community_discovery_auto_enabled
 from backend.services.community_agent.orchestrator import run_community_discovery_agent
 from backend.services.discovery_agent.auto_toggle import is_discovery_auto_enabled
@@ -143,6 +145,22 @@ async def _run_community_promotion_tick() -> None:
         db.close()
 
 
+async def _run_attendee_notifications_tick() -> None:
+    db = SessionLocal()
+    try:
+        if not is_attendee_notifications_auto_enabled(db):
+            logger.debug("Attendee notification sweep skipped — automatic notifications are off")
+            return
+        summary = run_attendee_notifications(db)
+        db.commit()
+        logger.info("Attendee notification sweep: %s", summary)
+    except Exception:
+        db.rollback()
+        logger.exception("Attendee notification sweep failed")
+    finally:
+        db.close()
+
+
 async def _loop(name: str, interval_minutes: int, tick) -> None:
     interval_seconds = max(interval_minutes, 1) * 60
     logger.info("Starting %s loop (every %d minute(s))", name, interval_minutes)
@@ -165,6 +183,9 @@ def start_background_scheduler() -> list[asyncio.Task]:
         asyncio.create_task(_loop("event-discovery", settings.discovery_scan_interval_minutes, _run_discovery_scan_tick)),
         asyncio.create_task(_loop("outreach-draft", settings.outreach_scan_interval_minutes, _run_outreach_draft_tick)),
         asyncio.create_task(_loop("outreach-followup", settings.outreach_followup_interval_minutes, _run_followup_tick)),
+        asyncio.create_task(
+            _loop("attendee-notifications", settings.attendee_notifications_interval_minutes, _run_attendee_notifications_tick)
+        ),
     ]
 
     if not settings.enable_background_scheduler:

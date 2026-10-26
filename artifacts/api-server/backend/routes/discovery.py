@@ -67,11 +67,19 @@ def trigger_discovery_run(
     requires. Blocks until the run finishes, like `/acquisition/organizer-
     scan`'s equivalent manual trigger."""
     config = config_from_settings(get_settings(), db=db)
-    config.require_organizer_email = False
+    config.require_organizer_email = True
+    config.reject_no_organizer = True
+    config.reject_unmatched_category = True
+    config.fallback_to_other_sector = False
     config.is_manual = True
     if payload:
-        if payload.cities is not None:
+        if payload.cities is not None and len(payload.cities) > 0:
             config.cities = payload.cities
+        elif not payload.countries or "Worldwide" in payload.countries or len(payload.countries) == 0:
+            config.cities = [
+                "London", "New York", "San Francisco", "Singapore", "Berlin",
+                "Dubai", "Mumbai", "Bengaluru", "Tokyo", "Paris"
+            ]
         if payload.states is not None:
             config.states = payload.states
         if payload.countries is not None:
@@ -139,6 +147,8 @@ def trigger_discovery_run(
             config.reject_missing_location = payload.reject_missing_location
         if payload.reject_missing_ticket_url is not None:
             config.reject_missing_ticket_url = payload.reject_missing_ticket_url
+        if payload.fallback_to_other_sector is not None:
+            config.fallback_to_other_sector = payload.fallback_to_other_sector
         if payload.reject_unmatched_category is not None:
             config.reject_unmatched_category = payload.reject_unmatched_category
         if payload.min_title_length is not None:

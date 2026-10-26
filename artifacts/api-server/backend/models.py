@@ -1146,3 +1146,88 @@ class PlatformPromotionSetting(Base):
     custom_prompt_template: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class AttendeePreference(Base):
+    """One row per signed-in attendee: what they want to be matched against
+    (interests, industries, countries, event types, budget, date window,
+    attendance mode) plus their notification consent and per-type choices.
+    Read by `services/attendee_agent/matching.py` — the single scoring
+    system used by "Match My Events", recommendations, the assistant and
+    new-match notifications."""
+
+    __tablename__ = "attendee_preferences"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    interests: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    industries: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    countries: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    event_types: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    # Upper bound on ticket price in `budget_currency`; null = no budget set.
+    budget_max: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    budget_currency: Mapped[str | None] = mapped_column(String(10))
+    free_only: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    date_from: Mapped[_Date | None] = mapped_column(Date)
+    date_to: Mapped[_Date | None] = mapped_column(Date)
+    # any | online | offline | hybrid
+    attendance_mode: Mapped[str] = mapped_column(String(20), default="any", nullable=False)
+    # Master consent switch — nothing is ever sent while this is false.
+    notify_consent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    notify_consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    notify_event_reminders: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    notify_deadlines: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    notify_event_changes: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    notify_new_matches: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    notify_by_email: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Watermark for the new-match sweep: events first seen after this are "new".
+    last_new_match_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class AttendeeEventActivity(Base):
+    """Per-user tracking of one event — either a platform `Event` or a
+    web-discovered `DiscoveredEvent` (exactly one of the two FKs is set).
+    Holds favourites for discovered events (platform favourites stay in
+    `saved_events`), recently-viewed, when the official registration page
+    was opened, and the attendee's OWN confirmation that they registered
+    externally — never set without that explicit confirmation. Platform
+    registrations live in `registrations`, not here.
+    `change_fingerprint` is the last-notified snapshot of date/location/
+    format/status, compared by the notification sweep to detect changes."""
+
+    __tablename__ = "attendee_event_activity"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    event_id: Mapped[int | None] = mapped_column(ForeignKey("events.id"), index=True)
+    discovered_event_id: Mapped[int | None] = mapped_column(ForeignKey("discovered_events.id"), index=True)
+    is_saved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    saved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    view_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_viewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    registration_opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # NONE | REGISTERED | NOT_ATTENDING — external (discovered) events only.
+    external_registration_status: Mapped[str] = mapped_column(String(20), default="NONE", nullable=False)
+    external_registration_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    change_fingerprint: Mapped[dict | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    __table_args__ = (
+        UniqueConstraint("user_id", "event_id", name="attendee_activity_user_event_idx"),
+        UniqueConstraint("user_id", "discovered_event_id", name="attendee_activity_user_discovered_idx"),
+    )
+
+
+class AttendeeNotificationLog(Base):
+    """Idempotency ledger for the attendee notification sweep: one row per
+    (user, dedupe_key) ever sent, e.g. `reminder:d:42:1d` or
+    `change:p:7:<hash>`, so a re-run never sends the same notice twice."""
+
+    __tablename__ = "attendee_notification_log"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    dedupe_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    kind: Mapped[str] = mapped_column(String(30), nullable=False)  # reminder | deadline | change | new_matches
+    notification_id: Mapped[int | None] = mapped_column(ForeignKey("notifications.id"))
+    email_status: Mapped[str] = mapped_column(String(30), default="not_requested", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    __table_args__ = (UniqueConstraint("user_id", "dedupe_key", name="attendee_notification_user_key_idx"),)

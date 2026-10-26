@@ -17,6 +17,7 @@ from backend.db import Base, engine, sync_schema_columns
 from backend.routes import (
     acquisition,
     ai,
+    attendee,
     auth,
     automations,
     community_discovery,
@@ -215,6 +216,7 @@ app.include_router(events.router, prefix="/api")
 app.include_router(directories.router, prefix="/api")
 app.include_router(networking.router, prefix="/api")
 app.include_router(ai.router, prefix="/api")
+app.include_router(attendee.router, prefix="/api")
 app.include_router(acquisition.router, prefix="/api")
 app.include_router(outreach.router, prefix="/api")
 app.include_router(discovery.router, prefix="/api")
