@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link } from 'wouter';
 import { ArrowRight, CalendarSearch, Mail, MapPin } from 'lucide-react';
 import { useDiscoveredEvents, useDiscoveredOrganizers, useDiscoveryRuns, useDiscoveryStats, useOutreachMessages, useOutreachRuns, useOutreachStats, useDiscoveryAutoStatus, useSetDiscoveryAuto, useOutreachAutoStatus, useSetOutreachAuto } from './api';
@@ -68,6 +69,7 @@ export function DashboardPage() {
   const discoveryStats = useDiscoveryStats();
   const discoveryRuns = useDiscoveryRuns();
   const outreachRuns = useOutreachRuns();
+  const [dismissedRunIds, setDismissedRunIds] = useState<number[]>([]);
 
   const loading = events.isLoading || organizers.isLoading || messages.isLoading || discoveryStats.isLoading;
   const error = events.error ?? organizers.error ?? messages.error ?? discoveryStats.error;
@@ -92,7 +94,7 @@ export function DashboardPage() {
   // failure forever, even after dozens of later runs succeeded.
   const RECENT_FAILURE_WINDOW_MS = 24 * 60 * 60 * 1000;
   const recentFailures = runs.filter((r) => r.status === 'failed' && Date.now() - (parseDate(r.startedAt)?.getTime() ?? 0) < RECENT_FAILURE_WINDOW_MS);
-  const latestFailed = recentFailures.sort((a, b) => b.id - a.id)[0];
+  const latestFailed = recentFailures.sort((a, b) => b.id - a.id).find((r) => !dismissedRunIds.includes(r.id));
   const activity = buildActivity({ events: ev, organizers: org, messages: msg, runs }).slice(0, 25);
 
   return (
@@ -102,7 +104,23 @@ export function DashboardPage() {
       {(stats.data?.emailProviderStatus === 'NOT_CONFIGURED' || latestFailed) && (
         <div className="mt-6 space-y-2">
           {stats.data?.emailProviderStatus === 'NOT_CONFIGURED' && <Notice tone="warn"><strong>Email sending is in mock mode.</strong> SMTP is not configured, so approved emails are logged but not delivered to anyone.</Notice>}
-          {latestFailed && <Notice tone="danger"><strong>Latest {latestFailed.agentType} run #{latestFailed.id} failed:</strong> {latestFailed.error ?? 'no error recorded'} <Link href="/admin/activity" className="underline">View runs</Link></Notice>}
+          {latestFailed && (
+            <Notice tone="danger">
+              <div className="flex items-center justify-between gap-3 w-full">
+                <div>
+                  <strong>Latest {latestFailed.agentType} run #{latestFailed.id} failed:</strong> {latestFailed.error ?? 'no error recorded'} <Link href="/admin/activity" className="underline">View runs</Link>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDismissedRunIds((prev) => [...prev, latestFailed.id])}
+                  className="text-xs text-muted-foreground hover:text-foreground font-bold px-1.5 py-0.5 rounded hover:bg-foreground/10 shrink-0"
+                  title="Dismiss error notice"
+                >
+                  ✕
+                </button>
+              </div>
+            </Notice>
+          )}
         </div>
       )}
 
