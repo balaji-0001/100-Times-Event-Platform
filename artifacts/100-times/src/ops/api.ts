@@ -614,6 +614,9 @@ export interface DiscoveryRunPayload {
   minConfidenceScore?: number;
   blacklistedKeywords?: string[];
   excludedDomains?: string[];
+  listingUrls?: string[];
+  ticketmasterApiKey?: string | null;
+  ticketmasterEnabled?: boolean;
 }
 
 export function useRunDiscovery() {

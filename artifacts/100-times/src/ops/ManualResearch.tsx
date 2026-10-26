@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { useCategories, useDiscoveryAutoStatus, useRunDiscovery, useActiveDiscoveryRun, useStopDiscoveryRun } from './api';
 import { GeoChecklistSelector } from './GeoChecklistSelector';
+import { DiscoverySourcesManager } from './DiscoverySourcesManager';
 import { Btn, DL, Drawer, ErrorState, Notice, inputClass } from './ui';
 
 const num = (v: string, fallback: number) => {
@@ -219,6 +220,9 @@ export function ManualResearchForm() {
     'reddit',
     'event_platforms',
   ]);
+  const [listingUrls, setListingUrls] = useState<string[]>([]);
+  const [ticketmasterApiKey, setTicketmasterApiKey] = useState('');
+  const [ticketmasterEnabled, setTicketmasterEnabled] = useState(false);
 
   // Rejection rules state
   const [fallbackToOtherSector, setFallbackToOtherSector] = useState(true);
@@ -251,6 +255,9 @@ export function ManualResearchForm() {
       if (auto.data.cities && auto.data.cities.length > 0) setSelectedCities(auto.data.cities);
       if (auto.data.categories && auto.data.categories.length > 0) setSelectedCategories(auto.data.categories);
       if (auto.data.sources && auto.data.sources.length > 0) setSelectedSources(auto.data.sources);
+      if (auto.data.listingUrls && auto.data.listingUrls.length > 0) setListingUrls(auto.data.listingUrls);
+      if (auto.data.ticketmasterApiKey !== undefined) setTicketmasterApiKey(auto.data.ticketmasterApiKey || '');
+      if (auto.data.ticketmasterEnabled !== undefined) setTicketmasterEnabled(Boolean(auto.data.ticketmasterEnabled));
 
       if (auto.data.eventsPerRun) setEventsPerRun(String(auto.data.eventsPerRun));
       if (auto.data.targetValidEvents) setTargetValidEvents(String(auto.data.targetValidEvents));
@@ -310,6 +317,9 @@ export function ManualResearchForm() {
       cities: selectedCities.length ? selectedCities : undefined,
       categories: selectedCategories.length > 0 ? selectedCategories : undefined,
       sources: selectedSources.length ? selectedSources : ['web'],
+      listingUrls: listingUrls.length ? listingUrls : undefined,
+      ticketmasterApiKey: ticketmasterApiKey ? ticketmasterApiKey.trim() : undefined,
+      ticketmasterEnabled: ticketmasterEnabled,
       eventsPerRun: num(eventsPerRun, 50),
       targetValidEvents: num(targetValidEvents, 25),
       searchDepth: num(depth, 6),
@@ -427,10 +437,7 @@ export function ManualResearchForm() {
               : 'text-muted-foreground hover:bg-foreground/5 hover:text-foreground'
           }`}
         >
-          <Share2 size={13} /> Discovery Sources
-          <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-background/40 font-bold">
-            {selectedSources.length}
-          </span>
+          <Share2 size={13} /> Sources & Websites
         </button>
         <button
           type="button"
@@ -592,83 +599,15 @@ export function ManualResearchForm() {
 
       {activeTab === 'sources' && (
         <div className="grid gap-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <h4 className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                <Radio size={13} className="text-accent" /> Enabled Fetching Sources For This Run
-              </h4>
-              <p className="text-[11px] text-muted-foreground mt-0.5">
-                Select which platforms and search channels will be queried during this research run.
-              </p>
-            </div>
-            <div className="flex gap-2 text-[10px]">
-              <button
-                type="button"
-                onClick={selectAllSources}
-                className="text-accent hover:underline font-medium"
-                disabled={run.isPending}
-              >
-                Select all
-              </button>
-              <span>•</span>
-              <button
-                type="button"
-                onClick={clearSources}
-                className="text-muted-foreground hover:underline"
-                disabled={run.isPending}
-              >
-                Reset to default
-              </button>
-            </div>
-          </div>
-
-          <div className="grid gap-2">
-            {AVAILABLE_SOURCES.map((source) => {
-              const active = selectedSources.includes(source.id);
-              const Icon = source.icon;
-              return (
-                <div
-                  key={source.id}
-                  onClick={() => !run.isPending && toggleSource(source.id)}
-                  className={`flex items-start justify-between gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
-                    active
-                      ? 'border-accent/40 bg-accent/5 hover:bg-accent/10'
-                      : 'border-foreground/10 bg-card/60 hover:bg-card/90 opacity-70'
-                  }`}
-                >
-                  <div className="flex items-start gap-2.5">
-                    <div
-                      className={`p-1.5 rounded-md mt-0.5 shrink-0 ${
-                        active ? 'bg-accent/15 text-accent' : 'bg-foreground/10 text-muted-foreground'
-                      }`}
-                    >
-                      <Icon size={14} />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-foreground text-xs">{source.name}</span>
-                        {source.badge && (
-                          <span className="px-1.5 py-0.2 text-[9px] font-medium tracking-wide uppercase rounded bg-accent/20 text-accent">
-                            {source.badge}
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
-                        {source.description}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="pt-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
-                    <ToggleSwitch
-                      checked={active}
-                      onChange={() => toggleSource(source.id)}
-                      disabled={run.isPending}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          <DiscoverySourcesManager
+            compact={true}
+            onChange={(s) => {
+              setListingUrls(s.listingUrls);
+              setTicketmasterApiKey(s.ticketmasterApiKey);
+              setTicketmasterEnabled(s.ticketmasterEnabled);
+              setSelectedSources(s.sources);
+            }}
+          />
         </div>
       )}
 

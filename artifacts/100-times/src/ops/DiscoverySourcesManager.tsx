@@ -108,12 +108,23 @@ function getDomainFromUrl(rawUrl: string): string {
   }
 }
 
+export interface DiscoverySourcesState {
+  listingUrls: string[];
+  ticketmasterApiKey: string;
+  ticketmasterEnabled: boolean;
+  sources: string[];
+}
+
 export function DiscoverySourcesManager({
   onSaved,
+  onChange,
   compact = false,
+  showSaveButton = true,
 }: {
   onSaved?: () => void;
+  onChange?: (state: DiscoverySourcesState) => void;
   compact?: boolean;
+  showSaveButton?: boolean;
 }) {
   const auto = useDiscoveryAutoStatus();
   const setAuto = useSetDiscoveryAuto();
@@ -166,6 +177,18 @@ export function DiscoverySourcesManager({
       }
     }
   }, [auto.data]);
+
+  // Propagate state changes to parent when onChange is provided
+  useEffect(() => {
+    if (onChange) {
+      onChange({
+        listingUrls,
+        ticketmasterApiKey,
+        ticketmasterEnabled,
+        sources: selectedChannels,
+      });
+    }
+  }, [listingUrls, ticketmasterApiKey, ticketmasterEnabled, selectedChannels, onChange]);
 
   const handleAddWebsite = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -494,29 +517,32 @@ export function DiscoverySourcesManager({
       </div>
 
       {/* Save Button & Feedback */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-        <Btn
-          type="button"
-          variant="primary"
-          size="md"
-          loading={setAuto.isPending}
-          onClick={handleSaveAll}
-        >
-          <CheckCircle2 size={15} className="mr-1.5" /> Save Discovery Sources & Websites
-        </Btn>
+      {showSaveButton && (
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+          <Btn
+            type="button"
+            variant="primary"
+            size="md"
+            loading={setAuto.isPending}
+            onClick={handleSaveAll}
+          >
+            <CheckCircle2 size={15} className="mr-1.5" /> Save Discovery Sources & Websites
+          </Btn>
 
-        {saveSuccess && (
-          <span className="font-mono-face text-xs text-green-500 flex items-center gap-1 font-semibold">
-            <CheckCircle2 size={13} /> Sources and websites saved successfully!
-          </span>
-        )}
+          {saveSuccess && (
+            <span className="font-mono-face text-xs text-green-500 flex items-center gap-1 font-semibold">
+              <CheckCircle2 size={13} /> Sources and websites saved successfully!
+            </span>
+          )}
 
-        {setAuto.isError && (
-          <span className="font-mono-face text-xs text-red-500 flex items-center gap-1">
-            <XCircle size={13} /> Failed to save: {(setAuto.error as Error)?.message}
-          </span>
-        )}
-      </div>
+          {setAuto.isError && (
+            <span className="font-mono-face text-xs text-red-500 flex items-center gap-1">
+              <XCircle size={13} /> Failed to save: {(setAuto.error as Error)?.message}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
+
