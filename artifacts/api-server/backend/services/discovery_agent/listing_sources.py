@@ -7,6 +7,15 @@ so this works without any AI key.
 
 from urllib.parse import urlparse
 
+DEFAULT_LISTING_URLS = [
+    "https://allevents.in/{city}",
+    "https://www.eventbrite.com/d/{country}--{city}/events/",
+    "https://www.eventbrite.com/d/{city}/events/",
+    "https://www.meetup.com/find/?location={city}&source=EVENTS",
+    "https://10times.com/{city}",
+    "https://www.skillboxes.com/events",
+]
+
 # Sites that spell some cities differently in their URLs. allevents.in
 # silently redirects an unknown city to its all-India page, so these matter.
 _CITY_SLUG_ALIASES = {

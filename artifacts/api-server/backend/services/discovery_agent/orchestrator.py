@@ -440,7 +440,17 @@ def run_discovery_agent(
         # ------------------------------------------------------------------
         # 1.6. STRUCTURED EVENT LISTING PLATFORMS (TARGETED & DEDUP-CHECKED)
         # ------------------------------------------------------------------
-        from backend.services.discovery_agent.listing_sources import DEFAULT_LISTING_URLS
+        try:
+            from backend.services.discovery_agent.listing_sources import DEFAULT_LISTING_URLS
+        except ImportError:
+            DEFAULT_LISTING_URLS = [
+                "https://allevents.in/{city}",
+                "https://www.eventbrite.com/d/{country}--{city}/events/",
+                "https://www.eventbrite.com/d/{city}/events/",
+                "https://www.meetup.com/find/?location={city}&source=EVENTS",
+                "https://10times.com/{city}",
+                "https://www.skillboxes.com/events",
+            ]
         has_custom_urls = bool(config.listing_urls and set(config.listing_urls) != set(DEFAULT_LISTING_URLS))
         should_run_listings = (
             not requested
