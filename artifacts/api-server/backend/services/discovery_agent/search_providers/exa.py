@@ -75,3 +75,4 @@ class ExaSearchProvider(BaseSearchProvider):
                     )
                 )
         return results[:max_results]
+

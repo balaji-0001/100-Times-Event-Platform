@@ -1,6 +1,6 @@
 """Multi-provider web search integration for the 100 TIMES Discovery Agent.
 
-Orchestrates searches across Google (Gemini Search Grounding / CSE), Microsoft Bing,
+Orchestrates searches across Google (Custom Search JSON API), Microsoft Bing,
 Brave, Exa, and Web Fallback via `MultiProviderSearchEngine`.
 """
 

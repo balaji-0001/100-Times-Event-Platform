@@ -108,3 +108,4 @@ class WebFallbackProvider(BaseSearchProvider):
             if _last_search_at is not None and now - _last_search_at < 1.0:
                 time.sleep(1.0 - (now - _last_search_at))
             _last_search_at = time.monotonic()
+

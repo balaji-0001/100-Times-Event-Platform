@@ -79,3 +79,4 @@ class BraveSearchProvider(BaseSearchProvider):
                     )
                 )
         return results[:max_results]
+

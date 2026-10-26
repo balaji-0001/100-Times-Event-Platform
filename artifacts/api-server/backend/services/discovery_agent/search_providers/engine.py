@@ -238,3 +238,4 @@ class MultiProviderSearchEngine:
 
 # Global Singleton Instance
 search_engine = MultiProviderSearchEngine()
+

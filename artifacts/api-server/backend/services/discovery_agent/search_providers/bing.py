@@ -87,3 +87,4 @@ class BingSearchProvider(BaseSearchProvider):
                     )
                 )
         return results[:max_results]
+

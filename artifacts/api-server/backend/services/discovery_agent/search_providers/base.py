@@ -62,3 +62,4 @@ class BaseSearchProvider(abc.ABC):
     ) -> list[SearchProviderResult]:
         """Executes a search query and returns structured results."""
         pass
+

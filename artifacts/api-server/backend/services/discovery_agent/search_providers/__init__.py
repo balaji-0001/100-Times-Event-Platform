@@ -15,3 +15,4 @@ __all__ = [
     "MultiProviderSearchEngine",
     "search_engine",
 ]
+
