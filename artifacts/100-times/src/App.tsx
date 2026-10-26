@@ -54,6 +54,10 @@ import {
   EmailVerificationBanner,
 } from '@/components/AccountSecurityPages';
 import { keys, useMe } from '@/ops/api';
+import {
+  AssistantPanel, AttendeeOverview, ExternalRegistrationsPanel, MatchesPanel, NotificationsPanel,
+  PreferencesPanel, SavedEventsPanel,
+} from '@/attendee/pages';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import '@/index.css';
@@ -430,35 +434,10 @@ function useDebounce<T>(value: T, delay: number): T {
   return debouncedValue;
 }
 
-function useAIConcierge() {
-  return useMutation({
-    mutationFn: (query: string) =>
-      customFetch<AIConciergeResponse>('/api/ai/concierge', {
-        method: 'POST',
-        body: JSON.stringify({ query }),
-      }),
-  });
-}
-
-function useGetRecommendations(limit = 6) {
-  return useQuery({
-    queryKey: ['ai-recommendations', limit],
-    queryFn: () => customFetch<PersonalizedRecommendations>(`/api/ai/recommendations?limit=${limit}`),
-  });
-}
-
 function useGetPeerMatches() {
   return useQuery({
     queryKey: ['ai-peer-matches'],
     queryFn: () => customFetch<AIPeerMatch[]>('/api/ai/peer-matches'),
-  });
-}
-
-function useGetEventBrief(eventId: number) {
-  return useQuery({
-    queryKey: ['ai-event-brief', eventId],
-    queryFn: () => customFetch<AIEventBrief>(`/api/ai/events/${eventId}/brief`),
-    enabled: Boolean(eventId),
   });
 }
 
@@ -863,18 +842,6 @@ function ChatDrawer({
 // Fallback demo data
 // ---------------------------------------------------------------------------
 
-const fallbackEvents: EventCard[] = [
-  { id: 101, title: 'Global Pharma Innovations Summit', slug: 'global-pharma-innovations-summit', eventType: 'Conference', category: 'Pharmaceuticals', categorySlug: 'pharmaceuticals', startDate: '2026-03-12', endDate: '2026-03-14', startTime: '09:00', location: 'Hyderabad, India', venue: 'HITEX Exhibition Centre', organizer: 'World Pharma Today', image: '', rating: 4.8, attendeeCount: 840, price: 4200, format: 'in-person', isSaved: false, status: 'published' },
-  { id: 102, title: 'India Energy & Power Week', slug: 'india-energy-power-week', eventType: 'Trade show', category: 'Energy and Power Generation', categorySlug: 'energy-and-power-generation', startDate: '2026-03-11', endDate: '2026-03-14', startTime: '10:00', location: 'New Delhi, India', venue: 'Yashobhoomi', organizer: 'Power Info Today', image: '', rating: 4.6, attendeeCount: 1200, price: 0, format: 'in-person', isSaved: true, status: 'published' },
-  { id: 103, title: 'Healthcare & Medical Tech Expo', slug: 'healthcare-medical-tech-expo', eventType: 'Summit', category: 'Healthcare', categorySlug: 'healthcare', startDate: '2026-04-05', endDate: '2026-04-05', startTime: '08:30', location: 'Mumbai, India', venue: 'Jio World Convention Centre', organizer: 'HHM Global', image: '', rating: 4.9, attendeeCount: 730, price: 1800, format: 'in-person', isSaved: false, status: 'published' },
-  { id: 104, title: 'National Manufacturing & Industry 4.0 Expo', slug: 'national-manufacturing-industry-expo', eventType: 'Exhibition', category: 'Manufacturing', categorySlug: 'manufacturing', startDate: '2026-04-20', endDate: '2026-04-22', startTime: '11:00', location: 'Bengaluru, India', venue: 'KTPO Convention Centre', organizer: 'Manufacturing Informs', image: '', rating: 4.7, attendeeCount: 1560, price: 500, format: 'in-person', isSaved: false, status: 'published' },
-  { id: 105, title: 'World AI & Financial Tech Summit', slug: 'world-ai-fintech-summit-ny', eventType: 'Summit', category: 'Finance', categorySlug: 'finance', startDate: '2026-05-15', endDate: '2026-05-17', startTime: '09:00', location: 'New York, United States', venue: 'Javits Center', organizer: 'World Finance Informs', image: '', rating: 4.9, attendeeCount: 2400, price: 8500, format: 'in-person', isSaved: false, status: 'published' },
-  { id: 106, title: 'European Telecom & Cloud Congress', slug: 'european-telecom-cloud-congress', eventType: 'Congress', category: 'Telecommunications', categorySlug: 'telecommunications', startDate: '2026-06-10', endDate: '2026-06-12', startTime: '09:30', location: 'London, United Kingdom', venue: 'ExCeL London', organizer: 'Tele Info Today', image: '', rating: 4.7, attendeeCount: 1850, price: 6200, format: 'in-person', isSaved: false, status: 'published' },
-  { id: 107, title: 'Global Clean Energy & Sustainable Power Expo', slug: 'global-clean-energy-expo-berlin', eventType: 'Expo', category: 'Energy and Power Generation', categorySlug: 'energy-and-power-generation', startDate: '2026-07-08', endDate: '2026-07-10', startTime: '10:00', location: 'Berlin, Germany', venue: 'Messe Berlin', organizer: 'Power Info Today', image: '', rating: 4.8, attendeeCount: 3100, price: 3400, format: 'in-person', isSaved: false, status: 'published' },
-  { id: 108, title: 'Asia-Pacific Transport & Smart Logistics Conclave', slug: 'apac-transport-logistics-singapore', eventType: 'Conclave', category: 'Transport and Logistics', categorySlug: 'transport-and-logistics', startDate: '2026-08-22', endDate: '2026-08-24', startTime: '09:00', location: 'Singapore', venue: 'Marina Bay Sands Expo', organizer: 'Transport Advancement', image: '', rating: 4.85, attendeeCount: 1950, price: 5100, format: 'in-person', isSaved: false, status: 'published' },
-  { id: 109, title: 'Dubai Global Fintech & Web3 Summit', slug: 'dubai-global-fintech-summit', eventType: 'Summit', category: 'Finance', categorySlug: 'finance', startDate: '2026-09-18', endDate: '2026-09-20', startTime: '09:00', location: 'Dubai, UAE', venue: 'Dubai World Trade Centre', organizer: 'World Finance Informs', image: '', rating: 4.92, attendeeCount: 3500, price: 4500, format: 'in-person', isSaved: false, status: 'published' },
-  { id: 110, title: 'Middle East Energy & Smart Infrastructure Expo', slug: 'middle-east-energy-smart-infrastructure-dubai', eventType: 'Expo', category: 'Energy and Power Generation', categorySlug: 'energy-and-power-generation', startDate: '2026-10-12', endDate: '2026-10-14', startTime: '10:00', location: 'Dubai, United Arab Emirates', venue: 'Madinat Jumeirah Conference Centre', organizer: 'Power Info Today', image: '', rating: 4.88, attendeeCount: 2800, price: 3200, format: 'in-person', isSaved: false, status: 'published' },
-];
 const fallbackCategories: Category[] = [
   { id: 1, name: 'Pharmaceuticals', slug: 'pharmaceuticals', description: 'Pharmaceutical companies, drug manufacturing, research, and industry developments.', icon: '💊', eventCount: 142 },
   { id: 2, name: 'Healthcare', slug: 'healthcare', description: 'Hospitals, healthcare providers, medical technology, and healthcare management.', icon: '🩺', eventCount: 128 },
@@ -907,308 +874,40 @@ const money = (value?: number) => value === 0 ? 'Free' : value ? `₹${value.toL
 // ---------------------------------------------------------------------------
 
 function AIConciergeModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [query, setQuery] = useState('');
-  const [history, setHistory] = useState<Array<{ sender: 'user' | 'ai'; text: string; events?: AIEventMatch[]; suggested?: string[] }>>([
-    {
-      sender: 'ai',
-      text: 'Hello! I am your 100 TIMES AI Event Concierge. Ask me for tailored event recommendations, specific cities, topics, budget constraints, or formats.',
-      suggested: [
-        'Find AI summits in Bengaluru under ₹3000',
-        'Show top design conferences with networking',
-        'Free tech workshops this month',
-        'Recommend summits for Product Architects',
-      ],
-    },
-  ]);
-
-  const conciergeMutation = useAIConcierge();
-  const bottomRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (open) {
-      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-    }
-  }, [open, history]);
-
+  const hasToken = typeof window !== 'undefined' && Boolean(localStorage.getItem('100-times-auth-token'));
   if (!open) return null;
-
-  const handleSend = (userText: string) => {
-    const trimmed = userText.trim();
-    if (!trimmed || conciergeMutation.isPending) return;
-
-    setHistory((prev) => [...prev, { sender: 'user', text: trimmed }]);
-    setQuery('');
-
-    conciergeMutation.mutate(trimmed, {
-      onSuccess: (res) => {
-        setHistory((prev) => [
-          ...prev,
-          {
-            sender: 'ai',
-            text: res.reply,
-            events: res.matchedEvents,
-            suggested: res.suggestedQueries,
-          },
-        ]);
-      },
-      onError: () => {
-        setHistory((prev) => [
-          ...prev,
-          {
-            sender: 'ai',
-            text: 'I ran into an issue connecting with the event signal. Please try another query!',
-          },
-        ]);
-      },
-    });
-  };
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-md">
-      <div className="flex h-[85vh] w-full max-w-3xl flex-col rounded-3xl border border-accent/30 bg-background shadow-2xl overflow-hidden">
-        {/* Header */}
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-md" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="flex h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl border border-accent/30 bg-background shadow-2xl">
         <div className="flex items-center justify-between border-b border-foreground/10 bg-secondary/50 px-6 py-4">
           <div className="flex items-center gap-3">
             <div className="grid h-10 w-10 place-items-center rounded-2xl bg-accent text-accent-foreground">
               <Sparkles size={20} />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h2 className="font-display text-lg font-bold">100 TIMES AI Concierge</h2>
-                <span className="rounded-full bg-accent/20 px-2 py-0.5 font-mono-face text-[9px] font-bold text-accent">Smart Assistant</span>
-              </div>
-              <p className="text-xs text-muted-foreground">Natural language discovery across 100+ high-signal events</p>
+              <h2 className="font-display text-lg font-bold">100 TIMES Event Assistant</h2>
+              <p className="text-xs text-muted-foreground">Answers only from verified upcoming events</p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="grid h-8 w-8 place-items-center rounded-full border border-foreground/10 text-muted-foreground hover:bg-muted"
-            data-testid="button-close-ai-modal"
-          >
+          <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-full border border-foreground/10 text-muted-foreground hover:bg-muted" data-testid="button-close-ai-modal">
             <X size={16} />
           </button>
         </div>
-
-        {/* Chat Feed */}
-        <div className="flex-1 space-y-5 overflow-y-auto p-6">
-          {history.map((msg, i) => (
-            <div key={i} className={cx('flex flex-col', msg.sender === 'user' ? 'items-end' : 'items-start')}>
-              <div
-                className={cx(
-                  'max-w-[88%] rounded-2xl p-4 text-sm leading-relaxed',
-                  msg.sender === 'user'
-                    ? 'bg-primary text-primary-foreground rounded-br-none'
-                    : 'border border-foreground/10 bg-card text-foreground rounded-bl-none shadow-sm'
-                )}
-              >
-                {msg.sender === 'ai' && (
-                  <div className="mb-1.5 flex items-center gap-1.5 font-mono-face text-[10px] font-bold text-accent">
-                    <Sparkles size={12} /> 100 TIMES AI
-                  </div>
-                )}
-                <p>{msg.text}</p>
-
-                {/* Render Matched Event Cards if available */}
-                {msg.events && msg.events.length > 0 && (
-                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                    {msg.events.map((match: AIEventMatch) => (
-                      <div
-                        key={match.event.id}
-                        className="flex flex-col justify-between rounded-xl border border-foreground/10 bg-background/80 p-3.5 hover:border-accent/50"
-                      >
-                        <div>
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="rounded-full bg-accent/15 px-2 py-0.5 font-mono-face text-[9px] font-bold text-accent">
-                              ✦ {match.matchScore}% Match
-                            </span>
-                            <span className="font-mono-face text-[9px] text-muted-foreground">{match.event.location}</span>
-                          </div>
-                          <h4 className="mt-2 font-display text-sm font-bold leading-snug line-clamp-1">{match.event.title}</h4>
-                          <p className="mt-1 text-[11px] text-muted-foreground line-clamp-2">{match.matchReason}</p>
-                        </div>
-                        <div className="mt-3 flex items-center justify-between border-t border-foreground/10 pt-2 text-[11px]">
-                          <span className="font-mono-face font-bold">
-                            {match.event.price === 0 ? 'Free' : `₹${match.event.price}`}
-                          </span>
-                          <Link
-                            href={`/events/${match.event.slug}`}
-                            onClick={onClose}
-                            className="inline-flex items-center gap-1 font-semibold text-accent hover:underline"
-                          >
-                            View Event <ArrowRight size={11} />
-                          </Link>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Render Suggested Queries if available */}
-                {msg.suggested && msg.suggested.length > 0 && (
-                  <div className="mt-4">
-                    <p className="font-mono-face text-[10px] uppercase tracking-wider text-muted-foreground mb-2">Suggested Inquiries:</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {msg.suggested.map((sug, sIdx) => (
-                        <button
-                          key={sIdx}
-                          onClick={() => handleSend(sug)}
-                          className="rounded-full border border-foreground/15 bg-background px-3 py-1 text-xs text-muted-foreground hover:border-accent hover:bg-accent/10 hover:text-accent"
-                        >
-                          {sug}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
+        <div className="min-h-0 flex-1 p-4">
+          {hasToken ? (
+            <AssistantPanel compact />
+          ) : (
+            <div className="grid h-full place-items-center text-center">
+              <div>
+                <p className="font-display text-xl font-bold">Sign in to use the assistant</p>
+                <p className="mt-2 text-sm text-muted-foreground">It uses your saved preferences and tracks the events you save or register for.</p>
+                <Link href="/login?redirect=/dashboard/assistant" onClick={onClose} className="mt-5 inline-block rounded-full bg-primary px-6 py-3 text-sm font-bold text-primary-foreground hover:bg-accent">Sign in</Link>
               </div>
-            </div>
-          ))}
-          {conciergeMutation.isPending && (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono-face">
-              <Loader2 size={14} className="animate-spin text-accent" />
-              100 TIMES AI is analyzing the event catalog and scoring matches...
-            </div>
-          )}
-          <div ref={bottomRef} />
-        </div>
-
-        {/* Input Bar */}
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleSend(query);
-          }}
-          className="border-t border-foreground/10 bg-card p-4"
-        >
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Ask anything: e.g. 'Show AI summits in Bengaluru under ₹3000'..."
-              className="flex-1 rounded-full border border-foreground/15 bg-background px-5 py-3 text-sm focus:border-accent focus:outline-none"
-              data-testid="input-ai-concierge"
-            />
-            <button
-              type="submit"
-              disabled={!query.trim() || conciergeMutation.isPending}
-              className="button-press inline-flex items-center gap-2 rounded-full bg-accent px-6 py-3 font-display text-sm font-bold text-accent-foreground hover:bg-primary hover:text-primary-foreground disabled:opacity-40"
-              data-testid="button-submit-ai-concierge"
-            >
-              {conciergeMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-              <span>Search</span>
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function AIEventBriefCard({ eventId }: { eventId: number }) {
-  const briefQuery = useGetEventBrief(eventId);
-  if (briefQuery.isLoading) return null;
-  const brief = briefQuery.data;
-  if (!brief) return null;
-
-  return (
-    <div className="mt-8 rounded-3xl border border-accent/30 bg-gradient-to-br from-accent/10 via-card to-background p-6 lg:p-8" data-testid="card-ai-event-brief">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-foreground/10 pb-4">
-        <div className="flex items-center gap-2.5">
-          <div className="grid h-8 w-8 place-items-center rounded-xl bg-accent text-accent-foreground">
-            <Sparkles size={16} />
-          </div>
-          <div>
-            <h3 className="font-display text-lg font-bold">100 TIMES AI Executive Brief</h3>
-            <p className="text-xs text-muted-foreground">Automated intelligence & key learning outcomes</p>
-          </div>
-        </div>
-        <span className="rounded-full bg-accent/20 px-3 py-1 font-mono-face text-[10px] font-bold text-accent">
-          ✦ Role Fit: {brief.recommendedRole}
-        </span>
-      </div>
-
-      <p className="mt-4 text-sm leading-6 text-foreground/90">{brief.summary}</p>
-
-      <div className="mt-6 grid gap-6 md:grid-cols-2">
-        <div>
-          <h4 className="font-mono-face text-xs font-bold uppercase tracking-wider text-accent mb-3">Key Takeaways</h4>
-          <ul className="space-y-2 text-xs leading-5 text-muted-foreground">
-            {brief.keyTakeaways.map((takeaway, i) => (
-              <li key={i} className="flex items-start gap-2">
-                <span className="text-accent mt-0.5">✦</span>
-                <span>{takeaway}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-        <div>
-          <h4 className="font-mono-face text-xs font-bold uppercase tracking-wider text-accent mb-3">Target Audience</h4>
-          <div className="flex flex-wrap gap-1.5">
-            {brief.targetAudience.map((aud, i) => (
-              <span key={i} className="rounded-lg border border-foreground/10 bg-background px-2.5 py-1 text-xs text-muted-foreground font-medium">
-                {aud}
-              </span>
-            ))}
-          </div>
-          {brief.highlightSession && (
-            <div className="mt-4 rounded-xl bg-secondary/60 p-3">
-              <p className="font-mono-face text-[10px] uppercase tracking-wider text-secondary-foreground/70">Highlight Session</p>
-              <p className="mt-1 text-xs font-semibold text-secondary-foreground">{brief.highlightSession}</p>
             </div>
           )}
         </div>
       </div>
     </div>
-  );
-}
-
-function AIRecommendationsSection() {
-  const recommendationsQuery = useGetRecommendations(4);
-  const data = recommendationsQuery.data;
-  if (recommendationsQuery.isLoading || !data || data.items.length === 0) return null;
-
-  return (
-    <section className="mx-auto mt-24 max-w-[1440px] px-5 lg:px-10" data-testid="section-ai-recommendations">
-      <div className="flex flex-col justify-between gap-4 border-b border-foreground/10 pb-4 sm:flex-row sm:items-end">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="grid h-6 w-6 place-items-center rounded-lg bg-accent text-accent-foreground font-bold text-xs">✦</span>
-            <p className="font-mono-face text-xs uppercase tracking-[.2em] text-accent">Smart Match Engine</p>
-          </div>
-          <h2 className="mt-2 font-display text-3xl font-extrabold tracking-tight lg:text-4xl">{data.headline}</h2>
-          <p className="mt-1 text-xs text-muted-foreground">{data.userContext}</p>
-        </div>
-        <Link href="/events?view=recommended" className="font-mono-face text-xs font-bold text-accent hover:underline inline-flex items-center gap-1">
-          Explore All Matches <ArrowRight size={13} />
-        </Link>
-      </div>
-
-      <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-        {data.items.map((item: AIEventMatch) => (
-          <div key={item.event.id} className="relative flex flex-col justify-between rounded-2xl border border-accent/30 bg-card p-5 hover:border-accent">
-            <div className="absolute -top-3 right-4 rounded-full bg-accent px-3 py-0.5 font-mono-face text-[10px] font-bold text-accent-foreground shadow-sm">
-              ✦ {item.matchScore}% Match
-            </div>
-            <div>
-              <div className="flex flex-wrap gap-1 mb-2">
-                {item.tags.map((t, ti) => (
-                  <span key={ti} className="rounded bg-muted px-1.5 py-0.5 font-mono-face text-[9px] text-muted-foreground">{t}</span>
-                ))}
-              </div>
-              <h3 className="font-display text-lg font-bold leading-snug line-clamp-2">{item.event.title}</h3>
-              <p className="mt-2 text-xs text-muted-foreground line-clamp-2">{item.matchReason}</p>
-            </div>
-            <div className="mt-5 border-t border-foreground/10 pt-3 flex items-center justify-between text-xs">
-              <span className="font-mono-face text-muted-foreground">{item.event.location}</span>
-              <Link href={`/events/${item.event.slug}`} className="font-bold text-accent hover:underline inline-flex items-center gap-1">
-                Details <ArrowRight size={12} />
-              </Link>
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
   );
 }
 
@@ -1326,7 +1025,7 @@ function Header() {
 
   const nav = [
     ['Explore', '/events'],
-    ['Discovery', '/admin/discovery'],
+    ...(isAdmin ? [['Discovery', '/admin/discovery']] : []),
     ['Sectors', '/categories'],
     ['Cities', '/cities'],
     ['Organizers', '/organizers'],
@@ -1810,7 +1509,7 @@ function HomePage() {
   if (home.isLoading) return <LoadingState label="Curating this week" />;
   if (home.isError) return <ErrorState retry={() => home.refetch()} />;
   const payload = home.data;
-  const featured = payload?.featured?.length ? payload.featured : fallbackEvents;
+  const featured = payload?.featured ?? [];
   const cats = payload?.trending?.length ? payload.trending : fallbackCategories;
   const cities = payload?.cities?.length ? payload.cities : fallbackCities;
   return (
@@ -1856,7 +1555,6 @@ function HomePage() {
           ))}
         </div>
       </section>
-      <AIRecommendationsSection />
 
       <section className="mx-auto mt-24 max-w-[1440px] px-5 lg:px-10">
         <SectionHeading kicker="02 / Browse by energy" title="Find your room" action="All sectors" href="/categories" />
@@ -1911,7 +1609,7 @@ function EventsPage() {
   const [term, setTerm] = useState('');
   const params = useMemo(() => ({ ...filters, q: term || undefined }), [filters, term]);
   const query = useListEvents(params);
-  const rawEvents = query.data?.items?.length ? query.data.items : fallbackEvents;
+  const rawEvents = query.data?.items ?? [];
   const events = useMemo(() => {
     if (!filters.country || query.data?.items?.length) return rawEvents;
     const cLower = filters.country.toLowerCase();
@@ -2179,8 +1877,7 @@ function EventDetailPage() {
       </div>
       <div className="mx-auto mt-14 grid max-w-[1440px] gap-12 px-5 lg:grid-cols-[1.1fr_.9fr] lg:px-10">
         <div>
-          <AIEventBriefCard eventId={event.id} />
-          <div className="mt-8">
+          <div>
             <InfoRows event={event} />
           </div>
           <div className="mt-14">
@@ -3340,16 +3037,19 @@ function AuthPage({ mode: initialMode }: { mode: 'login' | 'register' | 'forgot'
 // ---------------------------------------------------------------------------
 
 function DashboardNav() {
+  const me = useMe();
   const links = [
     ['Overview', '/dashboard', LayoutDashboard],
+    ['Preferences', '/dashboard/preferences', ListFilter],
+    ['Match My Events', '/dashboard/recommendations', Sparkles],
+    ['Event Assistant', '/dashboard/assistant', MessageSquare],
+    ['Saved events', '/dashboard/saved-events', Heart],
+    ['Registrations & Pass', '/dashboard/registrations', Ticket],
     ['My Schedule', '/dashboard/schedule', CalendarDays],
     ['Networking', '/dashboard/networking', Users],
-    ['Registrations & Pass', '/dashboard/registrations', Ticket],
-    ['Saved events', '/dashboard/saved-events', Heart],
-    ['Recommendations', '/dashboard/recommendations', Sparkles],
     ['Notifications', '/dashboard/notifications', Bell],
     ['Settings', '/dashboard/settings', Settings2],
-    ['Admin Console', '/admin', ShieldCheck],
+    ...(me.data?.role === 'ADMIN' ? ([['Admin Console', '/admin', ShieldCheck]] as const) : []),
   ] as const;
 
   return (
@@ -3727,13 +3427,14 @@ function SettingsPanel() {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const updateMutation = useUpdateProfile();
 
-  const [form, setForm] = useState({
-    name: 'Aarav Mehta',
-    jobTitle: 'Product Architect',
-    company: 'Voxel Labs',
-    bio: 'Designing interfaces and software systems for the physical world.',
-    country: 'India',
-  });
+  const me = useMe();
+  const [form, setForm] = useState({ name: '', jobTitle: '', company: '', bio: '', country: '' });
+  useEffect(() => {
+    if (me.data) {
+      const profile = me.data as typeof me.data & { company?: string | null; country?: string | null };
+      setForm((f) => ({ ...f, name: profile.name ?? '', company: profile.company ?? '', country: profile.country ?? '' }));
+    }
+  }, [me.data]);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -3839,7 +3540,9 @@ function DashboardPage({ tab = 'overview' }: { tab?: string }) {
     networking: 'Attendee networking hub.',
     'saved-events': 'Saved for later.',
     registrations: 'Your digital passes.',
-    recommendations: 'A few good leads.',
+    recommendations: 'Match my events.',
+    preferences: 'What you want to find.',
+    assistant: 'Ask for events.',
     notifications: 'Keep in the loop.',
     settings: 'Your attendee profile.',
   };
@@ -3857,67 +3560,20 @@ function DashboardPage({ tab = 'overview' }: { tab?: string }) {
       <div className="grid gap-8 lg:grid-cols-[235px_1fr]">
         <DashboardNav />
         <div>
-          {tab === 'overview' && (
-            <>
-              <div className="grid gap-3 sm:grid-cols-3">
-                <Metric label="Saved events" value={data?.savedCount ?? savedEvents.length} icon={Heart} />
-                <Metric label="Registrations" value={data?.registrationCount ?? registrations.length} icon={Ticket} />
-                <Metric label="Attended" value={data?.attendedCount ?? 0} icon={Check} />
-              </div>
-              <div className="mt-10">
-                <SectionHeading kicker="Next up" title="Your upcoming rooms" action="All registrations" href="/dashboard/registrations" />
-                <div className="space-y-3">
-                  {registrations.length ? (
-                    registrations.slice(0, 3).map((reg) => (
-                      <div
-                        key={reg.id}
-                        className="flex items-center justify-between gap-4 rounded-2xl border border-foreground/10 bg-card p-5 hover:border-accent"
-                      >
-                        <div>
-                          <p className="font-display text-lg font-bold">{reg.eventTitle}</p>
-                          <p className="mt-1 text-xs text-muted-foreground">{reg.ticketType} · Registered {fmtDate(reg.registeredAt)}</p>
-                        </div>
-                        <button
-                          onClick={() => setSelectedPass(reg)}
-                          className="button-press inline-flex items-center gap-1.5 rounded-full bg-accent px-3 py-1.5 text-xs font-bold text-accent-foreground hover:bg-primary hover:text-primary-foreground"
-                          data-testid={`button-view-pass-overview-${reg.id}`}
-                        >
-                          <QrCode size={13} /> Pass
-                        </button>
-                      </div>
-                    ))
-                  ) : (
-                    <EmptyState title="Your calendar is open." body="Save an event or register for something with a point of view." />
-                  )}
-                </div>
-              </div>
-            </>
-          )}
+          {tab === 'overview' && <AttendeeOverview />}
+          {tab === 'preferences' && <PreferencesPanel />}
+          {tab === 'assistant' && <AssistantPanel />}
           {tab === 'schedule' && <ScheduleTab />}
           {tab === 'networking' && <NetworkingTab />}
-          {tab === 'saved-events' && <EventCollection events={savedEvents} emptyTitle="Your shortlist is empty." emptyBody="Tap the heart on an event you want to remember." />}
-          {tab === 'recommendations' && <EventCollection events={data?.recommended ?? fallbackEvents} emptyTitle="We are still learning your taste." />}
-          {tab === 'registrations' && <RegistrationsTab registrations={registrations} onOpenPass={(p) => setSelectedPass(p)} />}
-          {tab === 'notifications' && (
-            <div className="space-y-3">
-              {notifications.length ? (
-                notifications.map((n) => (
-                  <div key={n.id} className="rounded-2xl border border-foreground/10 bg-card p-5">
-                    <div className="flex gap-3">
-                      <Bell size={17} className="mt-1 text-accent" />
-                      <div>
-                        <p className="font-semibold">{n.title}</p>
-                        <p className="mt-1 text-sm text-muted-foreground">{n.message}</p>
-                        <p className="mt-3 font-mono-face text-[10px] uppercase tracking-[.12em] text-muted-foreground">{fmtDate(n.createdAt)}</p>
-                      </div>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <EmptyState title="You are all caught up." />
-              )}
-            </div>
+          {tab === 'saved-events' && <SavedEventsPanel />}
+          {tab === 'recommendations' && <MatchesPanel />}
+          {tab === 'registrations' && (
+            <>
+              <RegistrationsTab registrations={registrations} onOpenPass={(p) => setSelectedPass(p)} />
+              <ExternalRegistrationsPanel />
+            </>
           )}
+          {tab === 'notifications' && <NotificationsPanel />}
           {tab === 'settings' && <SettingsPanel />}
         </div>
       </div>
@@ -4839,6 +4495,8 @@ function Router() {
         <Route path="/dashboard/registrations" component={() => <DashboardPage tab="registrations" />} />
         <Route path="/dashboard/saved-events" component={() => <DashboardPage tab="saved-events" />} />
         <Route path="/dashboard/recommendations" component={() => <DashboardPage tab="recommendations" />} />
+        <Route path="/dashboard/preferences" component={() => <DashboardPage tab="preferences" />} />
+        <Route path="/dashboard/assistant" component={() => <DashboardPage tab="assistant" />} />
         <Route path="/dashboard/notifications" component={() => <DashboardPage tab="notifications" />} />
         <Route path="/dashboard/settings" component={() => <DashboardPage tab="settings" />} />
 

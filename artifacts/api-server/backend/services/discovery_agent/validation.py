@@ -107,6 +107,23 @@ def validate_event(
     """
     notes: list[str] = []
 
+    # 0. Reject non-business consumer / social club activities
+    NON_BUSINESS_NOISE = (
+        "english class", "conversation club", "english conversation", "crazygames",
+        "nightlife tour", "pub crawl", "pool party", "adhd meetup", "yoga retreat",
+        "yogalates", "spiritual energy", "dating event", "speed dating", "bachelor party"
+    )
+    t_low = (candidate.name or "").lower()
+    for nb_kw in NON_BUSINESS_NOISE:
+        if nb_kw in t_low:
+            return ValidationResult(
+                "REJECTED",
+                [f"Non-business consumer activity rejected: {nb_kw}"],
+                0,
+                None,
+                rejection_reason="NON_BUSINESS_ACTIVITY",
+            )
+
     # 1. Blacklisted keywords check (anti-spam / scam)
     if blacklisted_keywords:
         haystack = f"{candidate.name or ''} {candidate.event_description or ''}".lower()
