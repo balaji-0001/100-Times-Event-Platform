@@ -205,7 +205,7 @@ export function ManualResearchForm() {
   const [dateTo, setDateTo] = useState('');
   const [depth, setDepth] = useState('12');
   const [perQuery, setPerQuery] = useState('5');
-  const [eventsPerRun, setEventsPerRun] = useState('100');
+  const [eventsPerRun, setEventsPerRun] = useState('250');
   const [targetValidEvents, setTargetValidEvents] = useState('50');
 
   // Sources state
@@ -558,7 +558,7 @@ export function ManualResearchForm() {
                 className={`${inputClass} mt-1`}
                 disabled={run.isPending}
               />
-              <span className="text-[10px] text-muted-foreground mt-0.5 block">Stop when target verified</span>
+              <span className="text-[10px] text-muted-foreground mt-0.5 block">Searches all sources until {targetValidEvents || 50} valid events found</span>
             </label>
             <label>
               <span className="font-semibold text-foreground text-[11px]">Search queries</span>

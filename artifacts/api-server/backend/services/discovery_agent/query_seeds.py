@@ -224,3 +224,29 @@ def build_search_queries(config: DiscoveryConfig) -> list[str]:
             break
 
     return interleaved[: config.search_depth]
+
+
+def build_expanded_queries(config: DiscoveryConfig) -> list[str]:
+    """Supplemental multi-source search queries across major city hubs and event portals,
+    ensuring continuous discovery until the target valid event count is fulfilled."""
+    categories = config.categories or ["conference", "summit", "expo", "exhibition"]
+    time_hint = _date_hint_for_config(config)
+    supplemental_cities = [
+        "Mumbai", "Bengaluru", "Delhi", "Hyderabad", "Pune", "Chennai",
+        "Kolkata", "Ahmedabad", "Gurgaon", "Noida", "Jaipur", "Goa",
+        "Chandigarh", "Kochi", "Indore", "Lucknow", "Bhopal", "Coimbatore"
+    ]
+    selected_cities = config.cities or []
+    additional_cities = [c for c in supplemental_cities if c not in selected_cities] or supplemental_cities[:8]
+
+    queries: list[str] = []
+    for city in additional_cities:
+        for cat in categories[:6]:
+            queries.append(f"site:allevents.in/{city.lower()} {cat}")
+            queries.append(f"site:eventbrite.com {cat} {city} {time_hint}")
+            queries.append(f"site:10times.com/{city.lower()} {cat}")
+            queries.append(f"site:meetup.com {cat} {city}")
+            queries.append(f"upcoming {cat} in {city} {time_hint} registration")
+            queries.append(f"{cat} conference expo {city} {time_hint}")
+
+    return queries

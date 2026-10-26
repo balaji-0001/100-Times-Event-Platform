@@ -97,8 +97,8 @@ def config_from_settings(settings: Settings, db: Session | None = None) -> Disco
         search_depth=search_depth,
         sources_per_query=settings.discovery_sources_per_query,
         daily_limit=daily_limit,
-        events_per_run=auto_scope.get("events_per_run") or 50,
-        target_valid_events=auto_scope.get("target_valid_events", 25),
+        events_per_run=auto_scope.get("events_per_run") or 100,
+        target_valid_events=auto_scope.get("target_valid_events", 50),
         confidence_threshold=settings.discovery_confidence_threshold,
         listing_urls=_split(settings.discovery_listing_urls),
         events_per_listing=settings.discovery_events_per_listing,
@@ -262,8 +262,16 @@ def _process_candidate(
 
 def _limit_reached(already_today: int, summary: RunSummary, config: DiscoveryConfig) -> bool:
     target_valid = getattr(config, "target_valid_events", None)
-    if target_valid and (summary.accepted_events >= target_valid or summary.new_events >= target_valid):
-        return True
+    if target_valid and target_valid > 0:
+        # MANDATORY RULE: If the user needs N valid events (e.g. 50),
+        # the agent MUST keep searching all sources until N VALID events
+        # are actually accepted (accepted_events >= target_valid or new_events >= target_valid).
+        # It must NEVER stop early due to raw candidate or duplicate counts!
+        if summary.accepted_events >= target_valid or summary.new_events >= target_valid:
+            return True
+        # Safety circuit-breaker ceiling only if web is completely exhausted:
+        return summary.events_discovered >= max(target_valid * 25, 2500)
+
     max_for_run = getattr(config, "events_per_run", None)
     if max_for_run and summary.events_discovered >= max_for_run:
         return True
@@ -330,22 +338,20 @@ def run_discovery_agent(
         # ------------------------------------------------------------------
         # 1. HIGH-YIELD STRUCTURED EVENT LISTING PLATFORMS (FAST FIRST)
         # ------------------------------------------------------------------
-        # Event listing platforms (Allevents, Eventbrite, 10Times, Meetup) return
-        # rich schema.org JSON-LD arrays directly authored by organizers. Running
-        # these first allows the run to discover 30-80 valid events in 15-25 seconds,
-        # dramatically cutting user wait times.
-        target_valid = getattr(config, "target_valid_events", None) or 50
-        city_slice = config.cities[:8] if len(config.cities) > 8 else (config.cities or ["Mumbai", "Bengaluru", "Delhi"])
-        listing_budget = max(8, min(40, target_valid // 2))
+        target_valid = getattr(config, "target_valid_events", None)
+        target_cities = list(config.cities) if config.cities else [
+            "Mumbai", "Bengaluru", "Delhi", "Pune", "Hyderabad", "Chennai",
+            "Kolkata", "Ahmedabad", "Gurgaon", "Noida", "Jaipur", "Goa"
+        ]
 
         all_listing_urls = listing_sources.build_listing_urls(
             config.listing_urls,
-            city_slice,
+            target_cities,
             countries=getattr(config, "countries", None),
             country=getattr(config, "country", None),
         )
 
-        for listing_url in all_listing_urls[:listing_budget]:
+        for listing_url in all_listing_urls:
             if is_run_cancelled(run.id, db):
                 logger.info("Discovery run #%s stopped by user.", run.id)
                 run.status = "stopped"
@@ -357,7 +363,7 @@ def run_discovery_agent(
                 return summary
 
             if _limit_reached(already_today, summary, config):
-                logger.info("Target limit reached during listing phase (%d events) — stopping early.", summary.accepted_events)
+                logger.info("Target valid events quota achieved during listing phase (%d events) — stopping.", summary.accepted_events)
                 break
 
             if listing_url in pages_read:
@@ -368,11 +374,9 @@ def run_discovery_agent(
         # ------------------------------------------------------------------
         # 2. TARGETED WEB & SOCIAL MEDIA SEARCH QUERIES
         # ------------------------------------------------------------------
-        # If the valid event quota has not yet been satisfied, search queries
-        # targeting social platforms (LinkedIn, Facebook, Twitter, Telegram,
-        # Reddit) and professional sector portals are dispatched.
         search_error: str | None = None
         if not _limit_reached(already_today, summary, config):
+            logger.info("Listing phase produced %d valid events (target: %d). Continuing search across web & social platforms...", summary.accepted_events, target_valid)
             for query in query_seeds.build_search_queries(config):
                 if is_run_cancelled(run.id, db):
                     logger.info("Discovery run #%s stopped by user.", run.id)
@@ -385,6 +389,7 @@ def run_discovery_agent(
                     return summary
 
                 if _limit_reached(already_today, summary, config):
+                    logger.info("Target valid events quota achieved (%d valid events) — stopping.", summary.accepted_events)
                     break
 
                 try:
@@ -400,6 +405,47 @@ def run_discovery_agent(
                 for url in result_urls:
                     if is_run_cancelled(run.id, db):
                         logger.info("Discovery run #%s stopped by user.", run.id)
+                        run.status = "stopped"
+                        run.completed_at = datetime.now(timezone.utc)
+                        run.summary = summary.as_dict()
+                        db.add(run)
+                        db.commit()
+                        _CANCELLED_RUN_IDS.discard(run.id)
+                        return summary
+
+                    if url in pages_read or _limit_reached(already_today, summary, config):
+                        continue
+                    pages_read.add(url)
+                    _read_page(db, run, url, config, summary, already_today, effective_categories)
+
+        # ------------------------------------------------------------------
+        # 3. EXPANDED MULTI-SOURCE SEARCH CONTINUATION (UNTIL TARGET IS MET)
+        # ------------------------------------------------------------------
+        # MANDATORY RULE: Keep searching all sources until target valid events count is reached
+        if target_valid and not _limit_reached(already_today, summary, config):
+            logger.info("Continuing search across expanded sources to achieve target of %d valid events (current: %d)...", target_valid, summary.accepted_events)
+            expanded_queries = query_seeds.build_expanded_queries(config)
+            for query in expanded_queries:
+                if is_run_cancelled(run.id, db):
+                    run.status = "stopped"
+                    run.completed_at = datetime.now(timezone.utc)
+                    run.summary = summary.as_dict()
+                    db.add(run)
+                    db.commit()
+                    _CANCELLED_RUN_IDS.discard(run.id)
+                    return summary
+
+                if _limit_reached(already_today, summary, config):
+                    logger.info("Target valid events quota achieved during expanded search (%d valid events) — stopping.", summary.accepted_events)
+                    break
+
+                try:
+                    result_urls = web_search.search(query, config.sources_per_query)
+                except Exception:
+                    continue
+
+                for url in result_urls:
+                    if is_run_cancelled(run.id, db):
                         run.status = "stopped"
                         run.completed_at = datetime.now(timezone.utc)
                         run.summary = summary.as_dict()

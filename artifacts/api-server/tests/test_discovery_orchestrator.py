@@ -66,3 +66,49 @@ def test_discovery_agent_does_not_duplicate_across_runs(db_session, monkeypatch)
     assert second_summary.new_events == 0
     assert second_summary.duplicate_events == 2
     assert db_session.query(DiscoveredEvent).count() == 1
+
+
+def test_target_valid_events_rule_continues_until_target_reached(db_session, monkeypatch):
+    """RULE: If user needs N valid events (e.g. 10), the agent must search until
+    10 valid events are found, even if duplicates or raw candidate counts exceed N."""
+    candidate_counter = 0
+
+    def mock_extract(url, max_events, cities):
+        nonlocal candidate_counter
+        candidate_counter += 1
+        if candidate_counter % 2 == 1:
+            name = "Repeated Dupe Event"
+        else:
+            name = f"Unique Event {candidate_counter}"
+        source = CandidateSource(url=f"https://example.test/events/{candidate_counter}", source_type="event_listing", source_website="example.test")
+        return [
+            ExtractedEventCandidate(
+                name=name,
+                date="2099-06-01",
+                venue="Auditorium",
+                city="Bengaluru",
+                state="Karnataka",
+                country="India",
+                url=source.url,
+                extraction_confidence=90,
+                primary_source=source,
+                sources=[source],
+            )
+        ]
+
+    monkeypatch.setattr(orchestrator.listing_sources, "build_listing_urls", lambda *args, **kwargs: [f"https://example.test/page/{i}" for i in range(50)])
+    monkeypatch.setattr(orchestrator.page_extractor, "extract_events_from_page", mock_extract)
+    monkeypatch.setattr(orchestrator.organizer_identifier, "identify_organizer", lambda candidate: _fixed_organizer())
+
+    cfg = DiscoveryConfig(
+        cities=["Bengaluru"],
+        categories=["Technology"],
+        events_per_run=5,  # Raw cap is small (5), but target_valid_events is 10!
+        target_valid_events=10,
+        daily_limit=200,
+    )
+
+    summary = orchestrator.run_discovery_agent(db_session, cfg)
+    assert summary.new_events == 10
+    assert summary.accepted_events == 10
+    assert summary.duplicate_events >= 5

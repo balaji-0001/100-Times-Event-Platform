@@ -113,6 +113,7 @@ def trigger_discovery_run(
             config.events_per_run = payload.events_per_run
         if payload.target_valid_events is not None:
             config.target_valid_events = payload.target_valid_events
+            config.events_per_run = max(config.events_per_run or 0, payload.target_valid_events * 10, 500)
         if payload.fallback_to_other_sector is not None:
             config.fallback_to_other_sector = payload.fallback_to_other_sector
         if payload.reject_no_organizer is not None:
