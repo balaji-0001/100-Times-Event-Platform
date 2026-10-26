@@ -398,6 +398,43 @@ def run_discovery_agent(
                 logger.exception("Ticketmaster API discovery encountered an unexpected error.")
 
         # ------------------------------------------------------------------
+        # 1.6. MODULAR SOURCE ADAPTERS (OPERATIONAL GLOBAL DIRECTORIES & VENUES)
+        # ------------------------------------------------------------------
+        if not _limit_reached(already_today, summary, config):
+            from backend.services.discovery_agent.adapters import adapter_manager
+            from backend.services.discovery_agent.source_registry import ALL_CANDIDATE_SOURCES
+            try:
+                enabled_operational_sources = [
+                    src["id"] for src in ALL_CANDIDATE_SOURCES 
+                    if src.get("integration_status") == "Operational" and src.get("is_enabled", True)
+                    and src["id"] != "ticketmaster_api"
+                ]
+                if config.sources and "all" not in config.sources and "all_sources" not in config.sources:
+                    requested = set(config.sources)
+                    selected_sids = [s for s in enabled_operational_sources if s in requested]
+                else:
+                    selected_sids = enabled_operational_sources[:6]
+
+                if selected_sids:
+                    logger.info("Executing discovery across operational source adapters: %s", selected_sids)
+                    for sid in selected_sids:
+                        if is_run_cancelled(run.id, db) or _limit_reached(already_today, summary, config):
+                            break
+                        adapter = adapter_manager.get_adapter(sid)
+                        if not adapter:
+                            continue
+                        try:
+                            adapter_cands = adapter.discover(config, limit=config.events_per_listing)
+                            for cand in adapter_cands:
+                                if is_run_cancelled(run.id, db) or _limit_reached(already_today, summary, config):
+                                    break
+                                _process_candidate(db, run, cand, config, summary, effective_categories)
+                        except Exception:
+                            logger.exception("Adapter discovery error for source %r", sid)
+            except Exception:
+                logger.exception("Modular source adapter stage encountered an error")
+
+        # ------------------------------------------------------------------
         # 2. TARGETED WEB & SOCIAL MEDIA SEARCH QUERIES
         # ------------------------------------------------------------------
         search_error: str | None = None

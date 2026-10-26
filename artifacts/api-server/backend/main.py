@@ -24,6 +24,7 @@ from backend.routes import (
     dashboard,
     directories,
     discovery,
+    discovery_sources,
     event_promotions,
     events,
     networking,
@@ -217,6 +218,7 @@ app.include_router(ai.router, prefix="/api")
 app.include_router(acquisition.router, prefix="/api")
 app.include_router(outreach.router, prefix="/api")
 app.include_router(discovery.router, prefix="/api")
+app.include_router(discovery_sources.router)
 app.include_router(workflow.router, prefix="/api")
 app.include_router(automations.router, prefix="/api")
 app.include_router(community_discovery.router, prefix="/api")

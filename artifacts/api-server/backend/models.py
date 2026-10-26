@@ -584,6 +584,36 @@ class EventSource(Base):
     event: Mapped[DiscoveredEvent] = relationship(back_populates="sources")
 
 
+class EventDiscoverySource(Base):
+    """Registry of global event discovery sources, platforms, exhibition organizers,
+    venue calendars, and research tools."""
+
+    __tablename__ = "event_discovery_sources"
+
+    id: Mapped[str] = mapped_column(String(60), primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    website_url: Mapped[str] = mapped_column(Text, nullable=False)
+    source_category: Mapped[str] = mapped_column(String(60), nullable=False)
+    supported_industries: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    supported_countries: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    supported_event_types: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    access_method: Mapped[str] = mapped_column(String(60), nullable=False)
+    api_docs_url: Mapped[str | None] = mapped_column(Text)
+    api_auth_requirements: Mapped[str | None] = mapped_column(Text)
+    permission_status: Mapped[str] = mapped_column(String(60), default="Permitted (Public Web)", nullable=False)
+    integration_status: Mapped[str] = mapped_column(String(40), default="Not Evaluated", nullable=False)
+    last_successful_execution: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    events_discovered: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    events_extracted: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    unique_events_discovered: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    health_status: Mapped[str] = mapped_column(String(30), default="untested", nullable=False)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class OrganizerContact(Base):
     """One row per contact channel for a `DiscoveredOrganizer` — an organizer
     can have several (a general email, a specific person's email, a phone

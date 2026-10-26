@@ -1170,3 +1170,166 @@ export function useTriggerEventPromotion() {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Global Discovery Source Registry (70+ Sources Catalog)
+// ---------------------------------------------------------------------------
+
+export interface EventDiscoverySource {
+  id: string;
+  name: string;
+  website_url: string;
+  source_category: string;
+  supported_industries: string[];
+  supported_countries: string[];
+  supported_event_types: string[];
+  access_method: string;
+  api_docs_url: string | null;
+  api_auth_requirements: string | null;
+  permission_status: string;
+  integration_status: string;
+  last_successful_execution: string | null;
+  last_error: string | null;
+  events_discovered: number;
+  events_extracted: number;
+  unique_events_discovered: number;
+  health_status: string;
+  is_enabled: boolean;
+  config: Record<string, any>;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface SourceRegistryStats {
+  total_sources: number;
+  sources_evaluated: number;
+  sources_approved: number;
+  sources_integrated: number;
+  sources_tested: number;
+  operational_sources: number;
+  awaiting_credentials: number;
+  permission_review: number;
+  temporarily_unavailable: number;
+  unsupported: number;
+  enabled_sources: number;
+  by_category: Record<string, number>;
+  by_status: Record<string, number>;
+  by_health: Record<string, number>;
+  by_access_method: Record<string, number>;
+}
+
+export const sourceRegistryKeys = {
+  all: ['discovery_sources'] as const,
+  list: (params?: Record<string, any>) => ['discovery_sources', 'list', params] as const,
+  stats: ['discovery_sources', 'stats'] as const,
+  detail: (id: string) => ['discovery_sources', 'detail', id] as const,
+};
+
+export function useDiscoverySources(params?: {
+  category?: string;
+  status?: string;
+  access_method?: string;
+  search?: string;
+  enabled_only?: boolean;
+}) {
+  const qStr = new URLSearchParams();
+  if (params?.category && params.category !== '__all__') qStr.set('category', params.category);
+  if (params?.status && params.status !== '__all__') qStr.set('status', params.status);
+  if (params?.access_method && params.access_method !== '__all__') qStr.set('access_method', params.access_method);
+  if (params?.search) qStr.set('search', params.search);
+  if (params?.enabled_only) qStr.set('enabled_only', 'true');
+  const qs = qStr.toString();
+
+  return useQuery({
+    queryKey: sourceRegistryKeys.list(params),
+    queryFn: () =>
+      customFetch<{ total: number; sources: EventDiscoverySource[] }>(
+        `/api/discovery/sources${qs ? `?${qs}` : ''}`
+      ),
+  });
+}
+
+export function useDiscoverySourceStats() {
+  return useQuery({
+    queryKey: sourceRegistryKeys.stats,
+    queryFn: () => customFetch<SourceRegistryStats>('/api/discovery/sources/stats'),
+  });
+}
+
+export function useUpdateDiscoverySource() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      sourceId,
+      updates,
+    }: {
+      sourceId: string;
+      updates: Partial<EventDiscoverySource>;
+    }) =>
+      customFetch<{ success: boolean; source: Partial<EventDiscoverySource> }>(
+        `/api/discovery/sources/${sourceId}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify(updates),
+        }
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: sourceRegistryKeys.all });
+    },
+  });
+}
+
+export function useProbeSourceHealth() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (sourceId: string) =>
+      customFetch<{
+        status: string;
+        latency_ms: number;
+        error: string | null;
+        details?: Record<string, any>;
+      }>(`/api/discovery/sources/${sourceId}/health`, { method: 'POST' }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: sourceRegistryKeys.all });
+    },
+  });
+}
+
+export function useTestSourceExtraction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      sourceId,
+      sampleQueryOrUrl,
+    }: {
+      sourceId: string;
+      sampleQueryOrUrl?: string;
+    }) =>
+      customFetch<{
+        success: boolean;
+        events_found: number;
+        sample_events: any[];
+        duration_ms: number;
+        error: string | null;
+      }>(`/api/discovery/sources/${sourceId}/test`, {
+        method: 'POST',
+        body: JSON.stringify({ sample_query_or_url: sampleQueryOrUrl }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: sourceRegistryKeys.all });
+    },
+  });
+}
+
+export function useSyncDiscoverySources() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      customFetch<{ success: boolean; result: any }>('/api/discovery/sources/sync', {
+        method: 'POST',
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: sourceRegistryKeys.all });
+    },
+  });
+}
+

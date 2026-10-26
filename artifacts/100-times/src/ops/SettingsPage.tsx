@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   CheckCircle2,
+  Database,
   Eye,
   EyeOff,
   Globe,
@@ -43,13 +44,14 @@ import {
 } from './ui';
 import { ManualResearchForm } from './ManualResearch';
 import { DiscoverySourcesManager } from './DiscoverySourcesManager';
+import { SourceRegistryView } from './SourceRegistryView';
 
 export function SettingsPage() {
   const me = useMe();
   const stats = useOutreachStats();
   const runBatch = useRunOutreachBatch();
   const followups = useProcessFollowups();
-  const [activeTab, setActiveTab] = useState<'sources' | 'smtp' | 'system'>('sources');
+  const [activeTab, setActiveTab] = useState<'registry' | 'sources' | 'smtp' | 'system'>('registry');
   const [maxCandidates, setMaxCandidates] = useState('10');
 
   // SMTP Settings State
@@ -125,6 +127,19 @@ export function SettingsPage() {
       <div className="mt-6 flex flex-wrap gap-2 border-b border-foreground/10 pb-4">
         <button
           type="button"
+          onClick={() => setActiveTab('registry')}
+          className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold transition-all ${
+            activeTab === 'registry'
+              ? 'bg-accent text-accent-foreground shadow-sm ring-1 ring-accent/30'
+              : 'border border-foreground/10 bg-card text-muted-foreground hover:bg-muted/40 hover:text-foreground'
+          }`}
+        >
+          <Database size={14} /> Global Source Registry (76+)
+          <Badge tone="accent">Directory & Adapters</Badge>
+        </button>
+
+        <button
+          type="button"
           onClick={() => setActiveTab('sources')}
           className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold transition-all ${
             activeTab === 'sources'
@@ -132,8 +147,8 @@ export function SettingsPage() {
               : 'border border-foreground/10 bg-card text-muted-foreground hover:bg-muted/40 hover:text-foreground'
           }`}
         >
-          <Globe size={14} /> Event Discovery Sources & APIs
-          <Badge tone="accent">Ticketmaster & Websites</Badge>
+          <Globe size={14} /> Discovery Channels & Custom Websites
+          <Badge tone="accent">Ticketmaster & URLs</Badge>
         </button>
 
         <button
@@ -161,6 +176,13 @@ export function SettingsPage() {
           <Sliders size={14} /> Agent Controls & Account
         </button>
       </div>
+
+      {/* Tab 0: Global Source Registry (76+) */}
+      {activeTab === 'registry' && (
+        <div className="mt-6">
+          <SourceRegistryView />
+        </div>
+      )}
 
       {/* Tab 1: Discovery Sources & APIs */}
       {activeTab === 'sources' && (
