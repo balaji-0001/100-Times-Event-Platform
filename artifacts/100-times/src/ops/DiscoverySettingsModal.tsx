@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { useCategories, useDiscoveryAutoStatus, useSetDiscoveryAuto } from './api';
 import { GeoChecklistSelector } from './GeoChecklistSelector';
+import { DiscoverySourcesManager } from './DiscoverySourcesManager';
 import { Btn, Drawer, ErrorState, Notice, inputClass } from './ui';
 
 function ToggleSwitch({
@@ -382,10 +383,7 @@ export function DiscoverySettingsDrawer({
               : 'text-muted-foreground hover:bg-foreground/5 hover:text-foreground'
           }`}
         >
-          <Share2 size={13} /> Discovery Sources
-          <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-background/40 font-bold">
-            {selectedSources.length}
-          </span>
+          <Share2 size={13} /> Sources & Websites
         </button>
         <button
           type="button"
@@ -522,83 +520,13 @@ export function DiscoverySettingsDrawer({
       )}
 
       {activeTab === 'sources' && (
-        <div className="grid gap-4 text-xs">
-          <div className="flex items-center justify-between">
-            <div>
-              <h4 className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                <Radio size={13} className="text-accent" /> Enabled Fetching Sources
-              </h4>
-              <p className="text-[11px] text-muted-foreground mt-0.5">
-                Choose which channels the Event Discovery Agent searches and fetches events from for the user end.
-              </p>
-            </div>
-            <div className="flex gap-2 text-[10px]">
-              <button
-                type="button"
-                onClick={selectAllSources}
-                className="text-accent hover:underline font-medium"
-              >
-                Select all
-              </button>
-              <span>•</span>
-              <button
-                type="button"
-                onClick={clearSources}
-                className="text-muted-foreground hover:underline"
-              >
-                Reset to default
-              </button>
-            </div>
-          </div>
-
-          <div className="grid gap-2">
-            {AVAILABLE_SOURCES.map((source) => {
-              const active = selectedSources.includes(source.id);
-              const Icon = source.icon;
-              return (
-                <div
-                  key={source.id}
-                  onClick={() => !setAuto.isPending && toggleSource(source.id)}
-                  className={`flex items-start justify-between gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
-                    active
-                      ? 'border-accent/40 bg-accent/5 hover:bg-accent/10'
-                      : 'border-foreground/10 bg-card/60 hover:bg-card/90 opacity-70'
-                  }`}
-                >
-                  <div className="flex items-start gap-2.5">
-                    <div
-                      className={`p-1.5 rounded-md mt-0.5 shrink-0 ${
-                        active ? 'bg-accent/15 text-accent' : 'bg-foreground/10 text-muted-foreground'
-                      }`}
-                    >
-                      <Icon size={14} />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-foreground text-xs">{source.name}</span>
-                        {source.badge && (
-                          <span className="px-1.5 py-0.2 text-[9px] font-medium tracking-wide uppercase rounded bg-accent/20 text-accent">
-                            {source.badge}
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
-                        {source.description}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="pt-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
-                    <ToggleSwitch
-                      checked={active}
-                      onChange={() => toggleSource(source.id)}
-                      disabled={setAuto.isPending}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        <DiscoverySourcesManager
+          compact={true}
+          onSaved={() => {
+            setSaveSuccess(true);
+            setTimeout(() => setSaveSuccess(false), 3000);
+          }}
+        />
       )}
 
       {activeTab === 'rejection' && (

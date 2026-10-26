@@ -164,6 +164,9 @@ export interface DiscoveryAutoStatus {
   minConfidenceScore?: number;
   blacklistedKeywords?: string[];
   excludedDomains?: string[];
+  listingUrls?: string[];
+  ticketmasterApiKey?: string | null;
+  ticketmasterEnabled?: boolean;
 }
 
 export interface OutreachAutoStatus {
@@ -497,6 +500,19 @@ export function useEditOutreachMessage() {
         body: JSON.stringify({ subject, message }),
       }),
     onSuccess: () => invalidate(keys.outreach),
+  });
+}
+
+export function useTestTicketmaster() {
+  return useMutation({
+    mutationFn: (body?: { apiKey?: string }) =>
+      customFetch<{ success: boolean; message: string; totalEvents?: number }>(
+        '/api/discovery/ticketmaster/test',
+        {
+          method: 'POST',
+          body: body ? JSON.stringify(body) : undefined,
+        }
+      ),
   });
 }
 

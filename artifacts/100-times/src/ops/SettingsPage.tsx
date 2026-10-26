@@ -1,5 +1,18 @@
 import { useEffect, useState } from 'react';
-import { CheckCircle2, Eye, EyeOff, Mail, Play, RefreshCw, Send, Trash2, XCircle } from 'lucide-react';
+import {
+  CheckCircle2,
+  Eye,
+  EyeOff,
+  Globe,
+  Mail,
+  Play,
+  RefreshCw,
+  Send,
+  Sliders,
+  Ticket,
+  Trash2,
+  XCircle,
+} from 'lucide-react';
 import {
   OutboxItem,
   useClearEmailOutbox,
@@ -29,12 +42,14 @@ import {
   inputClass,
 } from './ui';
 import { ManualResearchForm } from './ManualResearch';
+import { DiscoverySourcesManager } from './DiscoverySourcesManager';
 
 export function SettingsPage() {
   const me = useMe();
   const stats = useOutreachStats();
   const runBatch = useRunOutreachBatch();
   const followups = useProcessFollowups();
+  const [activeTab, setActiveTab] = useState<'sources' | 'smtp' | 'system'>('sources');
   const [maxCandidates, setMaxCandidates] = useState('10');
 
   // SMTP Settings State
@@ -102,75 +117,137 @@ export function SettingsPage() {
     <div>
       <PageHeader
         kicker="Settings"
-        title="Console settings and agent controls"
-        subtitle="Manage SMTP email delivery, organizer acquisition thresholds, and automated agent schedules."
+        title="Console settings and platform controls"
+        subtitle="Manage event discovery sources & APIs, website scrapers, SMTP email delivery, and agent schedules."
       />
 
-      <div className="mt-8 grid gap-6 lg:grid-cols-2">
-        {/* Account & Platform Info */}
-        <Panel className="p-6">
-          <Section title="Signed in as">
-            <DL rows={[['Name', me.data?.name ?? '—'], ['Email', me.data?.email ?? '—'], ['Role', me.data?.role ?? '—']]} />
-          </Section>
+      {/* Settings Navigation Tabs */}
+      <div className="mt-6 flex flex-wrap gap-2 border-b border-foreground/10 pb-4">
+        <button
+          type="button"
+          onClick={() => setActiveTab('sources')}
+          className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold transition-all ${
+            activeTab === 'sources'
+              ? 'bg-accent text-accent-foreground shadow-sm ring-1 ring-accent/30'
+              : 'border border-foreground/10 bg-card text-muted-foreground hover:bg-muted/40 hover:text-foreground'
+          }`}
+        >
+          <Globe size={14} /> Event Discovery Sources & APIs
+          <Badge tone="accent">Ticketmaster & Websites</Badge>
+        </button>
 
-          <Section title="Schedules & Automation">
-            <p className="text-sm text-muted-foreground">
-              The discovery automation's scan has its own on/off switch on the Dashboard. Outreach batches are drafted only via
-              “Generate outreach batch”, and every email waits for human approval before delivery.
-            </p>
-          </Section>
-        </Panel>
+        <button
+          type="button"
+          onClick={() => setActiveTab('smtp')}
+          className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold transition-all ${
+            activeTab === 'smtp'
+              ? 'bg-accent text-accent-foreground shadow-sm ring-1 ring-accent/30'
+              : 'border border-foreground/10 bg-card text-muted-foreground hover:bg-muted/40 hover:text-foreground'
+          }`}
+        >
+          <Mail size={14} /> Outgoing Email & SMTP Relay
+          <Badge tone={isReal ? 'good' : 'warn'}>{isReal ? 'Live SMTP' : 'Mock Mode'}</Badge>
+        </button>
 
-        {/* Manual Runs Panel */}
-        <Panel className="p-6">
-          <Section title="Run Organizer Discovery (automation) — manual research">
-            <ManualResearchForm />
-          </Section>
-          <Section title="Run Organizer Outreach (Agent 2)">
-            <div className="grid gap-2 text-xs">
-              <label>
-                Max organizers to draft for
-                <input
-                  type="number"
-                  min={1}
-                  max={200}
-                  value={maxCandidates}
-                  onChange={(e) => setMaxCandidates(e.target.value)}
-                  className={`${inputClass} mt-1`}
-                />
-              </label>
-              <div className="flex flex-wrap gap-2">
-                <Btn
-                  variant="primary"
-                  loading={runBatch.isPending}
-                  onClick={() => runBatch.mutate({ maxCandidates: Number(maxCandidates) || undefined })}
-                >
-                  <Play size={13} /> Generate outreach batch
-                </Btn>
-                <Btn loading={followups.isPending} onClick={() => followups.mutate()}>
-                  Process follow-ups
-                </Btn>
-              </div>
-              <p className="text-[11px] text-muted-foreground">Drafts land in Outreach → Pending. Nothing is sent until approved.</p>
-              {runBatch.isError && <ErrorState error={runBatch.error} title="Batch failed" />}
-              {runBatch.isSuccess && (
-                <Notice tone="info">
-                  <pre className="whitespace-pre-wrap font-mono-face text-[11px]">{JSON.stringify(runBatch.data, null, 2)}</pre>
-                </Notice>
-              )}
-              {followups.isSuccess && (
-                <Notice tone="info">
-                  <pre className="whitespace-pre-wrap font-mono-face text-[11px]">{JSON.stringify(followups.data, null, 2)}</pre>
-                </Notice>
-              )}
-            </div>
-          </Section>
-        </Panel>
+        <button
+          type="button"
+          onClick={() => setActiveTab('system')}
+          className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold transition-all ${
+            activeTab === 'system'
+              ? 'bg-accent text-accent-foreground shadow-sm ring-1 ring-accent/30'
+              : 'border border-foreground/10 bg-card text-muted-foreground hover:bg-muted/40 hover:text-foreground'
+          }`}
+        >
+          <Sliders size={14} /> Agent Controls & Account
+        </button>
       </div>
 
-      {/* SMTP Email Delivery Configuration */}
-      <div className="mt-8">
-        <Panel className="p-6">
+      {/* Tab 1: Discovery Sources & APIs */}
+      {activeTab === 'sources' && (
+        <div className="mt-6">
+          <Panel className="p-6">
+            <div className="border-b border-foreground/10 pb-4 mb-6">
+              <h3 className="font-display text-lg font-bold flex items-center gap-2">
+                <Globe size={18} className="text-accent" /> Event Discovery Sources & External APIs
+              </h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Configure official event APIs (Ticketmaster Discovery API v2), manage target website URL templates (add/remove custom listing websites), and toggle multi-channel scrapers.
+              </p>
+            </div>
+            <DiscoverySourcesManager />
+          </Panel>
+        </div>
+      )}
+
+      {/* Tab 3: System & Manual Agent Runs */}
+      {activeTab === 'system' && (
+        <div className="mt-6 grid gap-6 lg:grid-cols-2">
+          {/* Account & Platform Info */}
+          <Panel className="p-6">
+            <Section title="Signed in as">
+              <DL rows={[['Name', me.data?.name ?? '—'], ['Email', me.data?.email ?? '—'], ['Role', me.data?.role ?? '—']]} />
+            </Section>
+
+            <Section title="Schedules & Automation">
+              <p className="text-sm text-muted-foreground">
+                The discovery automation's scan has its own on/off switch on the Dashboard. Outreach batches are drafted only via
+                “Generate outreach batch”, and every email waits for human approval before delivery.
+              </p>
+            </Section>
+          </Panel>
+
+          {/* Manual Runs Panel */}
+          <Panel className="p-6">
+            <Section title="Run Organizer Discovery (automation) — manual research">
+              <ManualResearchForm />
+            </Section>
+            <Section title="Run Organizer Outreach (Agent 2)">
+              <div className="grid gap-2 text-xs">
+                <label>
+                  Max organizers to draft for
+                  <input
+                    type="number"
+                    min={1}
+                    max={200}
+                    value={maxCandidates}
+                    onChange={(e) => setMaxCandidates(e.target.value)}
+                    className={`${inputClass} mt-1`}
+                  />
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  <Btn
+                    variant="primary"
+                    loading={runBatch.isPending}
+                    onClick={() => runBatch.mutate({ maxCandidates: Number(maxCandidates) || undefined })}
+                  >
+                    <Play size={13} /> Generate outreach batch
+                  </Btn>
+                  <Btn loading={followups.isPending} onClick={() => followups.mutate()}>
+                    Process follow-ups
+                  </Btn>
+                </div>
+                <p className="text-[11px] text-muted-foreground">Drafts land in Outreach → Pending. Nothing is sent until approved.</p>
+                {runBatch.isError && <ErrorState error={runBatch.error} title="Batch failed" />}
+                {runBatch.isSuccess && (
+                  <Notice tone="info">
+                    <pre className="whitespace-pre-wrap font-mono-face text-[11px]">{JSON.stringify(runBatch.data, null, 2)}</pre>
+                  </Notice>
+                )}
+                {followups.isSuccess && (
+                  <Notice tone="info">
+                    <pre className="whitespace-pre-wrap font-mono-face text-[11px]">{JSON.stringify(followups.data, null, 2)}</pre>
+                  </Notice>
+                )}
+              </div>
+            </Section>
+          </Panel>
+        </div>
+      )}
+
+      {/* Tab 2: Outgoing Email & SMTP Relay */}
+      {activeTab === 'smtp' && (
+        <div className="mt-6 space-y-8">
+          <Panel className="p-6">
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-foreground/10 pb-4">
             <div>
               <div className="flex items-center gap-2">
@@ -386,10 +463,8 @@ export function SettingsPage() {
             )}
           </div>
         </Panel>
-      </div>
 
-      {/* Outgoing Email Outbox (Live Log) */}
-      <div className="mt-8">
+        {/* Outgoing Email Outbox (Live Log) */}
         <Panel className="p-6">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-foreground/10 pb-4">
             <div>
@@ -484,6 +559,7 @@ export function SettingsPage() {
           </div>
         </Panel>
       </div>
+      )}
 
       {/* Email Preview Drawer */}
       {selectedMail && (

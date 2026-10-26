@@ -839,6 +839,9 @@ class DiscoveryRunRequest(BaseModel):
     min_confidence_score: int | None = Field(default=None, alias="minConfidenceScore")
     blacklisted_keywords: list[str] | None = Field(default=None, alias="blacklistedKeywords")
     excluded_domains: list[str] | None = Field(default=None, alias="excludedDomains")
+    listing_urls: list[str] | None = Field(default=None, alias="listingUrls")
+    ticketmaster_api_key: str | None = Field(default=None, alias="ticketmasterApiKey")
+    ticketmaster_enabled: bool | None = Field(default=None, alias="ticketmasterEnabled")
 
 
 # --- Community Discovery Agent ("Agent 5") ---
@@ -1004,6 +1007,9 @@ class DiscoveryAutoStatusOut(APIModel):
     min_confidence_score: int = Field(default=50, alias="minConfidenceScore")
     blacklisted_keywords: list[str] = Field(default_factory=list, alias="blacklistedKeywords")
     excluded_domains: list[str] = Field(default_factory=list, alias="excludedDomains")
+    listing_urls: list[str] = Field(default_factory=list, alias="listingUrls")
+    ticketmaster_api_key: str | None = Field(default=None, alias="ticketmasterApiKey")
+    ticketmaster_enabled: bool = Field(default=False, alias="ticketmasterEnabled")
 
 
 class DiscoveryAutoToggleRequest(BaseModel):
@@ -1035,6 +1041,9 @@ class DiscoveryAutoToggleRequest(BaseModel):
     min_confidence_score: int | None = Field(default=None, alias="minConfidenceScore")
     blacklisted_keywords: list[str] | None = Field(default=None, alias="blacklistedKeywords")
     excluded_domains: list[str] | None = Field(default=None, alias="excludedDomains")
+    listing_urls: list[str] | None = Field(default=None, alias="listingUrls")
+    ticketmaster_api_key: str | None = Field(default=None, alias="ticketmasterApiKey")
+    ticketmaster_enabled: bool | None = Field(default=None, alias="ticketmasterEnabled")
 
 
 class OutreachAutoStatusOut(APIModel):
@@ -1178,3 +1187,13 @@ class GuardrailLogOut(APIModel):
     rule_name: str = Field(alias="ruleName")
     input_snippet: str | None = Field(default=None, alias="inputSnippet")
     created_at: datetime = Field(alias="createdAt")
+
+
+class TicketmasterTestRequest(BaseModel):
+    api_key: str | None = Field(default=None, alias="apiKey")
+
+
+class TicketmasterTestOut(APIModel):
+    success: bool
+    message: str
+    total_events: int = Field(default=0, alias="totalEvents")

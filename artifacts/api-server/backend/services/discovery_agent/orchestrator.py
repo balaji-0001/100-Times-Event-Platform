@@ -100,8 +100,10 @@ def config_from_settings(settings: Settings, db: Session | None = None) -> Disco
         events_per_run=auto_scope.get("events_per_run") or 100,
         target_valid_events=auto_scope.get("target_valid_events", 50),
         confidence_threshold=settings.discovery_confidence_threshold,
-        listing_urls=_split(settings.discovery_listing_urls),
+        listing_urls=auto_scope.get("listing_urls") or _split(settings.discovery_listing_urls),
         events_per_listing=settings.discovery_events_per_listing,
+        ticketmaster_api_key=auto_scope.get("ticketmaster_api_key") or getattr(settings, "ticketmaster_api_key", None),
+        ticketmaster_enabled=auto_scope.get("ticketmaster_enabled", bool(auto_scope.get("ticketmaster_api_key") or getattr(settings, "ticketmaster_api_key", None))),
         require_organizer_email=auto_scope.get("require_organizer_email", getattr(settings, "discovery_require_organizer_email", False)),
         reject_no_organizer=auto_scope.get("reject_no_organizer", False),
         require_organizer_phone=auto_scope.get("require_organizer_phone", False),
@@ -370,6 +372,30 @@ def run_discovery_agent(
                 continue
             pages_read.add(listing_url)
             _read_page(db, run, listing_url, config, summary, already_today, effective_categories)
+
+        # ------------------------------------------------------------------
+        # 1.5. TICKETMASTER OFFICIAL DISCOVERY API (FAST & VERIFIED)
+        # ------------------------------------------------------------------
+        tm_key = getattr(config, "ticketmaster_api_key", None)
+        tm_enabled = getattr(config, "ticketmaster_enabled", False) or ("ticketmaster" in (config.sources or []))
+        if tm_enabled and tm_key and not _limit_reached(already_today, summary, config):
+            logger.info("Querying Ticketmaster Discovery API for target cities...")
+            from backend.services.discovery_agent import ticketmaster
+            try:
+                tm_candidates = ticketmaster.fetch_ticketmaster_events(
+                    api_key=tm_key,
+                    cities=target_cities,
+                    countries=getattr(config, "countries", None),
+                    country=getattr(config, "country", None),
+                    categories=effective_categories,
+                    max_events_per_city=config.events_per_listing,
+                )
+                for cand in tm_candidates:
+                    if is_run_cancelled(run.id, db) or _limit_reached(already_today, summary, config):
+                        break
+                    _process_candidate(db, run, cand, config, summary, effective_categories)
+            except Exception:
+                logger.exception("Ticketmaster API discovery encountered an unexpected error.")
 
         # ------------------------------------------------------------------
         # 2. TARGETED WEB & SOCIAL MEDIA SEARCH QUERIES

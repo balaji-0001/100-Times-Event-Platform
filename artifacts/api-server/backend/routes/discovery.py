@@ -27,6 +27,8 @@ from backend.schemas import (
     DiscoveredOrganizerOut,
     DiscoveryAutoStatusOut,
     DiscoveryAutoToggleRequest,
+    TicketmasterTestRequest,
+    TicketmasterTestOut,
     DiscoveryRunRequest,
     DiscoveryStatsOut,
     VenueMissingEventOut,
@@ -110,6 +112,12 @@ def trigger_discovery_run(
             config.date_to = payload.date_to
         if payload.sources is not None:
             config.sources = payload.sources
+        if payload.listing_urls is not None:
+            config.listing_urls = payload.listing_urls
+        if payload.ticketmaster_api_key is not None:
+            config.ticketmaster_api_key = payload.ticketmaster_api_key
+        if payload.ticketmaster_enabled is not None:
+            config.ticketmaster_enabled = payload.ticketmaster_enabled
         if payload.events_per_run is not None:
             config.events_per_run = payload.events_per_run
         if payload.target_valid_events is not None:
@@ -255,6 +263,9 @@ def get_discovery_auto(db: Session = Depends(get_db), _user: User = _admin) -> D
         min_confidence_score=auto_scope.get("min_confidence_score", 20),
         blacklisted_keywords=auto_scope.get("blacklisted_keywords", []),
         excluded_domains=auto_scope.get("excluded_domains", []),
+        listing_urls=auto_scope.get("listing_urls") or [u.strip() for u in settings.discovery_listing_urls.split(",") if u.strip()],
+        ticketmaster_api_key=auto_scope.get("ticketmaster_api_key") or getattr(settings, "ticketmaster_api_key", None),
+        ticketmaster_enabled=auto_scope.get("ticketmaster_enabled", bool(auto_scope.get("ticketmaster_api_key") or getattr(settings, "ticketmaster_api_key", None))),
     )
 
 
@@ -281,6 +292,12 @@ def set_discovery_auto(payload: DiscoveryAutoToggleRequest, db: Session = Depend
         settings_updates["categories"] = payload.categories
     if payload.sources is not None:
         settings_updates["sources"] = payload.sources
+    if payload.listing_urls is not None:
+        settings_updates["listing_urls"] = payload.listing_urls
+    if payload.ticketmaster_api_key is not None:
+        settings_updates["ticketmaster_api_key"] = payload.ticketmaster_api_key
+    if payload.ticketmaster_enabled is not None:
+        settings_updates["ticketmaster_enabled"] = payload.ticketmaster_enabled
     if payload.search_depth is not None:
         settings_updates["search_depth"] = payload.search_depth
     if payload.daily_limit is not None:
@@ -345,6 +362,9 @@ def set_discovery_auto(payload: DiscoveryAutoToggleRequest, db: Session = Depend
         min_confidence_score=auto_scope.get("min_confidence_score", 20),
         blacklisted_keywords=auto_scope.get("blacklisted_keywords", []),
         excluded_domains=auto_scope.get("excluded_domains", []),
+        listing_urls=auto_scope.get("listing_urls") or [u.strip() for u in settings.discovery_listing_urls.split(",") if u.strip()],
+        ticketmaster_api_key=auto_scope.get("ticketmaster_api_key") or getattr(settings, "ticketmaster_api_key", None),
+        ticketmaster_enabled=auto_scope.get("ticketmaster_enabled", bool(auto_scope.get("ticketmaster_api_key") or getattr(settings, "ticketmaster_api_key", None))),
     )
 
 
@@ -603,4 +623,19 @@ def export_discovered_events(
         content=build_events_workbook(events),
         media_type=XLSX_MEDIA_TYPE,
         headers={"Content-Disposition": f'attachment; filename="discovered-events_{label}.xlsx"'},
+    )
+
+
+@router.post("/ticketmaster/test", response_model=TicketmasterTestOut)
+def test_ticketmaster_api(payload: TicketmasterTestRequest | None = None, db: Session = Depends(get_db), _user: User = _admin) -> TicketmasterTestOut:
+    """Validate a Ticketmaster Consumer API Key against Ticketmaster Discovery API v2."""
+    auto_scope = get_discovery_auto_settings(db)
+    settings = get_settings()
+    api_key = (payload.api_key if payload and payload.api_key else None) or auto_scope.get("ticketmaster_api_key") or getattr(settings, "ticketmaster_api_key", None)
+    from backend.services.discovery_agent.ticketmaster import test_ticketmaster_connection
+    res = test_ticketmaster_connection(api_key or "")
+    return TicketmasterTestOut(
+        success=res["success"],
+        message=res["message"],
+        total_events=res.get("totalEvents", 0),
     )

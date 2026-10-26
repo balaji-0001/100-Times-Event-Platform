@@ -29,10 +29,12 @@ class DiscoveryConfig:
     require_organizer_email: bool = False  # mandatory organizer email check (production rule)
     date_from: str | None = None  # optional start date filter (YYYY-MM-DD)
     date_to: str | None = None  # optional end date filter (YYYY-MM-DD)
+    ticketmaster_api_key: str | None = None
+    ticketmaster_enabled: bool = False
     is_manual: bool = False  # True when manually triggered by an admin from Ops / Manual Research
 
     # Configurable rejection & quality filter rules
-    reject_no_organizer: bool = True
+    reject_no_organizer: bool = False
     require_organizer_phone: bool = False
     require_organizer_website: bool = False
     reject_past_events: bool = True
@@ -43,7 +45,7 @@ class DiscoveryConfig:
     fallback_to_other_sector: bool = True
     min_title_length: int = 8
     min_description_length: int = 20
-    min_confidence_score: int = 50
+    min_confidence_score: int = 0
     blacklisted_keywords: list[str] = field(default_factory=list)
     excluded_domains: list[str] = field(default_factory=list)
 

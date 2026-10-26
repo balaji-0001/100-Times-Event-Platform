@@ -147,6 +147,8 @@ class Settings(BaseSettings):
         "https://www.skillboxes.com/events"
     )
     discovery_events_per_listing: int = 25
+    ticketmaster_api_key: str | None = None
+    ticketmaster_enabled: bool = False
 
     # Community Discovery Agent ("Agent 5") — public web search (same DuckDuckGo
     # approach as Agent 1, no AI key required) for Telegram groups/channels and
