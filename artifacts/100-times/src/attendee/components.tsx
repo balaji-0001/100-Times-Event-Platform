@@ -301,7 +301,7 @@ export function AttendeeEventDrawer({ target, onClose }: { target: { kind: Event
           <section>
             <h3 className="mb-2 font-display text-base font-bold">Event</h3>
             <Row label="Date">{dateRange(ev)}{ev.startTime ? ` · ${ev.startTime}` : ''}</Row>
-            <Row label="Location">{[ev.venue, ev.city, ev.country].filter(Boolean).join(', ') || (ev.attendanceMode === 'online' ? 'Online' : NOT_PUBLISHED)}</Row>
+            <Row label="Location">{Array.from(new Set([ev.venue, ev.city, ev.country].filter(Boolean))).join(', ') || (ev.attendanceMode === 'online' ? 'Online' : NOT_PUBLISHED)}</Row>
             <Row label="Format">{ev.attendanceMode ? MODE_LABEL[ev.attendanceMode] : NOT_PUBLISHED}</Row>
             <Row label="Sector">{ev.sector ?? NOT_PUBLISHED}</Row>
             <Row label="Type">{ev.eventType ?? NOT_PUBLISHED}</Row>

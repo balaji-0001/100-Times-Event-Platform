@@ -29,6 +29,7 @@ import {
 import { useCategories, useDiscoveryAutoStatus, useSetDiscoveryAuto } from './api';
 import { GeoChecklistSelector } from './GeoChecklistSelector';
 import { DiscoverySourcesManager } from './DiscoverySourcesManager';
+import { DEFAULT_ACTIVE_SOURCES } from './discoverySourcesConfig';
 import { Btn, Drawer, ErrorState, Notice, inputClass } from './ui';
 
 function ToggleSwitch({
@@ -238,16 +239,7 @@ export function DiscoverySettingsDrawer({
       if (auto.data.sources && auto.data.sources.length > 0) {
         setSelectedSources(auto.data.sources);
       } else {
-        setSelectedSources([
-          'web',
-          'linkedin',
-          'facebook',
-          'instagram',
-          'twitter',
-          'telegram',
-          'reddit',
-          'event_platforms',
-        ]);
+        setSelectedSources(DEFAULT_ACTIVE_SOURCES);
       }
 
       // Sync rejection rules & sector fallback
@@ -522,6 +514,9 @@ export function DiscoverySettingsDrawer({
       {activeTab === 'sources' && (
         <DiscoverySourcesManager
           compact={true}
+          onChange={(s) => {
+            setSelectedSources(s.sources);
+          }}
           onSaved={() => {
             setSaveSuccess(true);
             setTimeout(() => setSaveSuccess(false), 3000);

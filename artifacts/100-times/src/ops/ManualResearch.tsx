@@ -35,6 +35,7 @@ import {
 import { useCategories, useDiscoveryAutoStatus, useRunDiscovery, useActiveDiscoveryRun, useStopDiscoveryRun } from './api';
 import { GeoChecklistSelector } from './GeoChecklistSelector';
 import { DiscoverySourcesManager } from './DiscoverySourcesManager';
+import { DEFAULT_ACTIVE_SOURCES } from './discoverySourcesConfig';
 import { Btn, DL, Drawer, ErrorState, Notice, inputClass } from './ui';
 
 const num = (v: string, fallback: number) => {
@@ -227,16 +228,7 @@ export function ManualResearchForm() {
   const [targetValidEvents, setTargetValidEvents] = useState('50');
 
   // Sources state
-  const [selectedSources, setSelectedSources] = useState<string[]>([
-    'web',
-    'linkedin',
-    'facebook',
-    'instagram',
-    'twitter',
-    'telegram',
-    'reddit',
-    'event_platforms',
-  ]);
+  const [selectedSources, setSelectedSources] = useState<string[]>(DEFAULT_ACTIVE_SOURCES);
   const [listingUrls, setListingUrls] = useState<string[]>([]);
   const [ticketmasterApiKey, setTicketmasterApiKey] = useState('');
   const [ticketmasterEnabled, setTicketmasterEnabled] = useState(false);

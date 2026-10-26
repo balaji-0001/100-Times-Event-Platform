@@ -180,6 +180,12 @@ def answer(db: Session, user: User, message: str, today: date | None = None) -> 
             f"You asked for {parsed.count}, but only {total} verified upcoming {description} "
             f"{'is' if total == 1 else 'are'} in the catalog — here {'it is' if total == 1 else 'they all are'}."
         )
+    elif parsed.use_profile and not prefs.is_empty():
+        scope = f"{description} " if filters else ""
+        reply = (
+            f"Here are your {len(picked)} best-matching verified upcoming {scope or 'events '}"
+            f"ranked by match with your preferences (out of {total}{' that fit' if filters else ' in the catalog'})."
+        )
     else:
         reply = f"Here {'is' if len(picked) == 1 else 'are'} {len(picked)} verified upcoming {description}"
         reply += f" (of {total} that fit)." if total > len(picked) else "."

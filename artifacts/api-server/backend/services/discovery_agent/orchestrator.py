@@ -349,27 +349,54 @@ def run_discovery_agent(
         from backend.services.discovery_agent.adapters import adapter_manager
         from backend.services.discovery_agent.source_registry import ALL_CANDIDATE_SOURCES
         try:
-            enabled_operational_sources = [
-                src["id"] for src in ALL_CANDIDATE_SOURCES 
-                if src.get("integration_status") == "Operational" and src.get("is_enabled", True)
-                and src["id"] != "ticketmaster_api"
-            ]
-            requested = set(config.sources or [])
-            is_broad_search = (
-                not requested
-                or "all" in requested
-                or "all_sources" in requested
-                or "web" in requested
-                or "event_platforms" in requested
-            )
-            if is_broad_search:
-                selected_sids = enabled_operational_sources
-            else:
-                selected_sids = [s for s in enabled_operational_sources if s in requested]
+            operational_by_cat = {}
+            operational_id_map = {}
+            for src in ALL_CANDIDATE_SOURCES:
+                if src.get("integration_status") == "Operational" and src.get("is_enabled", True) and src["id"] != "ticketmaster_api":
+                    cat_slug = src["source_category"].lower().replace(" & ", "_").replace(" ", "_")
+                    operational_by_cat.setdefault(cat_slug, []).append(src["id"])
+                    operational_id_map[src["id"]] = src
 
-            if selected_sids and not _limit_reached(already_today, summary, config):
-                logger.info("Executing discovery across operational source adapters: %s", selected_sids)
-                for sid in selected_sids:
+            requested = set(config.sources or [])
+            selected_sids = set()
+
+            # Broad search or presets
+            if not requested or "all" in requested or "all_sources" in requested or "all_operational" in requested:
+                selected_sids.update(operational_id_map.keys())
+            else:
+                if "global_adapters" in requested:
+                    # High-trust B2B directories, venue calendars, associations, exhibition organizers
+                    for cat in ["venue_calendar", "international_exhibition_organizer", "industry_association", "government_trade"]:
+                        selected_sids.update(operational_by_cat.get(cat, []))
+                    selected_sids.update(["dev_events", "wikicfp", "eventseye", "clocate", "tradeshowradar", "tradefairdates", "biztradeshows", "all_conference_alert", "conference_alerts"])
+                
+                # Check for category slug matches
+                for cat_slug, sids in operational_by_cat.items():
+                    if cat_slug in requested or f"cat_{cat_slug}" in requested:
+                        selected_sids.update(sids)
+
+                # Check for individual adapter ID matches
+                for sid in operational_id_map.keys():
+                    if sid in requested:
+                        selected_sids.add(sid)
+
+                # If consumer aggregators requested explicitly or through event_platforms
+                if "consumer_aggregators" in requested:
+                    selected_sids.update(["10times", "allevents", "eventbrite", "meetup", "skillboxes"])
+                elif "event_platforms" in requested:
+                    selected_sids.update(["10times", "allevents", "dev_events", "wikicfp"])
+
+                # If web search requested alone and nothing else was selected, enable B2B adapters
+                if "web" in requested and not selected_sids:
+                    selected_sids.update(["dev_events", "wikicfp", "dwtc_events", "excel_london", "gtr_events", "ieee_events"])
+
+            # Order adapters deterministically: dev_events and wikicfp first, then venue calendars, organizers, associations
+            priority_order = ["dev_events", "wikicfp", "dwtc_events", "excel_london", "javits_center", "mccormick_place", "messe_frankfurt_venue", "india_expo_centre", "gtr_events", "ieee_events", "acm", "rx_global", "informa_markets", "terrapinn", "messe_frankfurt_org", "dmg_events", "dwtc_org", "us_ita", "indian_trade_portal"]
+            ordered_sids = [s for s in priority_order if s in selected_sids] + [s for s in selected_sids if s not in priority_order]
+
+            if ordered_sids and not _limit_reached(already_today, summary, config):
+                logger.info("Executing discovery across %d operational source adapters: %s", len(ordered_sids), ordered_sids)
+                for sid in ordered_sids:
                     if is_run_cancelled(run.id, db) or _limit_reached(already_today, summary, config):
                         break
                     adapter = adapter_manager.get_adapter(sid)
@@ -413,7 +440,16 @@ def run_discovery_agent(
         # ------------------------------------------------------------------
         # 1.6. STRUCTURED EVENT LISTING PLATFORMS (TARGETED & DEDUP-CHECKED)
         # ------------------------------------------------------------------
-        if not _limit_reached(already_today, summary, config):
+        from backend.services.discovery_agent.listing_sources import DEFAULT_LISTING_URLS
+        has_custom_urls = bool(config.listing_urls and set(config.listing_urls) != set(DEFAULT_LISTING_URLS))
+        should_run_listings = (
+            not requested
+            or "consumer_aggregators" in requested
+            or "event_platforms" in requested
+            or "listing_sources" in requested
+            or has_custom_urls
+        )
+        if should_run_listings and not _limit_reached(already_today, summary, config):
             all_listing_urls = listing_sources.build_listing_urls(
                 config.listing_urls,
                 target_cities[:8],
@@ -445,7 +481,16 @@ def run_discovery_agent(
         # 2. TARGETED WEB & SOCIAL MEDIA SEARCH QUERIES
         # ------------------------------------------------------------------
         search_error: str | None = None
-        if not _limit_reached(already_today, summary, config):
+        should_run_web_search = (
+            not requested
+            or "web" in requested
+            or "google_search" in requested
+            or "bing_search" in requested
+            or "search_research_tool" in requested
+            or "all" in requested
+            or "all_sources" in requested
+        )
+        if should_run_web_search and not _limit_reached(already_today, summary, config):
             logger.info("Listing phase produced %d valid events (target: %d). Continuing search across web & social platforms...", summary.accepted_events, target_valid)
             for query in query_seeds.build_search_queries(config):
                 if is_run_cancelled(run.id, db):
