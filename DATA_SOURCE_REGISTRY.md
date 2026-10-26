@@ -258,3 +258,4 @@ All 76 sources have been tested and classified into their exact operational stat
 ### Permission Review & Under Evaluation (4 Sources)
 - **LinkedIn Search, Google Maps**: Public indexing permitted; restricted private data protected.
 - **Whova**: JavaScript heavy dynamic view; under evaluation for API endpoint consumption.
+

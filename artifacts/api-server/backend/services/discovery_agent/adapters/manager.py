@@ -189,3 +189,4 @@ class SourceAdapterManager:
 
 # Singleton manager instance
 adapter_manager = SourceAdapterManager()
+

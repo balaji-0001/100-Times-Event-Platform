@@ -146,3 +146,4 @@ class BaseSourceAdapter(abc.ABC):
             },
             best_effort=bool(raw_record.get("best_effort", False)),
         )
+

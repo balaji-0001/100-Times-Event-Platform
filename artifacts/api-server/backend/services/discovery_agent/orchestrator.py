@@ -409,11 +409,18 @@ def run_discovery_agent(
                     if src.get("integration_status") == "Operational" and src.get("is_enabled", True)
                     and src["id"] != "ticketmaster_api"
                 ]
-                if config.sources and "all" not in config.sources and "all_sources" not in config.sources:
-                    requested = set(config.sources)
-                    selected_sids = [s for s in enabled_operational_sources if s in requested]
+                requested = set(config.sources or [])
+                is_broad_search = (
+                    not requested
+                    or "all" in requested
+                    or "all_sources" in requested
+                    or "web" in requested
+                    or "event_platforms" in requested
+                )
+                if is_broad_search:
+                    selected_sids = enabled_operational_sources[:8]
                 else:
-                    selected_sids = enabled_operational_sources[:6]
+                    selected_sids = [s for s in enabled_operational_sources if s in requested]
 
                 if selected_sids:
                     logger.info("Executing discovery across operational source adapters: %s", selected_sids)

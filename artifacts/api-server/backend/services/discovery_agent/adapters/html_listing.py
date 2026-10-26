@@ -49,21 +49,20 @@ class HtmlListingAdapter(BaseSourceAdapter):
             self._respect_rate_limit()
             res = fetch(self.listing_url)
             latency = (time.time() - start) * 1000
-            if not res or not res.text:
+            if not res or not isinstance(res, str):
                 return {
                     "status": "unreachable",
                     "latency_ms": round(latency, 1),
-                    "error": "Empty response from server",
+                    "error": "Empty or unreachable response from server",
                     "details": {},
                 }
-            soup = BeautifulSoup(res.text, "html.parser")
+            soup = BeautifulSoup(res, "html.parser")
             title = (soup.title.string or "").strip() if soup.title else ""
             return {
-                "status": "healthy" if res.status_code == 200 else "degraded",
+                "status": "healthy",
                 "latency_ms": round(latency, 1),
-                "error": None if res.status_code == 200 else f"HTTP {res.status_code}",
+                "error": None,
                 "details": {
-                    "status_code": res.status_code,
                     "page_title": title[:80],
                 },
             }
@@ -146,9 +145,9 @@ class HtmlListingAdapter(BaseSourceAdapter):
         try:
             self._respect_rate_limit()
             res = fetch(target_url)
-            if not res or not res.text:
+            if not res or not isinstance(res, str):
                 return []
-            soup = BeautifulSoup(res.text, "html.parser")
+            soup = BeautifulSoup(res, "html.parser")
             return self._extract_from_soup(soup, target_url, limit=limit)
         except Exception as e:
             logger.error("Error discovering from %s: %s", self.source_id, e)
@@ -165,7 +164,7 @@ class HtmlListingAdapter(BaseSourceAdapter):
             self._respect_rate_limit()
             res = fetch(target_url)
             duration = (time.time() - start) * 1000
-            if not res or not res.text:
+            if not res or not isinstance(res, str):
                 return {
                     "success": False,
                     "events_found": 0,
@@ -173,7 +172,7 @@ class HtmlListingAdapter(BaseSourceAdapter):
                     "duration_ms": round(duration, 1),
                     "error": "Failed to fetch listing page",
                 }
-            soup = BeautifulSoup(res.text, "html.parser")
+            soup = BeautifulSoup(res, "html.parser")
             events = self._extract_from_soup(soup, target_url, limit=5)
 
             samples = []
@@ -204,3 +203,4 @@ class HtmlListingAdapter(BaseSourceAdapter):
                 "duration_ms": round(duration, 1),
                 "error": str(e),
             }
+

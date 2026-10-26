@@ -44,22 +44,21 @@ class RssIcalAdapter(BaseSourceAdapter):
             self._respect_rate_limit()
             res = fetch(self.feed_url)
             latency = (time.time() - start) * 1000
-            if not res or not res.text:
+            if not res or not isinstance(res, str):
                 return {
                     "status": "unreachable",
                     "latency_ms": round(latency, 1),
-                    "error": "Empty response from feed",
+                    "error": "Empty or unreachable response from feed",
                     "details": {},
                 }
             # Test parse XML
-            root = ET.fromstring(res.text)
+            root = ET.fromstring(res)
             items = root.findall(".//item") or root.findall(".//entry")
             return {
-                "status": "healthy" if res.status_code == 200 else "degraded",
+                "status": "healthy" if items else "degraded",
                 "latency_ms": round(latency, 1),
-                "error": None,
+                "error": None if items else "No feed items found in XML",
                 "details": {
-                    "status_code": res.status_code,
                     "feed_items_count": len(items),
                 },
             }
@@ -125,9 +124,9 @@ class RssIcalAdapter(BaseSourceAdapter):
         try:
             self._respect_rate_limit()
             res = fetch(self.feed_url)
-            if not res or not res.text:
+            if not res or not isinstance(res, str):
                 return []
-            return self._parse_feed(res.text, limit=limit)
+            return self._parse_feed(res, limit=limit)
         except Exception as e:
             logger.error("Discover error in %s: %s", self.source_id, e)
             return []
@@ -142,7 +141,7 @@ class RssIcalAdapter(BaseSourceAdapter):
             self._respect_rate_limit()
             res = fetch(url)
             duration = (time.time() - start) * 1000
-            if not res or not res.text:
+            if not res or not isinstance(res, str):
                 return {
                     "success": False,
                     "events_found": 0,
@@ -150,7 +149,7 @@ class RssIcalAdapter(BaseSourceAdapter):
                     "duration_ms": round(duration, 1),
                     "error": "Failed to fetch feed",
                 }
-            events = self._parse_feed(res.text, limit=5)
+            events = self._parse_feed(res, limit=5)
             samples = []
             for ev in events:
                 samples.append({
@@ -175,3 +174,4 @@ class RssIcalAdapter(BaseSourceAdapter):
                 "duration_ms": round(duration, 1),
                 "error": str(e),
             }
+

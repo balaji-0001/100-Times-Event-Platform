@@ -46,21 +46,20 @@ class SchemaOrgAdapter(BaseSourceAdapter):
             self._respect_rate_limit()
             res = fetch(self.website_url)
             latency = (time.time() - start) * 1000
-            if not res or not res.text:
+            if not res or not isinstance(res, str):
                 return {
                     "status": "unreachable",
                     "latency_ms": round(latency, 1),
-                    "error": "Empty response from server",
+                    "error": "Empty or unreachable response from server",
                     "details": {},
                 }
-            soup = BeautifulSoup(res.text, "html.parser")
+            soup = BeautifulSoup(res, "html.parser")
             ld_nodes = find_json_ld_nodes(soup)
             return {
-                "status": "healthy" if res.status_code == 200 else "degraded",
+                "status": "healthy",
                 "latency_ms": round(latency, 1),
-                "error": None if res.status_code == 200 else f"HTTP {res.status_code}",
+                "error": None,
                 "details": {
-                    "status_code": res.status_code,
                     "json_ld_nodes_found": len(ld_nodes),
                 },
             }

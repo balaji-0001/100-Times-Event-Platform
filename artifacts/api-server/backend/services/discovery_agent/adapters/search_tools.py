@@ -48,11 +48,12 @@ class SearchToolAdapter(BaseSourceAdapter):
             self._respect_rate_limit()
             res = fetch(self.website_url)
             latency = (time.time() - start) * 1000
+            is_ok = bool(res and isinstance(res, str))
             return {
-                "status": "healthy" if res and res.status_code == 200 else "degraded",
+                "status": "healthy" if is_ok else "degraded",
                 "latency_ms": round(latency, 1),
-                "error": None if res and res.status_code == 200 else "Degraded connectivity",
-                "details": {"status_code": getattr(res, "status_code", None)},
+                "error": None if is_ok else "Degraded connectivity or empty response",
+                "details": {"reachable": is_ok},
             }
         except Exception as e:
             latency = (time.time() - start) * 1000

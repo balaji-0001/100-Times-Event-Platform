@@ -209,10 +209,11 @@ class CredentialAwarePlatformAdapter(BaseSourceAdapter):
             self._respect_rate_limit()
             res = fetch(self.website_url)
             latency = (time.time() - start) * 1000
+            is_ok = bool(res and isinstance(res, str))
             return {
-                "status": "healthy" if (res and res.status_code < 400) else "degraded",
+                "status": "healthy" if is_ok else "degraded",
                 "latency_ms": round(latency, 1),
-                "error": None,
+                "error": None if is_ok else "Degraded connectivity or empty response",
                 "details": {"has_credentials": True},
             }
         except Exception as e:
@@ -255,3 +256,4 @@ class CredentialAwarePlatformAdapter(BaseSourceAdapter):
             "duration_ms": 50.0,
             "error": None,
         }
+
