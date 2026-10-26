@@ -928,8 +928,8 @@ export function ManualResearchForm() {
             ]}
           />
           <div className="mt-3 flex gap-3 font-mono-face text-[10px] uppercase tracking-wider">
-            <Link href="/admin/discovery" className="text-accent hover:underline font-bold">
-              View Discoveries →
+            <Link href={result.runId ? `/admin/discovery/events?run=${result.runId}` : '/admin/discovery'} className="text-accent hover:underline font-bold">
+              View Discoveries{result.new_events ? ` (${result.new_events} new)` : result.accepted_events ? ` (${result.accepted_events} accepted)` : ''} →
             </Link>
             <Link href="/admin/activity" className="text-accent hover:underline">
               Run Details →

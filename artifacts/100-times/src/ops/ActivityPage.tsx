@@ -53,14 +53,34 @@ export function ActivityPage() {
       <Panel className="mt-6 p-6">
         <Section title={`${tab === 'discovery' ? 'Discovery' : 'Outreach'} agent runs (${runs.length})`}>
           {runs.length === 0 ? <EmptyState title="No runs recorded." /> : tab === 'discovery' ? (
-            <AdminTable columns={['Run', 'Status', 'Started', 'Completed', 'Duration', 'Discovered', 'New', 'Duplicates', 'Organizers', 'Contacts', 'Needs review', 'Error', 'Actions']} minWidth={1380}>
+            <AdminTable columns={['Run', 'Status', 'View Discoveries', 'Discovered', 'New', 'Duplicates', 'Organizers', 'Contacts', 'Needs review', 'Started', 'Duration', 'Error', 'Details']} minWidth={1260}>
               {runs.map((r) => (
                 <tr key={r.id} className="cursor-pointer hover:bg-muted/20" onClick={() => setOpenRun(r)}>
-                  <td className={cell}><span className="font-mono-face">#{r.id}</span></td>
+                  <td className={cell}><span className="font-mono-face font-bold">#{r.id}</span></td>
                   <td className={cell}><Badge tone={runTone(r.status)}>{r.status}</Badge></td>
-                  <td className={cellMuted}>{fmtDateTime(r.startedAt)}</td>
-                  <td className={cellMuted}>{fmtDateTime(r.completedAt)}</td>
-                  <td className={cellMuted}>{r.status === 'running' ? 'still running' : fmtDuration(r.startedAt, r.completedAt)}</td>
+                  <td className={cell}>
+                    {s(r, 'events_discovered') > 0 ? (
+                      <Link
+                        href={`/admin/discovery/events?run=${r.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Btn
+                          size="sm"
+                          variant={s(r, 'new_events') > 0 ? 'secondary' : 'ghost'}
+                          className={cx(
+                            'h-7 text-xs font-semibold whitespace-nowrap',
+                            s(r, 'new_events') > 0 && 'border-accent/40 bg-accent/15 text-accent hover:bg-accent/25'
+                          )}
+                          title={`View events discovered during run #${r.id}`}
+                        >
+                          <Eye size={12} className="mr-1 text-accent" />
+                          View Discoveries{s(r, 'new_events') > 0 ? ` (${s(r, 'new_events')} new)` : ` (${s(r, 'events_discovered')})`}
+                        </Btn>
+                      </Link>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
+                  </td>
                   <td className={cell}>
                     {s(r, 'events_discovered') > 0 ? (
                       <Link
@@ -91,28 +111,11 @@ export function ActivityPage() {
                   </td>
                   <td className={cellMuted}>{s(r, 'duplicate_events')}</td>
                   <td className={cell}>{s(r, 'organizers_found')}<span className="text-muted-foreground"> ({s(r, 'new_organizers')} new)</span></td><td className={cell}>{s(r, 'contacts_found')}</td><td className={cellMuted}>{s(r, 'events_needing_review')}</td>
-                  <td className={cell}>{r.error ? <span className="block max-w-[260px] truncate text-red-600" title={r.error}>{r.error}</span> : <span className="text-muted-foreground">—</span>}</td>
+                  <td className={cellMuted}>{fmtDateTime(r.startedAt)}</td>
+                  <td className={cellMuted}>{r.status === 'running' ? 'still running' : fmtDuration(r.startedAt, r.completedAt)}</td>
+                  <td className={cell}>{r.error ? <span className="block max-w-[200px] truncate text-red-600" title={r.error}>{r.error}</span> : <span className="text-muted-foreground">—</span>}</td>
                   <td className={cell}>
-                    <div className="flex items-center gap-1.5 whitespace-nowrap">
-                      <Link
-                        href={`/admin/discovery/events?run=${r.id}`}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <Btn
-                          size="sm"
-                          variant={s(r, 'new_events') > 0 ? 'secondary' : 'ghost'}
-                          className={cx(
-                            'h-7 text-xs font-medium',
-                            s(r, 'new_events') > 0 && 'border-accent/40 bg-accent/10 text-accent hover:bg-accent/20'
-                          )}
-                          title="View events discovered during this run"
-                        >
-                          <Eye size={12} className="mr-1 text-accent" />
-                          View Events{s(r, 'new_events') > 0 ? ` (${s(r, 'new_events')})` : s(r, 'events_discovered') > 0 ? ` (${s(r, 'events_discovered')})` : ''}
-                        </Btn>
-                      </Link>
-                      <Btn size="sm" onClick={(e) => { e.stopPropagation(); setOpenRun(r); }}>Details</Btn>
-                    </div>
+                    <Btn size="sm" variant="ghost" className="h-7 text-xs" onClick={(e) => { e.stopPropagation(); setOpenRun(r); }}>Details</Btn>
                   </td>
                 </tr>
               ))}
