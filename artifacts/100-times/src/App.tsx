@@ -1326,6 +1326,7 @@ function Header() {
 
   const nav = [
     ['Explore', '/events'],
+    ['Discovery', '/admin/discovery'],
     ['Sectors', '/categories'],
     ['Cities', '/cities'],
     ['Organizers', '/organizers'],
@@ -4134,6 +4135,7 @@ function CreateEventPage() {
 const ADMIN_NAV = [
   { view: 'overview', label: 'Overview', href: '/admin' },
   { view: 'events', label: 'Events', href: '/admin/events' },
+  { view: 'discovery', label: 'Discovery', href: '/admin/discovery' },
   { view: 'users', label: 'Users', href: '/admin/users' },
   { view: 'organizers', label: 'Organizers', href: '/admin/organizers' },
   { view: 'categories', label: 'Sectors', href: '/admin/categories' },
@@ -4864,6 +4866,7 @@ function Router() {
         <Route path="/admin/audit-logs" component={() => <OpsLayout><WorkflowsLogsPage mode="audit" /></OpsLayout>} />
         <Route path="/admin/acquisition" component={() => <Redirect to="/admin" />} />
         <Route path="/acquisition-agent" component={() => <Redirect to="/admin" />} />
+        <Route path="/discovery" component={() => <Redirect to="/admin/discovery" />} />
         <Route path="/admin/discovery" component={() => <OpsLayout><DiscoveryPage mode="new" /></OpsLayout>} />
         <Route path="/admin/discovery/events" component={() => <OpsLayout><DiscoveryPage mode="events" /></OpsLayout>} />
         <Route path="/admin/discovery/organizers" component={() => <OpsLayout><OrganizersPage /></OpsLayout>} />

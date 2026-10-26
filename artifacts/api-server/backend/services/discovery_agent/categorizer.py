@@ -35,9 +35,10 @@ _KEYWORDS: dict[str, tuple[str, ...]] = {
     "Technology": (
         "tech", "technology", "software", "computing", "developer", "coding", "ai", "cloud", "data", "cyber",
         "hackathon", "machine learning", "devops", "web3", "digital", "deep learning", "nlp", "iot", "robotics",
+        "=api", "=apis", "rest api", "microservice", "javascript", "python", "golang", "kubernetes", "fullstack",
     ),
     "Pharmaceuticals": (
-        "pharma", "pharmaceutic", "drug discover", "drug manufactur", "clinical trial", "=api", "=apis",
+        "pharma", "pharmaceutic", "drug discover", "drug manufactur", "clinical trial", "active pharmaceutical ingredient", "pharma api",
         "biosimilar", "formulation", "pharmacolog", "vaccine", "biopharma", "generic drug", "biotech",
     ),
     "Healthcare": (
@@ -48,7 +49,7 @@ _KEYWORDS: dict[str, tuple[str, ...]] = {
         "crispr", "genetics", "life science", "medical", "dental", "pharma",
     ),
     "Energy and Power Generation": (
-        "energy", "power generation", "renewable energy", "solar", "wind energy", "thermal power",
+        "power generation", "renewable energy", "clean energy", "energy transition", "energy summit", "energy conference", "solar", "wind energy", "thermal power",
         "hydropower", "clean energy", "electricity", "power plant", "grid", "smart grid", "battery storage",
         "nuclear power", "power grid", "photovoltaic", "ev", "electric vehicle",
     ),
