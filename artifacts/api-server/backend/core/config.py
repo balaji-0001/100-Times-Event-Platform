@@ -139,6 +139,7 @@ class Settings(BaseSettings):
     # is how discovery finds events with no AI key. `{city}` expands once per
     # DISCOVERY_TARGET_CITIES entry. Empty = AI web search only.
     discovery_listing_urls: str = (
+        "https://dev.events/,"
         "https://allevents.in/{city},"
         "https://www.eventbrite.com/d/{country}--{city}/events/,"
         "https://www.eventbrite.com/d/{city}/events/,"

@@ -46,11 +46,43 @@ def _contact_page_links(soup: BeautifulSoup, base_url: str) -> list[str]:
     return links
 
 
+def _find_official_website_links(soup: BeautifulSoup, current_url: str) -> list[str]:
+    """Finds links to external official event websites or organizer domains on directory pages."""
+    current_host = (urlparse(current_url).netloc or "").lower().removeprefix("www.")
+    links: list[str] = []
+    OFFICIAL_HINTS = ("official", "website", "event website", "organizer", "homepage", "register")
+    SKIP_DOMAINS = ("google.", "doubleclick.", "cloudflare.", "cookie", "trustpilot", "w3.org", "schema.org")
+
+    for anchor in soup.find_all("a", href=True):
+        href = anchor["href"].strip()
+        if not href.startswith("http://") and not href.startswith("https://"):
+            continue
+        parsed = urlparse(href)
+        host = (parsed.netloc or "").lower().removeprefix("www.")
+        if not host or host == current_host:
+            continue
+        if is_platform_url(href) or any(bad in host for bad in SKIP_DOMAINS):
+            continue
+
+        text = (anchor.get_text() or "").strip().lower()
+        if any(hint in text or hint in href.lower() for hint in OFFICIAL_HINTS):
+            links.insert(0, href.split("#", 1)[0])
+        else:
+            links.append(href.split("#", 1)[0])
+
+    return list(dict.fromkeys(links))
+
+
 def _next_hop(website: str | None, soup: BeautifulSoup, current_url: str, visited: set[str], platform_url: str | None) -> str | None:
-    """The organizer's own site first, then a contact/about page — skipping
-    pages already read, and (for platform-hosted events) anything on the
-    platform itself, whose contact page is the platform's, not the organizer's."""
-    for url in ([website] if website else []) + _contact_page_links(soup, current_url):
+    """The organizer's own site first, then official website links from directory page,
+    then a contact/about page — skipping pages already read, and (for platform-hosted events)
+    anything on the platform itself, whose contact page is the platform's, not the organizer's."""
+    candidates = (
+        ([website] if website else [])
+        + _find_official_website_links(soup, current_url)
+        + _contact_page_links(soup, current_url)
+    )
+    for url in candidates:
         if url in visited:
             continue
         if platform_url and same_host(url, platform_url):
@@ -143,7 +175,12 @@ def identify_organizer(candidate: ExtractedEventCandidate) -> OrganizerCandidate
         hop_soup = BeautifulSoup(html, "html.parser")
         hop_name, hop_website, hop_raw_email, hop_linkedin = extract_contact(html)
         hop_socials = extract_social_links(hop_soup)
-        name = name or hop_name
+        directory_hints = ("eventbrite", "meetup", "10times", "allevents", "townscript", "luma", "ticketmaster", "skillboxes", "dev.events")
+        is_dir_name = bool(name and any(d in name.lower() for d in directory_hints))
+        if hop_name and (not name or is_dir_name):
+            name = hop_name
+        elif not name:
+            name = hop_name
         if hop_raw_email and not email:
             valid, norm_email, _ = is_valid_organizer_email(hop_raw_email)
             if valid:
@@ -158,63 +195,65 @@ def identify_organizer(candidate: ExtractedEventCandidate) -> OrganizerCandidate
         current_url = next_url
         current_soup = hop_soup
 
-    # Search fallback if direct links did not reveal a verified organizer email (only for direct organizer/event sites, not aggregators)
-    if not email and not on_platform:
-        target_name = name or candidate.organizer_name_hint
-        org_search_query = None
-        if target_name and len(target_name.strip()) > 3:
-            loc = f" {candidate.city}" if candidate.city else ""
-            org_search_query = f"{target_name.strip()}{loc} official website contact email"
-        elif candidate.name and len(candidate.name.strip()) > 5:
-            loc = f" {candidate.city}" if candidate.city else ""
-            org_search_query = f"{candidate.name.strip()}{loc} organizer official contact"
+    # Search fallback if direct links did not reveal a verified organizer email
+    target_name = name or candidate.organizer_name_hint
+    platform_names = {"eventbrite", "meetup", "10times", "allevents", "townscript", "luma", "ticketmaster", "skillboxes"}
+    is_platform_name = bool(target_name and any(p in target_name.lower() for p in platform_names))
 
-        if org_search_query:
-            try:
-                from backend.services.discovery_agent import web_search
-                found_urls = web_search.search(org_search_query, max_results=3)
-                for res_url in found_urls:
-                    if res_url in visited or is_platform_url(res_url):
+    org_search_query = None
+    if not email and target_name and not is_platform_name and len(target_name.strip()) > 3:
+        loc = f" {candidate.city}" if candidate.city else ""
+        org_search_query = f"{target_name.strip()}{loc} official website contact email"
+    elif not email and not on_platform and candidate.name and len(candidate.name.strip()) > 5:
+        loc = f" {candidate.city}" if candidate.city else ""
+        org_search_query = f"{candidate.name.strip()}{loc} organizer official contact"
+
+    if org_search_query:
+        try:
+            from backend.services.discovery_agent import web_search
+            found_urls = web_search.search(org_search_query, max_results=3)
+            for res_url in found_urls:
+                if res_url in visited or is_platform_url(res_url):
+                    continue
+                visited.add(res_url)
+                res_html = fetch(res_url, render_js=False)
+                if not res_html:
+                    continue
+                res_soup = BeautifulSoup(res_html, "html.parser")
+                s_name, s_website, s_email, s_linkedin = extract_contact(res_html)
+                if s_email:
+                    valid, norm_email, _ = is_valid_organizer_email(s_email)
+                    if valid:
+                        email = norm_email
+                        email_source_url = res_url
+                        name = name or s_name or target_name
+                        website = website or s_website or res_url
+                        linkedin = linkedin or s_linkedin
+                        sources.append(CandidateSource(url=res_url, source_type="organizer_website"))
+                        break
+
+                for sub_link in _contact_page_links(res_soup, res_url)[:2]:
+                    if sub_link in visited:
                         continue
-                    visited.add(res_url)
-                    res_html = fetch(res_url, render_js=False)
-                    if not res_html:
+                    visited.add(sub_link)
+                    sub_html = fetch(sub_link, render_js=False)
+                    if not sub_html:
                         continue
-                    res_soup = BeautifulSoup(res_html, "html.parser")
-                    s_name, s_website, s_email, s_linkedin = extract_contact(res_html)
-                    if s_email:
-                        valid, norm_email, _ = is_valid_organizer_email(s_email)
+                    _, sub_site, sub_email, sub_li = extract_contact(sub_html)
+                    if sub_email:
+                        valid, norm_email, _ = is_valid_organizer_email(sub_email)
                         if valid:
                             email = norm_email
-                            email_source_url = res_url
+                            email_source_url = sub_link
                             name = name or s_name or target_name
-                            website = website or s_website or res_url
-                            linkedin = linkedin or s_linkedin
-                            sources.append(CandidateSource(url=res_url, source_type="organizer_website"))
+                            website = website or sub_site or res_url
+                            linkedin = linkedin or sub_li
+                            sources.append(CandidateSource(url=sub_link, source_type="organizer_website"))
                             break
-
-                    for sub_link in _contact_page_links(res_soup, res_url)[:2]:
-                        if sub_link in visited:
-                            continue
-                        visited.add(sub_link)
-                        sub_html = fetch(sub_link, render_js=False)
-                        if not sub_html:
-                            continue
-                        _, sub_site, sub_email, sub_li = extract_contact(sub_html)
-                        if sub_email:
-                            valid, norm_email, _ = is_valid_organizer_email(sub_email)
-                            if valid:
-                                email = norm_email
-                                email_source_url = sub_link
-                                name = name or s_name or target_name
-                                website = website or sub_site or res_url
-                                linkedin = linkedin or sub_li
-                                sources.append(CandidateSource(url=sub_link, source_type="organizer_website"))
-                                break
-                    if email:
-                        break
-            except Exception as exc:
-                logger.debug("Organizer search lookup skipped: %s", exc)
+                if email:
+                    break
+        except Exception as exc:
+            logger.debug("Organizer search lookup skipped: %s", exc)
 
     if not name:
         name = candidate.organizer_name_hint
