@@ -77,6 +77,13 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-sonnet-5"
 
+    # Multi-provider web search integrations
+    google_search_api_key: str | None = None
+    google_cse_id: str | None = None
+    bing_search_api_key: str | None = None
+    brave_search_api_key: str | None = None
+    exa_api_key: str | None = None
+
     # Attribution window for tying a registration back to the click that drove it.
     click_attribution_window_days: int = 30
 

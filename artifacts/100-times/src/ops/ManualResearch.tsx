@@ -305,8 +305,8 @@ export function ManualResearchForm() {
     );
   };
 
-  const selectAllSources = () => setSelectedSources(AVAILABLE_SOURCES.map((s) => s.id));
-  const clearSources = () => setSelectedSources(['web']);
+  const selectAllSources = () => setSelectedSources([...DEFAULT_ACTIVE_SOURCES]);
+  const clearSources = () => setSelectedSources([]);
 
   const start = () => {
     const parsedKeywords = blacklistedKeywords
@@ -407,6 +407,57 @@ export function ManualResearchForm() {
               <span className="text-xl font-bold text-foreground mt-1 block">{activeSummary.organizers_found ?? 0}</span>
             </div>
           </div>
+
+                    {Array.isArray(activeSummary.search_provider_logs) && activeSummary.search_provider_logs.length > 0 && (
+            <div className="mt-3 rounded-lg border border-foreground/10 bg-card/60 p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="font-semibold text-foreground text-[11px] flex items-center gap-1.5">
+                  <Search size={13} className="text-accent" /> Live Search Provider Telemetry & Engine Calls
+                </span>
+                <span className="text-[10px] text-muted-foreground font-mono">
+                  {activeSummary.search_provider_logs.length} queries logged
+                </span>
+              </div>
+              <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                {activeSummary.search_provider_logs.slice(0, 10).map((log: any, idx: number) => (
+                  <div
+                    key={idx}
+                    className="rounded border border-foreground/5 bg-background/60 p-2 text-[10px] space-y-0.5"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-foreground truncate">
+                        {log.provider_name || log.provider_id}
+                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {log.latency_ms && (
+                          <span className="text-muted-foreground font-mono">
+                            {Math.round(log.latency_ms)}ms
+                          </span>
+                        )}
+                        <span
+                          className={`px-1.5 py-0.2 rounded font-mono font-semibold uppercase ${
+                            log.status === 'success'
+                              ? 'bg-emerald-500/10 text-emerald-500'
+                              : 'bg-amber-500/10 text-amber-500'
+                          }`}
+                        >
+                          {log.status === 'success' ? `${log.result_count} results` : log.status}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="text-muted-foreground font-mono truncate">
+                      Query: {log.query}
+                    </div>
+                    {log.error && (
+                      <div className="text-red-500 dark:text-red-400 font-mono text-[9px] mt-0.5">
+                        ⚠️ {log.error}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="flex items-center justify-between gap-3 mt-4 pt-3 border-t border-accent/20">
             <Btn

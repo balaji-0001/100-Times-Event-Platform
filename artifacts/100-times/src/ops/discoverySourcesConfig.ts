@@ -145,10 +145,16 @@ export const SOURCE_REGISTRY_CATEGORIES: SourceCategoryGroup[] = [
 export const ALL_OPERATIONAL_IDS = SOURCE_REGISTRY_CATEGORIES.flatMap((c) => c.sources.map((s) => s.id));
 export const CONSUMER_AGGREGATOR_IDS = ['10times', 'eventbrite', 'meetup', 'allevents', 'skillboxes'];
 
-export const DEFAULT_ACTIVE_SOURCES: string[] = [
-  'web',
-  'global_adapters',
-  'consumer_aggregators',
-  ...ALL_OPERATIONAL_IDS,
-];
-
+export const DEFAULT_ACTIVE_SOURCES: string[] = Array.from(
+  new Set([
+    'web',
+    'google_search',
+    'bing_search',
+    'global_adapters',
+    'consumer_aggregators',
+    'event_platforms',
+    'ticketmaster',
+    'ticketmaster_api',
+    ...ALL_OPERATIONAL_IDS,
+  ])
+);

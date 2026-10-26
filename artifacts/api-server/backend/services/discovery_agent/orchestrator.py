@@ -29,8 +29,18 @@ from backend.services import guardrails
 from decimal import Decimal
 from backend.services.discovery_agent import categorizer, listing_sources, organizer_identifier, page_extractor, query_seeds, storage, validation, web_search
 from backend.services.discovery_agent.types import DiscoveryConfig, RunSummary
+from backend.services.discovery_agent.search_providers import search_engine
+from backend.services.discovery_agent.source_registry import ALL_CANDIDATE_SOURCES
 
 logger = logging.getLogger("discovery_agent.orchestrator")
+
+def _build_summary_dict(summary: RunSummary) -> dict:
+    d = summary.as_dict()
+    recent = search_engine.get_recent_logs(20)
+    if recent:
+        d["search_provider_logs"] = recent
+    return d
+
 
 _CANCELLED_RUN_IDS: set[int] = set()
 
@@ -188,7 +198,7 @@ def _process_candidate(
         elif getattr(config, "reject_unmatched_category", False):
             summary.unsupported_category += 1
             summary.rejected_events += 1
-            run.summary = summary.as_dict()
+            run.summary = _build_summary_dict(summary)
             db.add(run)
             return
 
@@ -205,7 +215,7 @@ def _process_candidate(
     if config.require_organizer_email and (not organizer_candidate.found or not organizer_candidate.email):
         summary.missing_organizer_email += 1
         summary.rejected_events += 1
-        run.summary = summary.as_dict()
+        run.summary = _build_summary_dict(summary)
         db.add(run)
         return
 
@@ -252,7 +262,7 @@ def _process_candidate(
         logger.exception("Failed to persist candidate %r — skipping.", candidate.name)
         return
 
-    run.summary = summary.as_dict()
+    run.summary = _build_summary_dict(summary)
     db.add(run)
     # Commit periodically to keep run summary fresh in real time for background polling
     if summary.events_discovered % 2 == 0 or val_result.status != "REJECTED":
@@ -472,7 +482,7 @@ def run_discovery_agent(
                     logger.info("Discovery run #%s stopped by user.", run.id)
                     run.status = "stopped"
                     run.completed_at = datetime.now(timezone.utc)
-                    run.summary = summary.as_dict()
+                    run.summary = _build_summary_dict(summary)
                     db.add(run)
                     db.commit()
                     _CANCELLED_RUN_IDS.discard(run.id)
@@ -507,7 +517,7 @@ def run_discovery_agent(
                     logger.info("Discovery run #%s stopped by user.", run.id)
                     run.status = "stopped"
                     run.completed_at = datetime.now(timezone.utc)
-                    run.summary = summary.as_dict()
+                    run.summary = _build_summary_dict(summary)
                     db.add(run)
                     db.commit()
                     _CANCELLED_RUN_IDS.discard(run.id)
@@ -518,7 +528,13 @@ def run_discovery_agent(
                     break
 
                 try:
-                    result_urls = web_search.search(query, config.sources_per_query)
+                    result_urls = web_search.search(
+                    query,
+                    max_results=config.sources_per_query,
+                    country=config.country or (config.countries[0] if config.countries else None),
+                    date_range=(config.date_from, config.date_to),
+                    requested_sources=requested,
+                )
                 except web_search.SearchBlocked as exc:
                     search_error = str(exc)
                     logger.warning("Web search stopped: %s", exc)
@@ -532,7 +548,7 @@ def run_discovery_agent(
                         logger.info("Discovery run #%s stopped by user.", run.id)
                         run.status = "stopped"
                         run.completed_at = datetime.now(timezone.utc)
-                        run.summary = summary.as_dict()
+                        run.summary = _build_summary_dict(summary)
                         db.add(run)
                         db.commit()
                         _CANCELLED_RUN_IDS.discard(run.id)
@@ -554,7 +570,7 @@ def run_discovery_agent(
                 if is_run_cancelled(run.id, db):
                     run.status = "stopped"
                     run.completed_at = datetime.now(timezone.utc)
-                    run.summary = summary.as_dict()
+                    run.summary = _build_summary_dict(summary)
                     db.add(run)
                     db.commit()
                     _CANCELLED_RUN_IDS.discard(run.id)
@@ -565,7 +581,13 @@ def run_discovery_agent(
                     break
 
                 try:
-                    result_urls = web_search.search(query, config.sources_per_query)
+                    result_urls = web_search.search(
+                    query,
+                    max_results=config.sources_per_query,
+                    country=config.country or (config.countries[0] if config.countries else None),
+                    date_range=(config.date_from, config.date_to),
+                    requested_sources=requested,
+                )
                 except Exception:
                     continue
 
@@ -573,7 +595,7 @@ def run_discovery_agent(
                     if is_run_cancelled(run.id, db):
                         run.status = "stopped"
                         run.completed_at = datetime.now(timezone.utc)
-                        run.summary = summary.as_dict()
+                        run.summary = _build_summary_dict(summary)
                         db.add(run)
                         db.commit()
                         _CANCELLED_RUN_IDS.discard(run.id)
@@ -591,7 +613,7 @@ def run_discovery_agent(
             run.status = "completed"
         run.error = f"Web search stopped early: {search_error}" if search_error else None
         run.completed_at = datetime.now(timezone.utc)
-        run.summary = summary.as_dict()
+        run.summary = _build_summary_dict(summary)
         db.add(run)
         db.commit()
         _CANCELLED_RUN_IDS.discard(run.id)
@@ -629,7 +651,7 @@ def run_discovery_agent(
         run.status = "failed"
         run.completed_at = datetime.now(timezone.utc)
         run.error = str(exc)
-        run.summary = summary.as_dict()
+        run.summary = _build_summary_dict(summary)
         db.add(run)
         db.commit()
         _CANCELLED_RUN_IDS.discard(run.id)

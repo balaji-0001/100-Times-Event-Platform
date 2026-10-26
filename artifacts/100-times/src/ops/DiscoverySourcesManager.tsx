@@ -202,14 +202,7 @@ export function DiscoverySourcesManager({
 
   // Quick Action presets
   const handleSelectAllOperational = () => {
-    setSelectedSources([
-      'web',
-      'global_adapters',
-      'consumer_aggregators',
-      'event_platforms',
-      'ticketmaster',
-      ...ALL_OPERATIONAL_IDS,
-    ]);
+    setSelectedSources([...DEFAULT_ACTIVE_SOURCES]);
   };
 
   const handleSelectB2BOnly = () => {

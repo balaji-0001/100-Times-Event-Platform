@@ -41,6 +41,19 @@ from backend.services.discovery_agent.auto_toggle import (
     set_discovery_auto_settings,
 )
 from backend.services.discovery_agent.orchestrator import config_from_settings, run_discovery_agent
+from backend.services.discovery_agent.source_registry import ALL_CANDIDATE_SOURCES
+
+DEFAULT_ALL_OPERATIONAL_SOURCES = list(dict.fromkeys([
+    "web",
+    "google_search",
+    "bing_search",
+    "global_adapters",
+    "consumer_aggregators",
+    "event_platforms",
+    "ticketmaster",
+    "ticketmaster_api",
+] + [s["id"] for s in ALL_CANDIDATE_SOURCES if s.get("integration_status") == "Operational"]))
+
 
 router = APIRouter(prefix="/discovery", tags=["event-discovery"])
 
@@ -253,7 +266,7 @@ def get_discovery_auto(db: Session = Depends(get_db), _user: User = _admin) -> D
         cities=auto_scope.get("cities") or [],
         states=auto_scope.get("states") or [],
         categories=auto_scope.get("categories") or [],
-        sources=auto_scope.get("sources") or ["web", "global_adapters", "consumer_aggregators"],
+        sources=auto_scope.get("sources") or DEFAULT_ALL_OPERATIONAL_SOURCES,
         search_depth=auto_scope.get("search_depth"),
         daily_limit=auto_scope.get("daily_limit"),
         events_per_run=auto_scope.get("events_per_run", 50),
@@ -352,7 +365,7 @@ def set_discovery_auto(payload: DiscoveryAutoToggleRequest, db: Session = Depend
         cities=auto_scope.get("cities") or [],
         states=auto_scope.get("states") or [],
         categories=auto_scope.get("categories") or [],
-        sources=auto_scope.get("sources") or ["web", "global_adapters", "consumer_aggregators"],
+        sources=auto_scope.get("sources") or DEFAULT_ALL_OPERATIONAL_SOURCES,
         search_depth=auto_scope.get("search_depth"),
         daily_limit=auto_scope.get("daily_limit"),
         events_per_run=auto_scope.get("events_per_run", 50),

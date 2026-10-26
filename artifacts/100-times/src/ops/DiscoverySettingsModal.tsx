@@ -292,7 +292,7 @@ export function DiscoverySettingsDrawer({
     );
   };
 
-  const selectAllSources = () => setSelectedSources(AVAILABLE_SOURCES.map((s) => s.id));
+  const selectAllSources = () => setSelectedSources([...DEFAULT_ACTIVE_SOURCES]);
   const clearSources = () => setSelectedSources(['web']);
 
   const handleSave = () => {
