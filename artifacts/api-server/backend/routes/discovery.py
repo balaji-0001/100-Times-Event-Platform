@@ -9,11 +9,11 @@ exposes scraped personal contact info (emails/phones), so it gets the same
 `require_roles("ADMIN")` gate `routes/dashboard.py` already uses.
 """
 
-from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -40,7 +40,7 @@ from backend.services.discovery_agent.auto_toggle import (
     set_discovery_auto_enabled,
     set_discovery_auto_settings,
 )
-from backend.services.discovery_agent.orchestrator import config_from_settings, run_discovery_agent
+from backend.services.discovery_agent.orchestrator import config_from_settings, redacted_config, run_discovery_agent
 from backend.services.discovery_agent.source_registry import ALL_CANDIDATE_SOURCES
 
 DEFAULT_ALL_OPERATIONAL_SOURCES = list(dict.fromkeys([
@@ -79,42 +79,38 @@ def trigger_discovery_run(
     returns the run id plus the exact structured summary shape the spec
     requires. Blocks until the run finishes, like `/acquisition/organizer-
     scan`'s equivalent manual trigger."""
-    config = config_from_settings(get_settings(), db=db)
+    config = config_from_settings(get_settings(), db=db, include_auto_scope=False)
     config.require_organizer_email = True
     config.reject_no_organizer = True
     config.reject_unmatched_category = True
     config.fallback_to_other_sector = False
     config.is_manual = True
+    # A manual run searches exactly the geography picked on the page: start
+    # empty (no saved Automatic scope, no .env default cities/states).
+    config.cities, config.states, config.countries, config.country, config.locations = [], [], [], None, []
+    config.region_cities = {}
+    # The saved key (never sent to the browser) unless a new one is typed in.
+    config.ticketmaster_api_key = _saved_ticketmaster_key(db)
     if payload:
-        if payload.cities is not None and len(payload.cities) > 0:
+        if payload.locations is not None:
+            config.locations = [loc.model_dump(exclude_none=True) for loc in payload.locations]
+        if payload.region_cities is not None:
+            config.region_cities = payload.region_cities
+        # Cities are only what the admin ticked: a country with no city ticked
+        # means the WHOLE country, nothing ticked means worldwide. (Major cities
+        # used to be filled in here, which silently narrowed "all of Germany" to
+        # a few cities; search and listing pages still anchor on major cities
+        # by themselves — geo_scope.anchor_places — without making them a filter.)
+        if payload.cities:
             config.cities = payload.cities
-        elif not payload.countries or "Worldwide" in payload.countries or len(payload.countries) == 0:
-            config.cities = [
-                "London", "New York", "San Francisco", "Singapore", "Berlin",
-                "Dubai", "Mumbai", "Bengaluru", "Tokyo", "Paris"
-            ]
         if payload.states is not None:
             config.states = payload.states
         if payload.countries is not None:
             config.countries = payload.countries
             if payload.countries and not payload.country:
                 config.country = payload.countries[0]
-            if not payload.cities and payload.countries:
-                from backend.services.discovery_agent.country_utils import cities_for_country
-                multi_cities = []
-                for c in payload.countries:
-                    multi_cities.extend(cities_for_country(c))
-                if multi_cities:
-                    config.cities = list(dict.fromkeys(multi_cities))
         if payload.country is not None:
             config.country = payload.country
-            if not payload.cities and not payload.countries:
-                from backend.services.discovery_agent.country_utils import cities_for_country
-                country_cities = cities_for_country(payload.country)
-                if country_cities:
-                    config.cities = country_cities
-                if payload.country.strip().lower() == "dubai":
-                    config.states = ["Dubai Emirate"]
         if payload.categories is not None:
             config.categories = payload.categories
         if payload.search_depth is not None:
@@ -135,8 +131,10 @@ def trigger_discovery_run(
             config.sources = payload.sources
         if payload.listing_urls is not None:
             config.listing_urls = payload.listing_urls
-        if payload.ticketmaster_api_key is not None:
-            config.ticketmaster_api_key = payload.ticketmaster_api_key
+        if payload.ticketmaster_api_key:
+            config.ticketmaster_api_key = payload.ticketmaster_api_key.strip()
+        if payload.search_providers is not None:
+            config.search_providers = list(dict.fromkeys(payload.search_providers))
         if payload.ticketmaster_enabled is not None:
             config.ticketmaster_enabled = payload.ticketmaster_enabled
         if payload.events_per_run is not None:
@@ -164,6 +162,8 @@ def trigger_discovery_run(
             config.fallback_to_other_sector = payload.fallback_to_other_sector
         if payload.reject_unmatched_category is not None:
             config.reject_unmatched_category = payload.reject_unmatched_category
+        if payload.keep_rejected_events is not None:
+            config.keep_rejected_events = payload.keep_rejected_events
         if payload.min_title_length is not None:
             config.min_title_length = payload.min_title_length
         if payload.min_description_length is not None:
@@ -188,18 +188,36 @@ def trigger_discovery_run(
             "status": "running",
             "message": f"Discovery run #{active_run.id} is already executing in the background.",
             "isBackground": True,
-            "config": active_run.config_snapshot or asdict(config),
+            "config": redacted_config(active_run.config_snapshot or config),
             **(active_run.summary or {}),
         }
 
     # Initialize new AgentRun in running state
     from backend.services.discovery_agent.types import RunSummary
+    from backend.services.discovery_agent import geo_scope
+    init_summary = RunSummary()
+    try:
+        geo = geo_scope.resolve(config)
+        geo_sum = geo.summary()
+        cities_list = list(geo_sum.get("cities_list") or [])
+        for c in (getattr(config, "cities", None) or []):
+            if c and c not in cities_list:
+                cities_list.append(c)
+        init_summary.scope = {
+            **geo_sum,
+            "cities_list": cities_list,
+            "sectors": list(config.categories or []),
+            "channels": {s: True for s in (config.sources or [])},
+        }
+    except Exception:
+        pass
+
     run = AgentRun(
         agent_type="discovery",
         status="running",
         started_at=datetime.now(timezone.utc),
-        config_snapshot=asdict(config),
-        summary=RunSummary().as_dict(),
+        config_snapshot=redacted_config(config),
+        summary=init_summary.as_dict(),
         created_at=datetime.now(timezone.utc),
     )
     db.add(run)
@@ -237,7 +255,7 @@ def trigger_discovery_run(
             "status": "running",
             "message": f"Discovery run #{run.id} started in the background.",
             "isBackground": True,
-            "config": asdict(config),
+            "config": redacted_config(config),
             **run.summary,
         }
     else:
@@ -250,19 +268,25 @@ def trigger_discovery_run(
         }
 
 
-@router.get("/auto")
-def get_discovery_auto(db: Session = Depends(get_db), _user: User = _admin) -> DiscoveryAutoStatusOut:
-    """Live state of the discovery-scan on/off switch. When enabled, the
-    background loop that's always running (see `services/social_agent/
-    scheduler.py`) actually calls `run_discovery_agent` on its configured
-    interval instead of skipping the tick."""
+def _saved_ticketmaster_key(db: Session) -> str | None:
+    """The Ticketmaster key a run uses when none is typed in: the one saved in
+    the discovery settings, else TICKETMASTER_API_KEY from .env."""
+    return get_discovery_auto_settings(db).get("ticketmaster_api_key") or getattr(get_settings(), "ticketmaster_api_key", None)
+
+
+def _auto_status_out(db: Session) -> DiscoveryAutoStatusOut:
+    """Saved discovery settings for the admin UI. Credentials are reported
+    only as set / not set (+ last 4 characters), never returned."""
     settings = get_settings()
     auto_scope = get_discovery_auto_settings(db)
+    tm_key = _saved_ticketmaster_key(db)
     return DiscoveryAutoStatusOut(
         enabled=is_discovery_auto_enabled(db),
         interval_minutes=settings.discovery_scan_interval_minutes,
         country=auto_scope.get("country"),
         countries=auto_scope.get("countries") or ([] if not auto_scope.get("country") else [auto_scope.get("country")]),
+        locations=auto_scope.get("locations") or [],
+        region_cities=auto_scope.get("region_cities") or {},
         cities=auto_scope.get("cities") or [],
         states=auto_scope.get("states") or [],
         categories=auto_scope.get("categories") or [],
@@ -281,15 +305,27 @@ def get_discovery_auto(db: Session = Depends(get_db), _user: User = _admin) -> D
         reject_missing_ticket_url=auto_scope.get("reject_missing_ticket_url", False),
         reject_unmatched_category=auto_scope.get("reject_unmatched_category", False),
         fallback_to_other_sector=auto_scope.get("fallback_to_other_sector", True),
+        keep_rejected_events=auto_scope.get("keep_rejected_events", True),
         min_title_length=auto_scope.get("min_title_length", 8),
         min_description_length=auto_scope.get("min_description_length", 20),
         min_confidence_score=auto_scope.get("min_confidence_score", 20),
         blacklisted_keywords=auto_scope.get("blacklisted_keywords", []),
         excluded_domains=auto_scope.get("excluded_domains", []),
         listing_urls=auto_scope.get("listing_urls") or [u.strip() for u in settings.discovery_listing_urls.split(",") if u.strip()],
-        ticketmaster_api_key=auto_scope.get("ticketmaster_api_key") or getattr(settings, "ticketmaster_api_key", None),
-        ticketmaster_enabled=auto_scope.get("ticketmaster_enabled", bool(auto_scope.get("ticketmaster_api_key") or getattr(settings, "ticketmaster_api_key", None))),
+        ticketmaster_api_key_set=bool(tm_key),
+        ticketmaster_api_key_hint=f"…{tm_key[-4:]}" if tm_key and len(tm_key) > 8 else None,
+        ticketmaster_enabled=auto_scope.get("ticketmaster_enabled", bool(tm_key)),
+        search_providers=auto_scope.get("search_providers"),
     )
+
+
+@router.get("/auto")
+def get_discovery_auto(db: Session = Depends(get_db), _user: User = _admin) -> DiscoveryAutoStatusOut:
+    """Live state of the discovery-scan on/off switch. When enabled, the
+    background loop that's always running (see `services/social_agent/
+    scheduler.py`) actually calls `run_discovery_agent` on its configured
+    interval instead of skipping the tick."""
+    return _auto_status_out(db)
 
 
 @router.patch("/auto")
@@ -307,6 +343,10 @@ def set_discovery_auto(payload: DiscoveryAutoToggleRequest, db: Session = Depend
         settings_updates["countries"] = payload.countries
         if payload.countries and not payload.country:
             settings_updates["country"] = payload.countries[0]
+    if payload.locations is not None:
+        settings_updates["locations"] = [loc.model_dump(exclude_none=True) for loc in payload.locations]
+    if payload.region_cities is not None:
+        settings_updates["region_cities"] = payload.region_cities
     if payload.cities is not None:
         settings_updates["cities"] = payload.cities
     if payload.states is not None:
@@ -317,8 +357,16 @@ def set_discovery_auto(payload: DiscoveryAutoToggleRequest, db: Session = Depend
         settings_updates["sources"] = payload.sources
     if payload.listing_urls is not None:
         settings_updates["listing_urls"] = payload.listing_urls
+    remove: list[str] = []
     if payload.ticketmaster_api_key is not None:
-        settings_updates["ticketmaster_api_key"] = payload.ticketmaster_api_key
+        if payload.ticketmaster_api_key.strip():
+            settings_updates["ticketmaster_api_key"] = payload.ticketmaster_api_key.strip()
+        else:
+            remove.append("ticketmaster_api_key")  # "" = delete the saved key
+    if payload.reset_search_providers:
+        remove.append("search_providers")  # back to "every configured provider"
+    elif payload.search_providers is not None:
+        settings_updates["search_providers"] = list(dict.fromkeys(payload.search_providers))
     if payload.ticketmaster_enabled is not None:
         settings_updates["ticketmaster_enabled"] = payload.ticketmaster_enabled
     if payload.search_depth is not None:
@@ -342,6 +390,7 @@ def set_discovery_auto(payload: DiscoveryAutoToggleRequest, db: Session = Depend
         "reject_missing_ticket_url",
         "reject_unmatched_category",
         "fallback_to_other_sector",
+        "keep_rejected_events",
         "min_title_length",
         "min_description_length",
         "min_confidence_score",
@@ -352,43 +401,80 @@ def set_discovery_auto(payload: DiscoveryAutoToggleRequest, db: Session = Depend
         if val is not None:
             settings_updates[field] = val
 
-    if settings_updates:
-        set_discovery_auto_settings(db, settings_updates)
+    if settings_updates or remove:
+        set_discovery_auto_settings(db, settings_updates, remove=tuple(remove))
 
     db.commit()
-    auto_scope = get_discovery_auto_settings(db)
-    return DiscoveryAutoStatusOut(
-        enabled=is_discovery_auto_enabled(db),
-        interval_minutes=settings.discovery_scan_interval_minutes,
-        country=auto_scope.get("country"),
-        countries=auto_scope.get("countries") or ([] if not auto_scope.get("country") else [auto_scope.get("country")]),
-        cities=auto_scope.get("cities") or [],
-        states=auto_scope.get("states") or [],
-        categories=auto_scope.get("categories") or [],
-        sources=auto_scope.get("sources") or DEFAULT_ALL_OPERATIONAL_SOURCES,
-        search_depth=auto_scope.get("search_depth"),
-        daily_limit=auto_scope.get("daily_limit"),
-        events_per_run=auto_scope.get("events_per_run", 50),
-        target_valid_events=auto_scope.get("target_valid_events", 25),
-        reject_no_organizer=auto_scope.get("reject_no_organizer", False),
-        require_organizer_email=auto_scope.get("require_organizer_email", False),
-        require_organizer_phone=auto_scope.get("require_organizer_phone", False),
-        require_organizer_website=auto_scope.get("require_organizer_website", False),
-        reject_past_events=auto_scope.get("reject_past_events", True),
-        reject_unparseable_dates=auto_scope.get("reject_unparseable_dates", True),
-        reject_missing_location=auto_scope.get("reject_missing_location", False),
-        reject_missing_ticket_url=auto_scope.get("reject_missing_ticket_url", False),
-        reject_unmatched_category=auto_scope.get("reject_unmatched_category", False),
-        fallback_to_other_sector=auto_scope.get("fallback_to_other_sector", True),
-        min_title_length=auto_scope.get("min_title_length", 8),
-        min_description_length=auto_scope.get("min_description_length", 20),
-        min_confidence_score=auto_scope.get("min_confidence_score", 20),
-        blacklisted_keywords=auto_scope.get("blacklisted_keywords", []),
-        excluded_domains=auto_scope.get("excluded_domains", []),
-        listing_urls=auto_scope.get("listing_urls") or [u.strip() for u in settings.discovery_listing_urls.split(",") if u.strip()],
-        ticketmaster_api_key=auto_scope.get("ticketmaster_api_key") or getattr(settings, "ticketmaster_api_key", None),
-        ticketmaster_enabled=auto_scope.get("ticketmaster_enabled", bool(auto_scope.get("ticketmaster_api_key") or getattr(settings, "ticketmaster_api_key", None))),
-    )
+    return _auto_status_out(db)
+
+
+@router.get("/catalog")
+def get_discovery_catalog(db: Session = Depends(get_db), _user: User = _admin) -> dict[str, Any]:
+    """Every discovery channel, search provider and source adapter with its real
+    status — implemented / configured (credentials set) / health from actual
+    runs and probes — for the Discovery settings page. No credential values."""
+    from backend.services.discovery_agent.catalog import build_catalog
+
+    return build_catalog(db, ticketmaster_key_set=bool(_saved_ticketmaster_key(db)))
+
+
+class _CatalogCheckRequest(BaseModel):
+    source_ids: list[str] | None = Field(default=None, alias="sourceIds", max_length=100)
+    provider_ids: list[str] | None = Field(default=None, alias="providerIds", max_length=10)
+
+
+@router.post("/catalog/check")
+def check_discovery_catalog(payload: _CatalogCheckRequest | None = None, db: Session = Depends(get_db), _user: User = _admin) -> dict[str, Any]:
+    """Live probe: read each source's events page (and run one tiny search per
+    listed provider) right now, store the outcome as the source's health, and
+    return it. Paid providers are billed for their probe search, so providers
+    are only checked when listed explicitly."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from backend.services.discovery_agent import catalog
+    from backend.services.discovery_agent.adapters import adapter_manager
+    from backend.services.discovery_agent.search_providers import search_engine
+
+    known = {src["id"]: src for src in catalog.ALL_CANDIDATE_SOURCES if catalog.channel_of(src) != "web"}
+    wanted = [sid for sid in (payload.source_ids if payload and payload.source_ids is not None else list(known)) if sid in known]
+    implemented = [sid for sid in wanted if catalog.is_implemented(sid) and sid != "ticketmaster_api"]
+
+    def probe(sid: str) -> dict[str, Any]:
+        result = adapter_manager.get_adapter(sid).test_extraction()
+        return {"id": sid, "ok": bool(result.get("success")), "events": result.get("events_found", 0), "error": result.get("error"), "note": result.get("note")}
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        source_results = list(pool.map(probe, implemented))
+    for row in source_results:  # DB writes stay on this thread
+        catalog.record_outcome(db, row["id"], ok=row["ok"], events=row["events"], error=row["error"])
+    if "ticketmaster_api" in wanted:
+        tm = adapter_manager.get_adapter("ticketmaster_api")
+        tm_key = _saved_ticketmaster_key(db)
+        if tm_key:
+            from backend.services.discovery_agent.ticketmaster import test_ticketmaster_connection
+
+            res = test_ticketmaster_connection(tm_key)
+            source_results.append({"id": "ticketmaster_api", "ok": bool(res.get("success")), "events": res.get("totalEvents", 0), "error": None if res.get("success") else res.get("message")})
+            catalog.record_outcome(db, "ticketmaster_api", ok=bool(res.get("success")), events=res.get("totalEvents", 0) or 0, error=res.get("message"))
+        else:
+            source_results.append({"id": "ticketmaster_api", "ok": False, "events": 0, "error": tm.check_health()["error"]})
+    skipped = [{"id": sid, "reason": "not implemented"} for sid in wanted if not catalog.is_implemented(sid)]
+
+    provider_results = [search_engine.check_provider(pid) for pid in (payload.provider_ids or [] if payload else [])]
+    return {"sources": source_results, "skipped": skipped, "providers": provider_results}
+
+
+@router.get("/search-providers")
+def get_search_providers(_user: User = _admin) -> dict[str, Any]:
+    """Which web-search providers a run will actually use right now — so the
+    "General Web Search" toggle can show real status instead of a label."""
+    from backend.services.discovery_agent.search_providers import search_engine
+
+    settings = get_settings()
+    return {
+        "strategy": (settings.search_strategy or "free_first").lower(),
+        "providers": search_engine.get_providers_status(),
+    }
 
 
 @router.get("/runs/active")
@@ -547,6 +633,44 @@ def list_discovered_events(
         stmt = stmt.where(DiscoveredEvent.verification_status == verification_status)
     stmt = stmt.limit(limit)
     return [_serialize_event(event) for event in db.execute(stmt).scalars().all()]
+
+
+class _EventReviewRequest(BaseModel):
+    action: str = Field(pattern="^(restore|approve|reject)$")
+    note: str | None = Field(default=None, max_length=500)
+
+
+_REVIEW_TARGET = {"restore": "NEEDS_REVIEW", "approve": "VERIFIED", "reject": "REJECTED"}
+
+
+@router.post("/events/{event_id}/review")
+def review_discovered_event(event_id: int, payload: _EventReviewRequest, db: Session = Depends(get_db), user: User = _admin) -> DiscoveredEventOut:
+    """An admin's decision on one discovered event, kept on the record:
+    `restore` (rejected -> Needs review), `approve` (-> Verified) or `reject`.
+    The run's rejection reason stays in the notes, so it remains visible why
+    the agent turned it down."""
+    event = db.get(DiscoveredEvent, event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    target = _REVIEW_TARGET[payload.action]
+    if event.verification_status == target:
+        return _serialize_event(event)
+    who = getattr(user, "email", None) or f"admin #{getattr(user, 'id', '?')}"
+    note = f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC — {who}: {event.verification_status.replace('_', ' ').lower()} → {target.replace('_', ' ').lower()}"
+    if payload.note and payload.note.strip():
+        note += f" ({payload.note.strip()})"
+    event.verification_notes = [*(event.verification_notes or []), note]
+    event.verification_status = target
+    if target == "REJECTED":
+        event.discovery_status = "REJECTED"
+        if not any(n.startswith("REJECTION_REASON:") for n in event.verification_notes):
+            event.verification_notes = ["REJECTION_REASON: ADMIN_REJECTED", *event.verification_notes]
+    elif event.discovery_status == "REJECTED":
+        event.discovery_status = "NEW"
+    event.last_updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(event)
+    return _serialize_event(event)
 
 
 @router.get("/organizers")

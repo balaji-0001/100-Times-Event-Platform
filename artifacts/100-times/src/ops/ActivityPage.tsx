@@ -3,6 +3,7 @@ import { Link } from 'wouter';
 import { ChevronRight, Eye } from 'lucide-react';
 import { type AgentRun, useDiscoveredEvents, useDiscoveredOrganizers, useDiscoveryRuns, useOutreachMessages, useOutreachRuns } from './api';
 import { buildActivity } from './activity';
+import { RunScopeDisplay, RunScopeSummaryLine } from './RunScopeDisplay';
 import { AdminTable, Badge, Btn, Chips, DL, Drawer, ErrorState, EmptyState, LoadingState, NA, Notice, PageHeader, Panel, Section, cell, cellMuted, cx, fmtDate, fmtDateTime, fmtDuration, fmtTime, parseDate } from './ui';
 
 type Tab = 'discovery' | 'outreach';
@@ -53,11 +54,14 @@ export function ActivityPage() {
       <Panel className="mt-6 p-6">
         <Section title={`${tab === 'discovery' ? 'Discovery' : 'Outreach'} agent runs (${runs.length})`}>
           {runs.length === 0 ? <EmptyState title="No runs recorded." /> : tab === 'discovery' ? (
-            <AdminTable columns={['Run', 'Status', 'View Discoveries', 'Discovered', 'New', 'Duplicates', 'Organizers', 'Contacts', 'Needs review', 'Started', 'Duration', 'Error', 'Details']} minWidth={1260}>
+            <AdminTable columns={['Run', 'Status', 'Scope (Country · City · Sectors)', 'View Discoveries', 'Discovered', 'New', 'Duplicates', 'Organizers', 'Contacts', 'Needs review', 'Started', 'Duration', 'Error', 'Details']} minWidth={1340}>
               {runs.map((r) => (
                 <tr key={r.id} className="cursor-pointer hover:bg-muted/20" onClick={() => setOpenRun(r)}>
                   <td className={cell}><span className="font-mono-face font-bold">#{r.id}</span></td>
                   <td className={cell}><Badge tone={runTone(r.status)}>{r.status}</Badge></td>
+                  <td className={cell} style={{ minWidth: 180, maxWidth: 260 }}>
+                    <RunScopeSummaryLine run={r} />
+                  </td>
                   <td className={cell}>
                     {s(r, 'events_discovered') > 0 ? (
                       <Link
@@ -164,19 +168,26 @@ export function ActivityPage() {
             {openRun.error && <Notice tone="danger"><strong>Error:</strong> {openRun.error}</Notice>}
 
             {openRun.agentType === 'discovery' && (
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-accent/30 bg-accent/10 p-3.5">
-                <div>
-                  <div className="text-xs font-semibold text-foreground">Discovered Events for Run #{openRun.id}</div>
-                  <div className="text-[11px] text-muted-foreground">
-                    {s(openRun, 'new_events') || s(openRun, 'events_discovered') || 0} events recorded during this run
+              <>
+                <RunScopeDisplay
+                  run={openRun}
+                  title={`Run #${openRun.id} Starting Scope (Country · City · Sectors)`}
+                  className="mb-4"
+                />
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-accent/30 bg-accent/10 p-3.5">
+                  <div>
+                    <div className="text-xs font-semibold text-foreground">Discovered Events for Run #{openRun.id}</div>
+                    <div className="text-[11px] text-muted-foreground">
+                      {s(openRun, 'new_events') || s(openRun, 'events_discovered') || 0} events recorded during this run
+                    </div>
                   </div>
+                  <Link href={`/admin/discovery/events?run=${openRun.id}`}>
+                    <Btn variant="primary" size="sm">
+                      <Eye size={13} className="mr-1.5" /> View in Events Catalog →
+                    </Btn>
+                  </Link>
                 </div>
-                <Link href={`/admin/discovery/events?run=${openRun.id}`}>
-                  <Btn variant="primary" size="sm">
-                    <Eye size={13} className="mr-1.5" /> View in Events Catalog →
-                  </Btn>
-                </Link>
-              </div>
+              </>
             )}
 
             <Section title="Timing"><DL rows={[['Started', fmtDateTime(openRun.startedAt)], ['Completed', fmtDateTime(openRun.completedAt)], ['Duration', openRun.status === 'running' ? 'still running' : fmtDuration(openRun.startedAt, openRun.completedAt)]]} /></Section>

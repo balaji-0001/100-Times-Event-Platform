@@ -21,6 +21,7 @@ import {
   MessageCircle,
   Phone,
   Radio,
+  RotateCcw,
   Search,
   Send,
   Share2,
@@ -32,10 +33,12 @@ import {
   Ticket,
   Twitter,
 } from 'lucide-react';
-import { useCategories, useDiscoveryAutoStatus, useRunDiscovery, useActiveDiscoveryRun, useStopDiscoveryRun } from './api';
+import { useCategories, useDiscoveryAutoStatus, useDiscoveryCatalog, useRunDiscovery, useActiveDiscoveryRun, useStopDiscoveryRun, useDiscoveryRunEvents, useDiscoveryRuns } from './api';
 import { GeoChecklistSelector } from './GeoChecklistSelector';
+import { buildDiscoveryLocations, buildRegionCities } from '@/lib/countries';
 import { DiscoverySourcesManager } from './DiscoverySourcesManager';
-import { DEFAULT_ACTIVE_SOURCES } from './discoverySourcesConfig';
+import { RunSourcesReport } from './RunSourcesReport';
+import { RunScopeDisplay } from './RunScopeDisplay';
 import { Btn, DL, Drawer, ErrorState, Notice, inputClass } from './ui';
 
 const num = (v: string, fallback: number) => {
@@ -196,6 +199,8 @@ export function ManualResearchForm() {
   const auto = useDiscoveryAutoStatus();
   const activeRun = useActiveDiscoveryRun();
   const stopRun = useStopDiscoveryRun();
+  const discoveryRuns = useDiscoveryRuns();
+  const latestCompletedRun = !activeRun.data?.active ? (discoveryRuns.data?.[0] ?? null) : null;
 
   // Invalidate queries when an active discovery run finishes so newly discovered events display immediately
   const prevActiveRef = useRef<boolean>(false);
@@ -228,7 +233,11 @@ export function ManualResearchForm() {
   const [targetValidEvents, setTargetValidEvents] = useState('50');
 
   // Sources state
-  const [selectedSources, setSelectedSources] = useState<string[]>(DEFAULT_ACTIVE_SOURCES);
+  // Filled from the saved settings (the backend returns its defaults when none are saved).
+  const [selectedSources, setSelectedSources] = useState<string[]>([]);
+  // Web-search providers this run may call; null = every configured provider.
+  const [searchProviders, setSearchProviders] = useState<string[] | null>(null);
+  const catalog = useDiscoveryCatalog();
   const [listingUrls, setListingUrls] = useState<string[]>([]);
   const [ticketmasterApiKey, setTicketmasterApiKey] = useState('');
   const [ticketmasterEnabled, setTicketmasterEnabled] = useState(false);
@@ -237,6 +246,7 @@ export function ManualResearchForm() {
   const [fallbackToOtherSector, setFallbackToOtherSector] = useState(false);
   const [rejectNoOrganizer, setRejectNoOrganizer] = useState(true);
   const [requireOrganizerEmail, setRequireOrganizerEmail] = useState(true);
+  const [keepRejectedEvents, setKeepRejectedEvents] = useState(true);
   const [requireOrganizerPhone, setRequireOrganizerPhone] = useState(false);
   const [requireOrganizerWebsite, setRequireOrganizerWebsite] = useState(false);
   const [rejectPastEvents, setRejectPastEvents] = useState(true);
@@ -252,9 +262,13 @@ export function ManualResearchForm() {
 
   const result = run.data as Record<string, unknown> | undefined;
 
-  // Initialize defaults from saved automated discovery settings if available
+  // Start from the saved Automatic settings ONCE, when the form first loads.
+  // Re-running this on every auto.data change (toggling/saving Automatic, a
+  // refetch) silently replaced the admin's manual selections before Run.
+  const prefilled = useRef(false);
   useEffect(() => {
-    if (auto.data) {
+    if (auto.data && !prefilled.current) {
+      prefilled.current = true;
       if (auto.data.countries && auto.data.countries.length > 0) {
         setSelectedCountries(auto.data.countries);
       } else if (auto.data.country) {
@@ -265,7 +279,7 @@ export function ManualResearchForm() {
       if (auto.data.categories && auto.data.categories.length > 0) setSelectedCategories(auto.data.categories);
       if (auto.data.sources && auto.data.sources.length > 0) setSelectedSources(auto.data.sources);
       if (auto.data.listingUrls && auto.data.listingUrls.length > 0) setListingUrls(auto.data.listingUrls);
-      if (auto.data.ticketmasterApiKey !== undefined) setTicketmasterApiKey(auto.data.ticketmasterApiKey || '');
+      setSearchProviders(auto.data.searchProviders ?? null);
       if (auto.data.ticketmasterEnabled !== undefined) setTicketmasterEnabled(Boolean(auto.data.ticketmasterEnabled));
 
       if (auto.data.eventsPerRun) setEventsPerRun(String(auto.data.eventsPerRun));
@@ -273,6 +287,7 @@ export function ManualResearchForm() {
       if (auto.data.fallbackToOtherSector !== undefined) setFallbackToOtherSector(auto.data.fallbackToOtherSector);
       if (auto.data.rejectNoOrganizer !== undefined) setRejectNoOrganizer(auto.data.rejectNoOrganizer);
       if (auto.data.requireOrganizerEmail !== undefined) setRequireOrganizerEmail(auto.data.requireOrganizerEmail);
+      if (auto.data.keepRejectedEvents !== undefined) setKeepRejectedEvents(auto.data.keepRejectedEvents);
       if (auto.data.requireOrganizerPhone !== undefined) setRequireOrganizerPhone(auto.data.requireOrganizerPhone);
       if (auto.data.requireOrganizerWebsite !== undefined) setRequireOrganizerWebsite(auto.data.requireOrganizerWebsite);
       if (auto.data.rejectPastEvents !== undefined) setRejectPastEvents(auto.data.rejectPastEvents);
@@ -305,7 +320,11 @@ export function ManualResearchForm() {
     );
   };
 
-  const selectAllSources = () => setSelectedSources([...DEFAULT_ACTIVE_SOURCES]);
+  // A run needs at least one real channel; Ticketmaster ids alone only count when it's enabled.
+  const hasChannel =
+    selectedSources.some((id) => id !== 'ticketmaster' && id !== 'ticketmaster_api') || ticketmasterEnabled;
+
+  const selectAllSources = () => setSelectedSources([...(catalog.data?.default_sources ?? ['web'])]);
   const clearSources = () => setSelectedSources([]);
 
   const start = () => {
@@ -322,13 +341,17 @@ export function ManualResearchForm() {
     run.mutate({
       country: selectedCountries.length ? selectedCountries[0] : undefined,
       countries: selectedCountries.length ? selectedCountries : undefined,
+      locations: buildDiscoveryLocations(selectedCountries, selectedStates, selectedCities),
+      regionCities: buildRegionCities(selectedCountries, selectedStates, selectedCities),
       states: selectedStates.length ? selectedStates : undefined,
       cities: selectedCities.length ? selectedCities : undefined,
       categories: selectedCategories.length > 0 ? selectedCategories : undefined,
       sources: selectedSources.length ? selectedSources : ['web'],
       listingUrls: listingUrls.length ? listingUrls : undefined,
+      // Only a newly typed key is sent; otherwise the server uses the saved one.
       ticketmasterApiKey: ticketmasterApiKey ? ticketmasterApiKey.trim() : undefined,
       ticketmasterEnabled: ticketmasterEnabled,
+      searchProviders: searchProviders ?? undefined,
       eventsPerRun: num(eventsPerRun, 50),
       targetValidEvents: num(targetValidEvents, 25),
       searchDepth: num(depth, 6),
@@ -338,6 +361,7 @@ export function ManualResearchForm() {
       fallbackToOtherSector,
       rejectNoOrganizer,
       requireOrganizerEmail,
+      keepRejectedEvents,
       requireOrganizerPhone,
       requireOrganizerWebsite,
       rejectPastEvents,
@@ -387,8 +411,13 @@ export function ManualResearchForm() {
               <span className="text-xl font-bold text-foreground mt-1 block">{activeSummary.events_discovered ?? 0}</span>
             </div>
             <div className="rounded-lg border border-accent/30 bg-accent/10 p-3">
-              <span className="text-[10px] text-accent block font-mono uppercase font-semibold">Valid Events Accepted</span>
-              <span className="text-xl font-bold text-accent mt-1 block">{activeSummary.accepted_events ?? activeSummary.new_events ?? 0}</span>
+              <span className="text-[10px] text-accent block font-mono uppercase font-semibold">Verified Events</span>
+              <span className="text-xl font-bold text-accent mt-1 block">
+                {activeSummary.verified_events ?? 0}
+                {typeof active?.configSnapshot?.target_valid_events === 'number' && (
+                  <span className="text-xs font-semibold text-muted-foreground"> / {String(active.configSnapshot.target_valid_events)}</span>
+                )}
+              </span>
             </div>
             <div className="rounded-lg border border-foreground/10 bg-card p-3">
               <span className="text-[10px] text-muted-foreground block font-mono uppercase">Needs Review</span>
@@ -407,6 +436,11 @@ export function ManualResearchForm() {
               <span className="text-xl font-bold text-foreground mt-1 block">{activeSummary.organizers_found ?? 0}</span>
             </div>
           </div>
+
+          <RunScopeDisplay run={active} title="Run Started With (Target Countries · Cities · Sectors)" className="mt-3" />
+          <RunTimings timings={activeSummary.timings} />
+          <RunSourcesReport report={activeSummary.sources} />
+          <LiveVerifiedEvents runId={active.id} />
 
                     {Array.isArray(activeSummary.search_provider_logs) && activeSummary.search_provider_logs.length > 0 && (
             <div className="mt-3 rounded-lg border border-foreground/10 bg-card/60 p-3">
@@ -436,12 +470,12 @@ export function ManualResearchForm() {
                         )}
                         <span
                           className={`px-1.5 py-0.2 rounded font-mono font-semibold uppercase ${
-                            log.status === 'success'
+                            log.status === 'SUCCESS'
                               ? 'bg-emerald-500/10 text-emerald-500'
                               : 'bg-amber-500/10 text-amber-500'
                           }`}
                         >
-                          {log.status === 'success' ? `${log.result_count} results` : log.status}
+                          {log.status === 'SUCCESS' ? `${log.result_count} results` : log.status}
                         </span>
                       </div>
                     </div>
@@ -476,6 +510,61 @@ export function ManualResearchForm() {
           </div>
         </div>
       )}
+
+      {!active && latestCompletedRun && (
+        <div className="rounded-xl border border-foreground/15 bg-card/60 p-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-foreground text-sm">
+                Latest Discovery Run #{latestCompletedRun.id}
+              </span>
+              <span
+                className={`px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider rounded ${
+                  latestCompletedRun.status === 'completed'
+                    ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                    : latestCompletedRun.status === 'failed'
+                    ? 'bg-red-500/15 text-red-600'
+                    : 'bg-amber-500/15 text-amber-600'
+                }`}
+              >
+                {latestCompletedRun.status}
+              </span>
+            </div>
+            <Link
+              href={`/admin/discovery/events?run=${latestCompletedRun.id}`}
+              className="text-xs font-semibold text-accent hover:underline flex items-center gap-1"
+            >
+              <Eye size={12} /> View Discovered Events ({latestCompletedRun.summary?.verified_events ?? latestCompletedRun.summary?.new_events ?? latestCompletedRun.summary?.events_discovered ?? 0}) →
+            </Link>
+          </div>
+
+          <RunScopeDisplay
+            run={latestCompletedRun}
+            title={`Run #${latestCompletedRun.id} Scope & Starting Parameters (Countries · Cities · Sectors)`}
+            className="mt-3"
+          />
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3 text-center">
+            <div className="rounded-lg border border-foreground/10 bg-background/50 p-2">
+              <span className="text-[10px] text-muted-foreground block uppercase font-mono">Discovered</span>
+              <span className="text-sm font-bold text-foreground mt-0.5 block">{latestCompletedRun.summary?.events_discovered ?? 0}</span>
+            </div>
+            <div className="rounded-lg border border-accent/20 bg-accent/5 p-2">
+              <span className="text-[10px] text-accent block uppercase font-mono font-semibold">Verified</span>
+              <span className="text-sm font-bold text-accent mt-0.5 block">{latestCompletedRun.summary?.verified_events ?? latestCompletedRun.summary?.new_events ?? 0}</span>
+            </div>
+            <div className="rounded-lg border border-foreground/10 bg-background/50 p-2">
+              <span className="text-[10px] text-muted-foreground block uppercase font-mono">Duplicates</span>
+              <span className="text-sm font-bold text-muted-foreground mt-0.5 block">{latestCompletedRun.summary?.duplicate_events ?? 0}</span>
+            </div>
+            <div className="rounded-lg border border-foreground/10 bg-background/50 p-2">
+              <span className="text-[10px] text-muted-foreground block uppercase font-mono">Organizers</span>
+              <span className="text-sm font-bold text-foreground mt-0.5 block">{latestCompletedRun.summary?.organizers_found ?? 0}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center gap-2 border-b border-foreground/10 pb-3">
         <button
           type="button"
@@ -666,6 +755,7 @@ export function ManualResearchForm() {
               setTicketmasterApiKey(s.ticketmasterApiKey);
               setTicketmasterEnabled(s.ticketmasterEnabled);
               setSelectedSources(s.sources);
+              setSearchProviders(s.searchProviders);
             }}
           />
         </div>
@@ -673,6 +763,24 @@ export function ManualResearchForm() {
 
       {activeTab === 'rejection' && (
         <div className="grid gap-3.5">
+          {/* Rejected events */}
+          <div>
+            <h4 className="text-xs font-semibold text-foreground mb-2 flex items-center gap-1.5">
+              <RotateCcw size={13} className="text-accent" /> Rejected Events
+            </h4>
+            <div className="grid gap-2">
+              <FilterRuleRow
+                icon={RotateCcw}
+                title="Keep Rejected Events for Review"
+                description="Also saves events turned down for being outside your sectors or having no organizer e-mail (other rejections, such as wrong place or past date, are always saved). Find them under Discovered events → Status: Rejected, with the reason, and restore or approve any of them. They never count toward the target, and a later run that finds one passing its rules upgrades it."
+                checked={keepRejectedEvents}
+                onChange={setKeepRejectedEvents}
+                badge="Recommended"
+                disabled={run.isPending}
+              />
+            </div>
+          </div>
+
           {/* Sector Handling & Other Sector Fallback */}
           <div>
             <h4 className="text-xs font-semibold text-foreground mb-2 flex items-center gap-1.5">
@@ -682,7 +790,7 @@ export function ManualResearchForm() {
               <FilterRuleRow
                 icon={Layers}
                 title="Add Unmatched Events to 'Other' Sector"
-                description="When events outside your target sectors are discovered, assign them to the 'Other' sector instead of rejecting them, keeping them available on the platform."
+                description="Only when no sector is selected: events that fit none of the 100 TIMES sectors are kept under 'Other' instead of rejected. When you select sectors, events outside them never count (with 'Keep Rejected Events' on they are saved as Rejected for review)."
                 checked={fallbackToOtherSector}
                 onChange={setFallbackToOtherSector}
                 badge="Recommended"
@@ -878,11 +986,17 @@ export function ManualResearchForm() {
         Limits this run to <strong>{num(eventsPerRun, 50)} events</strong> and <strong>{num(depth, 6)} search queries</strong>.
       </Notice>
 
+      {!hasChannel && (
+        <Notice tone="warn">
+          No discovery channel is selected — turn on General Web Search, Global Directories or Consumer Aggregators (or enable Ticketmaster) to run.
+        </Notice>
+      )}
+
       <div className="flex items-center gap-3 pt-2 border-t border-foreground/10">
         <Btn
           variant="primary"
           loading={run.isPending}
-          disabled={Boolean(active)}
+          disabled={Boolean(active) || !hasChannel}
           onClick={start}
         >
           <Search size={13} /> {run.isPending ? 'Starting…' : active ? 'Run Already In Progress' : 'Run manual research'}
@@ -913,6 +1027,11 @@ export function ManualResearchForm() {
 
       {result && (
         <div className="rounded-xl border border-foreground/10 bg-background p-4 mt-2">
+          <RunScopeDisplay
+            run={result as any}
+            title={`Discovery Run #${result.runId ?? ''} Starting Scope (Countries · Cities · Sectors)`}
+            className="mb-3"
+          />
           <DL
             rows={[
               ['Run ID', String(result.runId ?? '—')],
@@ -926,6 +1045,7 @@ export function ManualResearchForm() {
               ['Needs Review', String(result.events_needing_review ?? 0)],
             ]}
           />
+          <RunSourcesReport report={result.sources as any} />
           <div className="mt-3 flex gap-3 font-mono-face text-[10px] uppercase tracking-wider">
             <Link href={result.runId ? `/admin/discovery/events?run=${result.runId}` : '/admin/discovery'} className="text-accent hover:underline font-bold">
               View Discoveries{result.new_events ? ` (${result.new_events} new)` : result.accepted_events ? ` (${result.accepted_events} accepted)` : ''} →
@@ -940,11 +1060,71 @@ export function ManualResearchForm() {
   );
 }
 
+const secs = (ms?: number) => (typeof ms === 'number' ? `${(ms / 1000).toFixed(1)}s` : '—');
+
+/** What the running search actually covers — from `summary.scope`, planned from the selection. */
+function RunScope({ scope }: { scope?: Record<string, any> }) {
+  if (!scope || !Array.isArray(scope.countries)) return null;
+  const countries: string[] = scope.countries;
+  const sectors: string[] = Array.isArray(scope.sectors) ? scope.sectors : [];
+  return (
+    <div className="mt-3 rounded-lg border border-foreground/10 bg-card/60 p-3 text-[11px]">
+      <p className="font-semibold text-foreground">Searching</p>
+      <p className="mt-1 text-muted-foreground">
+        <strong className="text-foreground">{scope.worldwide ? 'Worldwide' : `${countries.length} countr${countries.length === 1 ? 'y' : 'ies'}`}</strong>
+        {!scope.worldwide && countries.length > 0 && <> ({countries.join(', ')})</>}
+        {' · '}{scope.cities ?? 0} cities · {scope.states ?? 0} states
+        {' · '}{sectors.length} sector{sectors.length === 1 ? '' : 's'}{sectors.length > 0 && sectors.length <= 6 ? ` (${sectors.join(', ')})` : ''}
+      </p>
+      <p className="mt-0.5 text-muted-foreground">
+        {scope.first_wave_queries ?? 0} search queries · {scope.listing_pages ?? 0} listing pages · {scope.adapters ?? 0} directory sources
+      </p>
+    </div>
+  );
+}
+
+/** Measured run milestones from `summary.timings` (recorded by the backend pipeline). */
+function RunTimings({ timings }: { timings?: Record<string, any> }) {
+  if (!timings || typeof timings.elapsed_ms !== 'number') return null;
+  const worker = timings.cumulative_worker_ms ?? {};
+  return (
+    <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg border border-foreground/10 bg-card/60 p-3 text-[10px] sm:grid-cols-4">
+      <div><span className="block font-mono uppercase text-muted-foreground">Elapsed</span><span className="text-sm font-bold">{secs(timings.elapsed_ms)}</span></div>
+      <div><span className="block font-mono uppercase text-muted-foreground">First verified</span><span className="text-sm font-bold">{secs(timings.first_verified_ms)}</span></div>
+      <div><span className="block font-mono uppercase text-muted-foreground">Searches · pages</span><span className="text-sm font-bold">{timings.searches ?? 0} · {timings.pages_read ?? 0}</span></div>
+      <div><span className="block font-mono uppercase text-muted-foreground">Organizer checks</span><span className="text-sm font-bold">{timings.organizer_lookups ?? 0}</span></div>
+      <p className="col-span-2 text-muted-foreground sm:col-span-4">
+        Worker time — search {secs(worker.search_ms)}, page reads {secs(worker.page_read_ms)}, organizer verification {secs(worker.organizer_ms)} · page cache hits {timings.page_cache_hits ?? 0}
+      </p>
+    </div>
+  );
+}
+
+/** Verified events from the running run, shown as soon as each one is stored. */
+function LiveVerifiedEvents({ runId }: { runId: number }) {
+  const events = useDiscoveryRunEvents(runId, true);
+  const verified = (events.data ?? []).filter((e) => e.verificationStatus === 'VERIFIED');
+  if (!verified.length) return null;
+  return (
+    <div className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3">
+      <p className="mb-2 text-[11px] font-semibold">Verified so far ({verified.length})</p>
+      <ul className="max-h-48 space-y-1 overflow-y-auto pr-1 text-[11px]">
+        {verified.slice(0, 50).map((e) => (
+          <li key={e.id} className="flex justify-between gap-2">
+            <Link href={`/admin/discovery/events?event=${e.id}`} className="truncate font-medium hover:text-accent">{e.name}</Link>
+            <span className="shrink-0 text-muted-foreground">{e.eventDate ?? e.date ?? ''} · {e.country ?? ''}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function ManualResearchButton({ size = 'md' }: { size?: 'sm' | 'md' }) {
   const [open, setOpen] = useState(false);
   const activeRun = useActiveDiscoveryRun();
   const isRunning = Boolean(activeRun.data?.active);
-  const acceptedCount = activeRun.data?.run?.summary?.accepted_events ?? 0;
+  const verifiedCount = activeRun.data?.run?.summary?.verified_events ?? 0;
 
   return (
     <div className="flex items-center gap-2">
@@ -965,7 +1145,7 @@ export function ManualResearchButton({ size = 'md' }: { size?: 'sm' | 'md' }) {
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2 w-2 bg-accent"></span>
             </span>
-            Running ({acceptedCount} found)
+            Running ({verifiedCount} verified)
           </>
         ) : (
           <>

@@ -5,8 +5,9 @@ import { useActiveDiscoveryRun, useDiscoveryRunEvents, useDiscoveryRuns, useStop
 import { ALL_WORLD_COUNTRIES, getReferenceStatesForCountry, getReferenceCitiesForState, getReferenceCitiesForCountry } from '@/lib/countries';
 import { type DiscoveredEvent, messagesForEvent, organizerById, PLATFORM_CATEGORIES, useCategories, useDiscoveredEvents, useDiscoveredOrganizers, useDiscoveryStats, useDownloadDiscoveredEvents, useOutreachMessages } from './api';
 import { AdminTable, Badge, Btn, ConfidenceBar, ErrorState, EmptyState, LoadingState, NA, PageHeader, Pager, SearchBox, SelectFilter, StatCard, cell, cellMuted, fmtDate, fmtDateTime, useDebounce, usePagination, verificationTone } from './ui';
-import { EventDrawer, sourceTypeLabel } from './EventDrawer';
+import { EventDrawer, rejectionReason, sourceTypeLabel } from './EventDrawer';
 import { ManualResearchButton } from './ManualResearch';
+import { RunScopeHeaderBadges } from './RunScopeDisplay';
 
 const ALL = '__all__';
 const uniq = (vals: Array<string | null | undefined>) => Array.from(new Set(vals.filter((v): v is string => Boolean(v)))).sort();
@@ -25,7 +26,7 @@ export function DiscoveryPage({ mode }: { mode: 'new' | 'events' }) {
   const runParam = new URLSearchParams(search).get('run');
   const runId = runParam ? Number(runParam) : null;
   const discoveryRuns = useDiscoveryRuns();
-  const runEvents = useDiscoveryRunEvents(runId);
+  const runEvents = useDiscoveryRunEvents(runId, Boolean(runId && activeRun.data?.active && activeRun.data.run?.id === runId));
   const targetRun = useMemo(() => {
     if (!runId || !discoveryRuns.data) return null;
     return discoveryRuns.data.find((r) => r.id === runId) ?? null;
@@ -211,7 +212,9 @@ export function DiscoveryPage({ mode }: { mode: 'new' | 'events' }) {
               Background Discovery Run #{activeRun.data.run.id} Active:
             </span>
             <span className="text-xs text-muted-foreground">
-              <strong>{activeRun.data.run.summary?.accepted_events ?? 0} valid events found</strong> ({activeRun.data.run.summary?.events_discovered ?? 0} candidates explored)
+              <strong>{activeRun.data.run.summary?.verified_events ?? 0} verified events found</strong> ({activeRun.data.run.summary?.events_needing_review ?? 0} held for review · {activeRun.data.run.summary?.events_discovered ?? 0} candidates explored)
+              {' '}
+              <Link href={`/admin/discovery/events?run=${activeRun.data.run.id}`} className="font-semibold text-accent underline">Watch results live</Link>
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -228,47 +231,56 @@ export function DiscoveryPage({ mode }: { mode: 'new' | 'events' }) {
       )}
 
       {runId && (
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-accent/40 bg-accent/10 px-4 py-3 shadow-sm">
-          <div className="flex items-center gap-2.5">
-            <Badge tone="accent">Run #{runId}</Badge>
-            <span className="text-xs font-semibold text-foreground">
-              Showing {rows.length} event{rows.length === 1 ? '' : 's'} discovered in Run #{runId}
-            </span>
-            {targetRun && (
-              <span className="text-xs text-muted-foreground">
-                ({fmtDateTime(targetRun.startedAt)} · status: {targetRun.status})
+        <div className="mt-4 flex flex-col gap-2 rounded-xl border border-accent/40 bg-accent/10 px-4 py-3 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <Badge tone="accent">Run #{runId}</Badge>
+              <span className="text-xs font-semibold text-foreground">
+                Showing {rows.length} event{rows.length === 1 ? '' : 's'} discovered in Run #{runId}
               </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <Link href="/admin/activity">
-              <Btn variant="ghost" size="sm" className="h-7 text-xs">
-                <ArrowLeft size={12} className="mr-1" /> Back to Agent Runs
+              {targetRun && (
+                <span className="text-xs text-muted-foreground">
+                  ({fmtDateTime(targetRun.startedAt)} · status: {targetRun.status})
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Link href="/admin/activity">
+                <Btn variant="ghost" size="sm" className="h-7 text-xs">
+                  <ArrowLeft size={12} className="mr-1" /> Back to Agent Runs
+                </Btn>
+              </Link>
+              <Btn
+                variant="secondary"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => {
+                  const p = new URLSearchParams(search);
+                  p.delete('run');
+                  const qStr = p.toString();
+                  setLocation(`${mode === 'new' ? '/admin/discovery' : '/admin/discovery/events'}${qStr ? `?${qStr}` : ''}`);
+                }}
+              >
+                <X size={12} className="mr-1" /> Clear Run Filter
               </Btn>
-            </Link>
-            <Btn
-              variant="secondary"
-              size="sm"
-              className="h-7 text-xs"
-              onClick={() => {
-                const p = new URLSearchParams(search);
-                p.delete('run');
-                const qStr = p.toString();
-                setLocation(`${mode === 'new' ? '/admin/discovery' : '/admin/discovery/events'}${qStr ? `?${qStr}` : ''}`);
-              }}
-            >
-              <X size={12} className="mr-1" /> Clear Run Filter
-            </Btn>
+            </div>
           </div>
+          {targetRun && (
+            <div className="pt-2 border-t border-accent/20 flex items-center gap-2">
+              <span className="text-[10px] uppercase font-mono text-muted-foreground font-semibold">Scope:</span>
+              <RunScopeHeaderBadges run={targetRun} />
+            </div>
+          )}
         </div>
       )}
 
       {mode === 'new' && (
-        <div className="mt-8 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="mt-8 grid grid-cols-2 gap-3 lg:grid-cols-5">
           <StatCard label="New events" value={ds?.newEventsTotal ?? 0} sub={`${ds?.eventsTotal ?? 0} discovered in total`} href="/admin/discovery/events" />
           <StatCard label="Organizers found" value={ds?.organizersTotal ?? 0} href="/admin/discovery/organizers" />
           <StatCard label="Contacts found" value={ds?.contactsTotal ?? 0} sub={`${ds?.organizersWithEmailTotal ?? 0} organizers with email`} href="/admin/discovery/contacts" />
           <StatCard label="Needs review" value={ds?.needsReviewTotal ?? 0} tone={ds?.needsReviewTotal ? 'warn' : 'good'} href="/admin/discovery/events?verification=NEEDS_REVIEW" />
+          <StatCard label="Rejected" value={ds?.rejectedTotal ?? 0} sub="Open to restore or approve" href="/admin/discovery/events?verification=REJECTED" />
         </div>
       )}
 
@@ -318,7 +330,7 @@ export function DiscoveryPage({ mode }: { mode: 'new' | 'events' }) {
                     <td className={cell}>{o?.email ? <span className="block max-w-[200px] truncate">{o.email}</span> : <span className="text-muted-foreground">{NA}</span>}</td>
                     <td className={cellMuted}>{o?.phone ?? NA}</td>
                     <td className={cellMuted}><span className="block max-w-[160px] truncate" title={e.sourceUrl ?? ''}>{e.sourceWebsite ?? NA}</span>{e.sources[0] && <span className="block text-[10px]">{sourceTypeLabel(e.sources[0].sourceType)}</span>}</td>
-                    <td className={cell}><Badge tone={verificationTone(e.verificationStatus)}>{e.verificationStatus.replace('_', ' ')}</Badge><div className="mt-1.5"><ConfidenceBar value={e.confidenceScore} /></div></td>
+                    <td className={cell}><Badge tone={verificationTone(e.verificationStatus)}>{e.verificationStatus.replace('_', ' ')}</Badge>{rejectionReason(e) && <span className="mt-1 block max-w-[160px] truncate text-[10px] text-muted-foreground" title={rejectionReason(e) ?? ''}>{rejectionReason(e)}</span>}<div className="mt-1.5"><ConfidenceBar value={e.confidenceScore} /></div></td>
                     <td className={cellMuted}>{fmtDate(e.discoveredAt)}</td>
                     <td className={cell}><Btn size="sm" onClick={(ev) => { ev.stopPropagation(); openEvent(e); }}>View details</Btn></td>
                   </tr>
