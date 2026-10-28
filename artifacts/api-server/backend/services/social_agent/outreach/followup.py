@@ -31,10 +31,17 @@ from backend.services.social_agent.outreach.orchestrator import to_event_details
 
 
 def process_followups(db: Session) -> dict[str, Any]:
+    from backend.services.social_agent.outreach.auto_toggle import get_outreach_auto_settings
+
     settings = get_settings()
+    saved = get_outreach_auto_settings(db)
+    # The wait saved in the Outreach settings ("Follow-up wait days"), else OUTREACH_FOLLOWUP_DAYS.
+    wait_days = saved.get("followup_wait_days")
+    wait_days = int(wait_days) if isinstance(wait_days, (int, float)) and wait_days > 0 else settings.outreach_followup_days
+    style = {k: saved[k] for k in ("sender_name", "template_style") if saved.get(k)}
     now = datetime.now(timezone.utc)
-    followup_cutoff = now - timedelta(days=settings.outreach_followup_days)
-    no_response_cutoff = now - timedelta(days=settings.outreach_followup_days)
+    followup_cutoff = now - timedelta(days=wait_days)
+    no_response_cutoff = now - timedelta(days=wait_days)
 
     summary = {"followUpsDrafted": 0, "markedCompleted": 0}
 
@@ -51,12 +58,18 @@ def process_followups(db: Session) -> dict[str, Any]:
     for message in due_for_followup:
         event_details = to_event_details(message.event)
         contact = to_organizer_contact_info(message.organizer)
-        content, generated_by = generate_followup_message(event_details, contact)
+        content, generated_by = generate_followup_message(event_details, contact, **style)
+        # The row is reused for the follow-up draft; keep what was actually sent first.
+        original = f"Originally sent {message.sent_at:%Y-%m-%d} — subject: {message.subject or ''}\n\n{message.message or ''}"
         message.subject = content.subject
         message.message = content.body
         message.generated_by = generated_by
         message.status = state_machine.transition_outreach_message(message.status, "FOLLOW_UP_DUE")
-        db.add(AgentAction(action_type="outreach_followup_drafted", result=f"OutreachMessage #{message.id} follow-up drafted — awaiting human approval.", created_at=now))
+        db.add(AgentAction(
+            action_type="outreach_followup_drafted",
+            result=f"OutreachMessage #{message.id} follow-up drafted — awaiting human approval.\n\n{original}",
+            created_at=now,
+        ))
         summary["followUpsDrafted"] += 1
 
     # --- Stage 2: DELIVERED, follow-up sent, past another full window with still no reply -> terminal COMPLETED ---

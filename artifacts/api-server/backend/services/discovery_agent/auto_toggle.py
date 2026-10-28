@@ -55,10 +55,13 @@ def get_discovery_auto_settings(db: Session) -> dict:
         return {}
 
 
-def set_discovery_auto_settings(db: Session, settings_dict: dict) -> dict:
-    """Updates saved automated discovery scope settings in `agent_settings`."""
+def set_discovery_auto_settings(db: Session, settings_dict: dict, remove: tuple[str, ...] = ()) -> dict:
+    """Updates saved automated discovery scope settings in `agent_settings`.
+    None values are ignored ("unchanged"); keys in `remove` are deleted."""
     current = get_discovery_auto_settings(db)
     current.update({k: v for k, v in settings_dict.items() if v is not None})
+    for key in remove:
+        current.pop(key, None)
     val = json.dumps(current)
     row = db.get(AgentSetting, _KEY_SETTINGS)
     if not row:

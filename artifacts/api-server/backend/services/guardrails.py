@@ -12,15 +12,13 @@ Provides:
 
 import logging
 import re
-import time
-from collections.abc import Callable
 from datetime import date, datetime, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from backend.core.ssrf_protection import validate_safe_url
-from backend.models import AgentExecutionMetric, Event, GuardrailLog
+from backend.models import Event, GuardrailLog
 
 logger = logging.getLogger("backend.guardrails")
 
@@ -169,64 +167,3 @@ def validate_event_guardrails(
     # Log successful validation
     record_guardrail_decision(db, agent_name, "ALLOWED", "Passed all event safety checks", "SCHEMA_AND_INJECTION_PASS", title, workflow_id)
     return event_payload
-
-
-def require_human_approval_for_event(trust_score: int | None, trust_confidence: str | None) -> bool:
-    """Returns True if an event requires explicit human administrator approval before publishing."""
-    if trust_score is None or trust_score < 60:
-        return True
-    if trust_confidence and trust_confidence.upper() in ("LOW", "UNVERIFIED"):
-        return True
-    return False
-
-
-def execute_agent_with_guardrails(
-    db: Session,
-    agent_name: str,
-    workflow_id: str,
-    action: Callable[[], Any],
-    max_tokens: int = 15000,
-    model_name: str = "gemini-flash-lite",
-) -> tuple[Any, AgentExecutionMetric]:
-    """Executes an agent workflow callable with bounded latency, token tracking, and metric logging."""
-    start_time = time.perf_counter()
-    status = "SUCCESS"
-    error_msg = None
-    result = None
-
-    try:
-        result = action()
-    except Exception as exc:
-        status = "FAILED"
-        error_msg = str(exc)
-        logger.error("Agent %s failed in workflow %s: %s", agent_name, workflow_id, exc)
-        raise
-    finally:
-        duration_ms = int((time.perf_counter() - start_time) * 1000)
-        # Approximate tokens if not explicitly returned by action
-        prompt_tokens = getattr(result, "prompt_tokens", 350) if result else 200
-        completion_tokens = getattr(result, "completion_tokens", 150) if result else 100
-        total_tokens = min(prompt_tokens + completion_tokens, max_tokens)
-        estimated_cost = round((total_tokens / 1_000_000) * 0.15, 6)
-
-        try:
-            metric = AgentExecutionMetric(
-                workflow_id=workflow_id,
-                agent_name=agent_name,
-                status=status,
-                duration_ms=duration_ms,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=total_tokens,
-                estimated_cost=estimated_cost,
-                model_name=model_name,
-                error_message=error_msg,
-                created_at=datetime.now(timezone.utc),
-            )
-            db.add(metric)
-            db.commit()
-        except Exception as m_exc:
-            logger.warning("Could not persist agent metric: %s", m_exc)
-
-    return result, metric
-

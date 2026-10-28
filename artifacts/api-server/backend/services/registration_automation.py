@@ -232,8 +232,11 @@ def automate_registration(
             company=company or user.company,
             job_title=job_title or user.job_title,
             country=country or user.country,
-            payment_status="paid" if float(event.price or 0) > 0 else "not_required",
-            calendar_added=True,
+            # There is no payment step in this flow, so a paid ticket is still
+            # "pending" — never "paid" without a recorded payment.
+            payment_status="pending" if float(event.price or 0) > 0 else "not_required",
+            # Calendar links are generated, but nothing has been added to anyone's calendar.
+            calendar_added=False,
         )
         db.add(registration)
         db.flush()
@@ -404,16 +407,45 @@ def reschedule_event_workflow(
     - Detect changed date/time fields
     - Update event schedule and recalculate timezone-aware reminders
     - Notify all registered attendees and organizer
+
+    The event keeps its existing lifecycle_state/status: rescheduling a draft,
+    pending or cancelled event must not publish it.
     """
+    previous = {
+        "startDate": event.start_date.isoformat() if event.start_date else None,
+        "endDate": event.end_date.isoformat() if event.end_date else None,
+        "startTime": event.start_time,
+        "timezone": event.timezone,
+    }
     event.start_date = new_start_date
     event.end_date = new_end_date or new_start_date
     if new_start_time:
         event.start_time = new_start_time
     if new_timezone:
         event.timezone = new_timezone
+    event.updated_at = datetime.now(timezone.utc)
+    db.flush()
 
-    transition_event_state(db, event, "RESCHEDULED", actor="organizer", actor_id=actor_id, reason="Schedule updated", force=True)
-    transition_event_state(db, event, "PUBLISHED", actor="organizer", actor_id=actor_id, reason="Republished after reschedule", force=True)
+    record_audit_log(
+        db,
+        actor="organizer",
+        actor_id=actor_id,
+        action="EVENT_RESCHEDULED",
+        entity="Event",
+        entity_id=event.id,
+        result="SUCCESS",
+        metadata={
+            "from": previous,
+            "to": {
+                "startDate": event.start_date.isoformat() if event.start_date else None,
+                "endDate": event.end_date.isoformat() if event.end_date else None,
+                "startTime": event.start_time,
+                "timezone": event.timezone,
+            },
+            "lifecycleState": event.lifecycle_state,
+            "status": event.status,
+        },
+    )
 
     # Update scheduled reminders to new UTC times
     schedule_map = compute_reminder_schedule_utc(event.start_date, event.start_time, event.timezone)
@@ -523,16 +555,21 @@ def initiate_or_advance_organizer_followup(
     *,
     event: Event,
     reason: str = "POST_EVENT",
-) -> OrganizerFollowup:
+) -> OrganizerFollowup | None:
     """WORKFLOW 7 — ORGANIZER FOLLOW-UP:
     - Initial contact after event ends (or cancellation)
     - If no response: Wait 1 day -> follow-up #1
     - If still no response: Wait another 2 days -> follow-up #2
     - Stop after configured `organizer_followup_max_attempts` (default 3)
+
+    Returns None (and contacts nobody) when the event has no organizer — the
+    follow-up is never redirected to some other organizer.
     """
     settings = get_settings()
-    organizer_id = event.organizer_id or 1
-    organizer = db.get(Organizer, organizer_id)
+    organizer_id = event.organizer_id
+    organizer = db.get(Organizer, organizer_id) if organizer_id else None
+    if organizer is None:
+        return None
     now = datetime.now(timezone.utc)
 
     followup = db.scalar(

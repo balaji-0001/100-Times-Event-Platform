@@ -43,13 +43,23 @@ class Settings(BaseSettings):
     x_api_key: str | None = None  # OAuth2 client id — needed for the publish-side user-context flow, once X approves commercial access
     x_api_secret: str | None = None
     linkedin_access_token: str | None = None
-    linkedin_client_id: str | None = None  # needed for the Community Management API OAuth flow, once LinkedIn approves the API product
+    linkedin_client_id: str | None = None  # LinkedIn app — enables "Connect LinkedIn" (OAuth sign-in) on the Social Promotions page
     linkedin_client_secret: str | None = None
     linkedin_organization_id: str | None = None
+    # "w_organization_social" (post as a company page) works only once LinkedIn
+    # approves the Community Management API product for the app.
+    linkedin_oauth_scopes: str = "openid profile w_member_social"
     instagram_access_token: str | None = None
     instagram_business_account_id: str | None = None
     facebook_page_access_token: str | None = None
     facebook_page_id: str | None = None
+    # Meta app — enables "Connect Facebook & Instagram" (one Facebook Login
+    # gives the Page token and the Page's linked Instagram business account).
+    meta_app_id: str | None = None
+    meta_app_secret: str | None = None
+    # Public HTTPS address of this site (e.g. a Cloudflare tunnel). OAuth
+    # callbacks are <PUBLIC_BASE_URL>/api/social/oauth/<provider>/callback.
+    public_base_url: str | None = None
     discord_promotion_webhook_url: str | None = None
     telegram_promotion_channel_id: str | None = None
     auto_promotion_enabled: bool = True
@@ -83,6 +93,18 @@ class Settings(BaseSettings):
     bing_search_api_key: str | None = None
     brave_search_api_key: str | None = None
     exa_api_key: str | None = None
+    # Self-hosted SearXNG (docker compose up -d searxng) — keyless whole-web search.
+    searxng_url: str | None = None
+    # "free_first": ask the free providers (SearXNG) first and only spend paid
+    # credits (Exa/Brave/Google/Bing) when they come back short or fail.
+    # "parallel": always query every configured provider at once.
+    search_strategy: str = "free_first"
+    # Most paid search calls (Exa, Google via Gemini grounding, Brave, Google
+    # CSE) one discovery run may make, across discovery queries and organizer
+    # lookups. Free providers (SearXNG, DuckDuckGo) are not counted.
+    paid_search_calls_per_run: int = 60
+    # "Upcoming events" window the run wizard proposes by default (today .. today + N days).
+    discovery_default_window_days: int = 365
 
     # Attribution window for tying a registration back to the click that drove it.
     click_attribution_window_days: int = 30
@@ -151,7 +173,6 @@ class Settings(BaseSettings):
         "https://www.eventbrite.com/d/{country}--{city}/events/,"
         "https://www.eventbrite.com/d/{city}/events/,"
         "https://www.meetup.com/find/?location={city}&source=EVENTS,"
-        "https://10times.com/{city},"
         "https://www.skillboxes.com/events"
     )
     discovery_events_per_listing: int = 25
@@ -205,6 +226,15 @@ class Settings(BaseSettings):
     # n8n Webhook & Automation security
     n8n_webhook_secret: str = "dev-n8n-webhook-secret-100times"
     n8n_webhooks_enabled: bool = False
+
+    # Comma-separated socket addresses of reverse proxies whose X-Forwarded-For
+    # header the auth rate limiter may trust. Empty = trust no proxy (the
+    # client's own socket address is used; a forged header is ignored).
+    trusted_proxy_ips: str = ""
+
+    # Public base URL of the web frontend, used for links in emails
+    # (email verification, password reset).
+    public_app_url: str = "http://localhost:5174"
     calendar_provider: str = "ics"  # ics | google | outlook
 
     # Trust Agent (Agent 3) thresholds

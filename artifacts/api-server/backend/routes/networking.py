@@ -1,12 +1,15 @@
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import or_, select
+from pydantic import Field
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from backend.db import get_db
 from backend.dependencies import get_current_user
-from backend.models import Connection, Message, Notification, Registration, User
+from backend.models import Connection, Event, Message, Notification, Organizer, Registration, User
 from backend.schemas import (
-    AttendeeProfileOut,
+    APIModel,
     ConnectionCreate,
     ConnectionOut,
     ConnectionUpdate,
@@ -46,15 +49,62 @@ def list_connections(db: Session = Depends(get_db), user: User = Depends(get_cur
     return [connection_to_out(row, user.id) for row in rows]
 
 
-@router.get("/attendees", response_model=list[AttendeeProfileOut])
+class AttendeeDirectoryOut(APIModel):
+    """Public directory card for another attendee. Same camelCase fields as
+    schemas.AttendeeProfileOut minus `role` (account roles are not shown to
+    other users); no email either."""
+
+    id: int
+    name: str
+    job_title: str | None = Field(default=None, alias="jobTitle")
+    company: str | None = None
+    bio: str | None = None
+    country: str | None = None
+    registered_event_count: int = Field(default=0, alias="registeredEventCount")
+    connection_status: Literal["none", "pending_sent", "pending_received", "connected"] = Field(default="none", alias="connectionStatus")
+    connection_id: int | None = Field(default=None, alias="connectionId")
+
+
+def _active_registration():
+    return func.lower(Registration.status) != "cancelled"
+
+
+def _is_admin(user: User) -> bool:
+    return (user.role or "").upper() == "ADMIN"
+
+
+def _events_caller_may_see_attendees_of(user: User):
+    """Events the caller is (actively) registered for, plus events whose
+    organizer row the caller owns."""
+    registered = select(Registration.event_id).where(Registration.user_id == user.id, _active_registration())
+    organized = select(Event.id).where(Event.organizer_id.in_(select(Organizer.id).where(Organizer.user_id == user.id)))
+    return registered.union(organized)
+
+
+@router.get("/attendees", response_model=list[AttendeeDirectoryOut])
 def list_attendees(
     q: str | None = None,
     eventId: int | None = Query(None, alias="eventId"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> list[AttendeeProfileOut]:
+) -> list[AttendeeDirectoryOut]:
     # Query users excluding self
     query = select(User).options(selectinload(User.registrations)).where(User.id != user.id)
+
+    # Who may appear: attendees of events the caller attends or organizes
+    # (admins see everyone). Another event's attendee list is not exposed.
+    if eventId is not None:
+        if not _is_admin(user):
+            allowed_event_ids = set(db.scalars(_events_caller_may_see_attendees_of(user)).all())
+            if eventId not in allowed_event_ids:
+                raise HTTPException(status_code=403, detail="You can only see attendees of events you are registered for or organize")
+        event_attendees = select(Registration.user_id).where(Registration.event_id == eventId, _active_registration())
+        query = query.where(User.id.in_(event_attendees))
+    elif not _is_admin(user):
+        co_attendees = select(Registration.user_id).where(
+            Registration.event_id.in_(_events_caller_may_see_attendees_of(user)), _active_registration()
+        )
+        query = query.where(User.id.in_(co_attendees))
     if q:
         search_pattern = f"%{q.strip().lower()}%"
         query = query.where(
@@ -65,9 +115,6 @@ def list_attendees(
                 User.bio.ilike(search_pattern),
             )
         )
-    if eventId:
-        query = query.join(Registration, Registration.user_id == User.id).where(Registration.event_id == eventId)
-
     users = db.scalars(query.order_by(User.name).limit(50)).all()
 
     # Load existing connection mappings for the current user
@@ -79,7 +126,7 @@ def list_attendees(
         other_id = c.addressee_id if c.requester_id == user.id else c.requester_id
         conn_map[other_id] = c
 
-    results: list[AttendeeProfileOut] = []
+    results: list[AttendeeDirectoryOut] = []
     for u in users:
         conn = conn_map.get(u.id)
         status_val = "none"
@@ -94,14 +141,13 @@ def list_attendees(
                 status_val = "pending_received"
 
         results.append(
-            AttendeeProfileOut(
+            AttendeeDirectoryOut(
                 id=u.id,
                 name=u.name,
                 jobTitle=u.job_title,
                 company=u.company,
                 bio=u.bio,
                 country=u.country,
-                role=u.role,
                 registeredEventCount=len(u.registrations) if u.registrations else 0,
                 connectionStatus=status_val,
                 connectionId=conn_id,

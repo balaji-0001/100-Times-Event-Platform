@@ -36,7 +36,7 @@ def _config() -> DiscoveryConfig:
 
 def _patch_pipeline(monkeypatch):
     # Each query surfaces a different page, but every page lists the same event.
-    monkeypatch.setattr(orchestrator.web_search, "search", lambda query, max_results: [f"https://example.test/results/{abs(hash(query))}"])
+    monkeypatch.setattr(orchestrator.web_search, "search", lambda query, max_results=5, **kwargs: [f"https://example.test/results/{abs(hash(query))}"])
     monkeypatch.setattr(orchestrator.page_extractor, "extract_events_from_page", lambda url, max_events, cities: [_fixed_candidate()])
     monkeypatch.setattr(orchestrator.organizer_identifier, "identify_organizer", lambda candidate: _fixed_organizer())
 
@@ -77,9 +77,9 @@ def test_target_valid_events_rule_continues_until_target_reached(db_session, mon
         nonlocal candidate_counter
         candidate_counter += 1
         if candidate_counter % 2 == 1:
-            name = "Repeated Dupe Event"
+            name = "Repeated Tech Dupe Event"
         else:
-            name = f"Unique Event {candidate_counter}"
+            name = f"Unique Tech Event {candidate_counter}"
         source = CandidateSource(url=f"https://example.test/events/{candidate_counter}", source_type="event_listing", source_website="example.test")
         return [
             ExtractedEventCandidate(
@@ -103,6 +103,7 @@ def test_target_valid_events_rule_continues_until_target_reached(db_session, mon
     cfg = DiscoveryConfig(
         cities=["Bengaluru"],
         categories=["Technology"],
+        listing_urls=["https://example.test/page/{city}"],  # expanded by the patched builder above
         events_per_run=5,  # Raw cap is small (5), but target_valid_events is 10!
         target_valid_events=10,
         daily_limit=200,

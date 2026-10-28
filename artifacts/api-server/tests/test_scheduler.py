@@ -108,4 +108,4 @@ def test_start_background_scheduler_always_starts_outreach_loops(monkeypatch):
     for coro in created:
         coro.close()
 
-    assert len(tasks) == 5  # event-discovery, outreach-draft, outreach-followup, community-discovery, community-promotion — no attendee/organizer scan
+    assert len(tasks) == 6  # event-discovery, outreach-draft, outreach-followup, attendee-notifications, community-discovery, community-promotion — no attendee/organizer scan

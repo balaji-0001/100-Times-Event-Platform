@@ -305,26 +305,65 @@ export function getReferenceCitiesForCountriesAndStates(
   return results.sort((a, b) => a.city.localeCompare(b.city));
 }
 
-/**
- * Returns cities for a set of selected states, with state association
- */
-export function getCitiesWithStateForStates(countryName: string, stateNames: string[]): Array<{ city: string; state: string }> {
-  if (!countryName) return [];
-  const cNorm = countryName.trim().toLowerCase();
-  const targetStates = stateNames.map((s) => s.trim().toLowerCase());
-  const results: Array<{ city: string; state: string }> = [];
-
-  for (const [c, states] of Object.entries(COUNTRY_HIERARCHY)) {
-    if (c.toLowerCase() === cNorm) {
-      for (const [state, cities] of Object.entries(states)) {
-        if (targetStates.length === 0 || targetStates.includes(state.toLowerCase())) {
-          for (const city of cities) {
-            results.push({ city, state });
-          }
-        }
-      }
-    }
-  }
-  return results.sort((a, b) => a.city.localeCompare(b.city));
+export interface DiscoveryLocation {
+  country?: string;
+  state?: string;
+  city?: string;
 }
 
+/**
+ * Turns the flat country / state / city selections into structured
+ * locations so the backend knows which country every selected city and
+ * state belongs to (otherwise "Hyderabad" or "Bavaria" is ambiguous, and
+ * multi-country runs searched only the first country).
+ */
+export function buildDiscoveryLocations(countries: string[], states: string[], cities: string[]): DiscoveryLocation[] {
+  const out: DiscoveryLocation[] = [];
+  const usedCities = new Set<string>();
+  const usedStates = new Set<string>();
+  const citySet = new Set(cities);
+  const stateSet = new Set(states);
+  for (const country of countries) {
+    const tree = COUNTRY_HIERARCHY[country] || {};
+    let added = false;
+    for (const [state, stateCities] of Object.entries(tree)) {
+      const picked = stateCities.filter((c) => citySet.has(c) && !usedCities.has(c));
+      if (picked.length) {
+        for (const city of picked) {
+          out.push({ country, state, city });
+          usedCities.add(city);
+        }
+        usedStates.add(state);
+        added = true;
+      } else if (stateSet.has(state) && !usedStates.has(state)) {
+        out.push({ country, state });
+        usedStates.add(state);
+        added = true;
+      }
+    }
+    if (!added) out.push({ country });
+  }
+  // Selections outside the reference hierarchy are still sent; the backend infers their country.
+  for (const city of cities) if (!usedCities.has(city)) out.push({ city });
+  for (const state of states) if (!usedStates.has(state)) out.push({ state });
+  return out;
+}
+
+/**
+ * The picker's state -> cities lists for every country where a whole state
+ * is ticked (a state with none of its cities ticked). The backend uses them
+ * to tell which state an event's city is in, so "Bavaria" keeps Munich and
+ * Nuremberg events and rejects Berlin ones.
+ */
+export function buildRegionCities(countries: string[], states: string[], cities: string[]): Record<string, Record<string, string[]>> {
+  const out: Record<string, Record<string, string[]>> = {};
+  const citySet = new Set(cities);
+  const stateSet = new Set(states);
+  for (const country of countries) {
+    const tree = COUNTRY_HIERARCHY[country];
+    if (!tree) continue;
+    const hasWholeState = Object.entries(tree).some(([state, stateCities]) => stateSet.has(state) && !stateCities.some((c) => citySet.has(c)));
+    if (hasWholeState) out[country] = tree;
+  }
+  return out;
+}

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from backend.db import get_db
 from backend.dependencies import get_current_user, optional_current_user
-from backend.models import AcquisitionReferralEvent, Category, City, Event, Organizer, OrganizerProfile, Registration, Review, SavedEvent, User, Venue
+from backend.models import AcquisitionReferralEvent, Category, City, Event, Registration, Review, SavedEvent, User, Venue
 from backend.services.social_agent.attribution import attribute_registration
 from backend.schemas import (
     ActionResult,
@@ -24,6 +24,9 @@ from backend.schemas import (
 from backend.serializers import event_card, review_out
 
 router = APIRouter(prefix="/events", tags=["events"])
+
+# Lifecycle states in which a published event no longer takes registrations.
+_REGISTRATION_CLOSED_STATES = {"REGISTRATION_CLOSED", "EVENT_COMPLETED", "REJECTED"}
 
 
 def slugify(value: str) -> str:
@@ -162,15 +165,9 @@ def get_event(slug: str, db: Session = Depends(get_db), user: User | None = Depe
         is_admin = bool(user and user.role == "ADMIN")
         is_owner = False
         if user:
-            if event.organizer and getattr(event.organizer, "user_id", None) == user.id:
-                is_owner = True
-            else:
-                user_org_ids = set(db.scalars(select(Organizer.id).where(Organizer.user_id == user.id)).all())
-                profile_org_id = db.scalar(select(OrganizerProfile.organizer_id).where(OrganizerProfile.user_id == user.id))
-                if profile_org_id:
-                    user_org_ids.add(profile_org_id)
-                if event.organizer_id in user_org_ids:
-                    is_owner = True
+            # Ownership is only Organizer.user_id (a profile's organizer_id link
+            # is not proof of ownership).
+            is_owner = bool(event.organizer and getattr(event.organizer, "user_id", None) == user.id)
         if not (is_admin or is_owner):
             raise HTTPException(status_code=404, detail="Event not found")
     reviews = [review_out(review) for review in sorted(event.reviews, key=lambda item: item.created_at, reverse=True)]
@@ -188,13 +185,11 @@ def get_event(slug: str, db: Session = Depends(get_db), user: User | None = Depe
         description=event.description,
         organizerId=event.organizer_id or 0,
         venueId=event.venue_id or 0,
-        agenda=[
-            {"time": "09:30 AM", "title": "Doors open & coffee", "detail": "Settle in, meet the room, and find your people."},
-            {"time": "10:30 AM", "title": "The opening signal", "detail": "A clear-eyed view of the shifts shaping the next 12 months."},
-            {"time": "01:15 PM", "title": "Working sessions", "detail": "Small rooms, honest questions, practical takeaways."},
-        ],
+        # No agenda or exhibitor data is stored for events, so none is returned
+        # (previously every event got the same invented agenda/exhibitor list).
+        agenda=[],
         speakers=[],
-        exhibitors=["Northstar Labs", "Arcwell", "Lumen Health", "Kiteworks"],
+        exhibitors=[],
         reviews=reviews,
         relatedEvents=related,
     )
@@ -231,47 +226,55 @@ def register_for_event(
     from backend.services.registration_automation import automate_registration
 
     event = load_event(db, id)
-    if (event.lifecycle_state or "").upper() == "CANCELLED" or event.status == "cancelled":
+    lifecycle = (event.lifecycle_state or "").upper()
+    if lifecycle == "CANCELLED" or event.status == "cancelled":
         raise HTTPException(status_code=400, detail="This event has been cancelled")
+    if event.status != "published":
+        # Drafts / pending / rejected events are not public: same 404 as GET /events/{slug}.
+        raise HTTPException(status_code=404, detail="Event not found")
+    if lifecycle in _REGISTRATION_CLOSED_STATES:
+        raise HTTPException(status_code=400, detail="Registration is closed for this event")
 
     submitted_email = (payload.email or "").strip().lower()
     target_user = user
 
+    def _new_attendee_account() -> User:
+        import uuid
+
+        new_user = User(
+            name=f"{payload.first_name} {payload.last_name}".strip() or submitted_email.split("@")[0] or "Attendee",
+            email=submitted_email,
+            password_hash=f"!unusable_{uuid.uuid4().hex}",
+            role="USER",
+            company=payload.company,
+            job_title=payload.job_title,
+            country=payload.country,
+        )
+        db.add(new_user)
+        db.flush()
+        return new_user
+
     if not target_user:
-        target_user = db.scalar(select(User).where(func.lower(User.email) == submitted_email))
-        if not target_user:
-            import uuid
-            target_user = User(
-                name=f"{payload.first_name} {payload.last_name}".strip() or submitted_email.split("@")[0] or "Attendee",
-                email=submitted_email or f"attendee-{int(datetime.now(timezone.utc).timestamp())}@100times.io",
-                password_hash=f"!unusable_{uuid.uuid4().hex}",
-                role="USER",
-                company=payload.company,
-                job_title=payload.job_title,
-                country=payload.country or "India",
+        # Anonymous registration never touches an existing account: whoever owns
+        # that email has to sign in and register themselves.
+        if db.scalar(select(User.id).where(func.lower(User.email) == submitted_email)):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="An account already exists for this email. Please sign in to register for this event.",
             )
-            db.add(target_user)
-            db.flush()
+        target_user = _new_attendee_account()
     else:
         # If logged-in user already registered for this event and is submitting a different attendee email,
-        # resolve or create that attendee's User row so both registrations are stored cleanly.
+        # create that attendee's User row so both registrations are stored cleanly — but never attach the
+        # registration to (or edit) somebody else's existing account.
         existing_for_current = db.scalar(select(Registration).where(Registration.event_id == id, Registration.user_id == target_user.id))
         if existing_for_current and submitted_email and submitted_email != (target_user.email or "").lower():
-            other_user = db.scalar(select(User).where(func.lower(User.email) == submitted_email))
-            if not other_user:
-                import uuid
-                other_user = User(
-                    name=f"{payload.first_name} {payload.last_name}".strip() or submitted_email.split("@")[0],
-                    email=submitted_email,
-                    password_hash=f"!unusable_{uuid.uuid4().hex}",
-                    role="USER",
-                    company=payload.company,
-                    job_title=payload.job_title,
-                    country=payload.country or "India",
+            if db.scalar(select(User.id).where(func.lower(User.email) == submitted_email)):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="This email belongs to an existing 100 TIMES account. That attendee needs to sign in and register themselves.",
                 )
-                db.add(other_user)
-                db.flush()
-            target_user = other_user
+            target_user = _new_attendee_account()
 
     existing = db.scalar(select(Registration).where(Registration.event_id == id, Registration.user_id == target_user.id))
     if not existing:
@@ -287,12 +290,15 @@ def register_for_event(
         if event.capacity is not None and event.capacity > 0 and active_count >= event.capacity:
             raise HTTPException(status_code=409, detail="Event has reached maximum capacity")
 
-    if payload.company:
-        target_user.company = payload.company
-    if payload.job_title:
-        target_user.job_title = payload.job_title
-    if payload.country:
-        target_user.country = payload.country
+    # Only the signed-in caller's own profile is updated from the form (a new
+    # attendee account already got these values when it was created).
+    if user is not None and target_user is user:
+        if payload.company:
+            target_user.company = payload.company
+        if payload.job_title:
+            target_user.job_title = payload.job_title
+        if payload.country:
+            target_user.country = payload.country
 
     try:
         auto_res = automate_registration(
@@ -336,7 +342,7 @@ def register_for_event(
         db.commit()
     ticket_code = f"100T-{event.id:04d}-{registration.id:05d}"
     qr_data = f"100TIMES:PASS:EVENT={event.slug}:REG={ticket_code}:USER={target_user.email}:TIER={registration.ticket_type}"
-    venue_name = event.venue.name if event.venue else "Convention Center"
+    venue_name = event.venue.name if event.venue else ""
     city_name = event.venue.city.name if event.venue and event.venue.city else ""
     loc_str = f"{city_name}" if city_name else ""
     return RegistrationOut(
@@ -356,7 +362,7 @@ def register_for_event(
         eventVenue=venue_name,
         eventStartDate=event.start_date.isoformat() if event.start_date else "",
         eventEndDate=event.end_date.isoformat() if event.end_date else "",
-        eventStartTime=event.start_time or "09:00",
+        eventStartTime=event.start_time or "",
     )
 
 

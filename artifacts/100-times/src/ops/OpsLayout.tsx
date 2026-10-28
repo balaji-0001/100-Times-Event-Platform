@@ -1,10 +1,8 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
-import { Link, Redirect, useLocation } from 'wouter';
-import { useQueryClient } from '@tanstack/react-query';
-import { Activity, CalendarSearch, LayoutDashboard, Mail, Search, Settings2, Share2, Sparkles, Zap, X, ShieldCheck } from 'lucide-react';
-import { customFetch } from '@workspace/api-client-react';
+import { Link, useLocation } from 'wouter';
+import { CalendarSearch, ChevronRight, Compass, Database, LayoutDashboard, Mail, Search, Settings2, SlidersHorizontal, Sparkles, X } from 'lucide-react';
 import { useDebounce, cx, Kicker, LoadingState, StatusBadge, Badge } from './ui';
-import { keys, useDiscoveredEvents, useDiscoveredOrganizers, useMe, useOutreachMessages } from './api';
+import { useDiscoveredEvents, useDiscoveredOrganizers, useMe, useOutreachMessages } from './api';
 
 const TOKEN_KEY = '100-times-auth-token';
 
@@ -70,24 +68,38 @@ function RequireAdmin({ children }: { children: ReactNode }) {
 }
 
 // ---------------------------------------------------------------------------
-// Navigation
+// Navigation — one connected workflow: discover events -> manage what was found
+// -> configure discovery -> outreach -> agents -> administration. Every entry is
+// a real route in App.tsx.
 // ---------------------------------------------------------------------------
 
-type NavItem = { label: string; href: string; exact?: boolean };
-type NavGroup = { title: string; icon: typeof LayoutDashboard; items: NavItem[]; href?: string };
+/** `exact`: only this path, not its children. `aliases`: other exact paths that also show this entry as current. */
+type NavItem = { label: string; href: string; exact?: boolean; aliases?: string[] };
+/** `prefix`: any path under it marks the group as current even when no item matches. */
+type NavGroup = { title: string; icon: typeof LayoutDashboard; items: NavItem[]; href?: string; prefix?: string };
 
 const NAV: NavGroup[] = [
-  { title: 'Dashboard', icon: LayoutDashboard, href: '/admin', items: [] },
+  { title: 'Overview', icon: LayoutDashboard, items: [{ label: 'Dashboard', href: '/admin', exact: true }] },
   {
-    title: 'Organizer Discovery', icon: CalendarSearch, items: [
-      { label: 'New Discoveries', href: '/admin/discovery', exact: true },
-      { label: 'Events Found', href: '/admin/discovery/events' },
-      { label: 'All Organizers', href: '/admin/discovery/organizers' },
-      { label: 'Contacts', href: '/admin/discovery/contacts' },
+    title: 'Discover events', icon: Compass, items: [
+      { label: 'Run discovery', href: '/admin/discover', exact: true },
+      { label: 'Automatic discovery', href: '/admin/discover/automatic' },
+      // /admin/activity is a redirect to this page, kept for old links.
+      { label: 'Run history & reports', href: '/admin/discover/runs', aliases: ['/admin/activity'] },
     ],
   },
   {
-    title: 'Organizer Outreach', icon: Mail, items: [
+    title: 'Event management', icon: CalendarSearch, items: [
+      { label: 'New discoveries', href: '/admin/discovery', exact: true },
+      { label: 'All events', href: '/admin/discovery/events' },
+      { label: 'Organizers', href: '/admin/discovery/organizers' },
+      { label: 'Contacts', href: '/admin/discovery/contacts' },
+    ],
+  },
+  { title: 'Discovery configuration', icon: SlidersHorizontal, href: '/admin/discover/configuration', items: [] },
+  {
+    title: 'Organizer outreach', icon: Mail, prefix: '/admin/outreach', items: [
+      { label: 'All messages', href: '/admin/outreach/all', aliases: ['/admin/outreach'] },
       { label: 'Pending', href: '/admin/outreach/pending' },
       { label: 'Sent', href: '/admin/outreach/sent' },
       { label: 'Delivered', href: '/admin/outreach/delivered' },
@@ -95,55 +107,98 @@ const NAV: NavGroup[] = [
       { label: 'Follow-ups', href: '/admin/outreach/follow-ups' },
     ],
   },
-  { title: 'Social Event Promotion', icon: Share2, href: '/admin/social-promotions', items: [] },
-  { title: 'Trust Agent', icon: Sparkles, href: '/admin/trust-review', items: [] },
-  { title: 'Attendee Agent', icon: CalendarSearch, href: '/admin/attendee-agent', items: [] },
-  { title: 'Automations', icon: Zap, href: '/admin/automations', items: [] },
-  { title: 'Observability', icon: Activity, href: '/admin/observability', items: [] },
-  { title: 'n8n Workflows', icon: Activity, href: '/admin/workflows', items: [] },
-  { title: 'Audit & System Logs', icon: Activity, href: '/admin/audit-logs', items: [] },
-  { title: 'Agent Activity', icon: Activity, href: '/admin/activity', items: [] },
-  { title: 'Settings', icon: Settings2, href: '/admin/settings', items: [] },
+  {
+    title: 'Platform data', icon: Database, items: [
+      { label: 'Overview', href: '/admin/platform' },
+      { label: 'Events', href: '/admin/events' },
+      { label: 'Users', href: '/admin/users' },
+      { label: 'Organizers', href: '/admin/organizers' },
+      { label: 'Sectors', href: '/admin/categories' },
+      { label: 'Venues', href: '/admin/venues' },
+      { label: 'Reviews', href: '/admin/reviews' },
+    ],
+  },
+  {
+    title: 'Agents', icon: Sparkles, items: [
+      { label: 'Social promotion', href: '/admin/social-promotions' },
+      { label: 'Trust agent', href: '/admin/trust-review' },
+      { label: 'Attendee agent', href: '/admin/attendee-agent' },
+      { label: 'Automations', href: '/admin/automations' },
+    ],
+  },
+  {
+    title: 'Administration', icon: Settings2, items: [
+      { label: 'Providers & API keys', href: '/admin/settings' },
+      { label: 'System health', href: '/admin/observability' },
+      { label: 'n8n workflows', href: '/admin/workflows' },
+      { label: 'Audit & system logs', href: '/admin/audit-logs' },
+    ],
+  },
 ];
 
-function isActive(location: string, href: string, exact?: boolean) {
-  return exact ? location === href : location === href || location.startsWith(href + '/') || location.startsWith(href + '?');
+/** `location` is the pathname (wouter's useLocation never includes ?query or #hash); any query/hash on `href` is ignored. */
+function pathMatches(location: string, href: string, exact?: boolean) {
+  const path = href.split(/[?#]/)[0].replace(/\/+$/, '') || '/';
+  const here = location.split(/[?#]/)[0].replace(/\/+$/, '') || '/';
+  return exact ? here === path : here === path || here.startsWith(`${path}/`);
+}
+
+function itemActive(location: string, item: NavItem) {
+  return pathMatches(location, item.href, item.exact) || (item.aliases ?? []).some((a) => pathMatches(location, a, true));
 }
 
 function SideNav({ location }: { location: string }) {
   return (
-    <aside className="rounded-2xl border border-foreground/10 bg-card p-3 lg:sticky lg:top-24 lg:h-fit">
+    <aside className="rounded-2xl border border-foreground/10 bg-card p-3 lg:sticky lg:top-24 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto">
       <p className="px-3 py-3 font-mono-face text-[10px] uppercase tracking-[.16em] text-muted-foreground">100 Times Admin</p>
-      {NAV.map((group) => {
-        const Icon = group.icon;
-        if (group.href) {
-          const active = group.href === '/admin' ? location === '/admin' : isActive(location, group.href);
+      <nav aria-label="Admin">
+        {NAV.map((group) => {
+          const Icon = group.icon;
+          if (group.href) {
+            const active = pathMatches(location, group.href);
+            return (
+              <Link key={group.title} href={group.href} aria-current={active ? 'page' : undefined} className={cx('mt-1 flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold hover:bg-muted', active && 'bg-muted text-accent')}>
+                <Icon size={16} className="text-accent" />{group.title}
+              </Link>
+            );
+          }
+          // The first item whose path matches wins, so "/admin/outreach" (no tab) lights up "All messages" only.
+          const activeItem = group.items.find((i) => pathMatches(location, i.href, i.exact)) ?? group.items.find((i) => itemActive(location, i));
+          const groupActive = Boolean(activeItem) || (group.prefix ? pathMatches(location, group.prefix) : false);
           return (
-            <Link key={group.title} href={group.href} className={cx('flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold hover:bg-muted', active && 'bg-muted text-accent')}>
-              <Icon size={16} className="text-accent" />{group.title}
-            </Link>
-          );
-        }
-        const groupActive = group.items.some((i) => isActive(location, i.href, i.exact));
-        return (
-          <div key={group.title} className="mt-1">
-            <p className={cx('flex items-center gap-3 px-3 py-2.5 text-sm font-semibold', groupActive ? 'text-foreground' : 'text-foreground/80')}>
-              <Icon size={16} className="text-accent" />{group.title}
-            </p>
-            <div className="ml-4 border-l border-foreground/10 pl-2">
-              {group.items.map((item) => {
-                const active = isActive(location, item.href, item.exact);
-                return (
-                  <Link key={item.href} href={item.href} className={cx('block rounded-lg px-3 py-2 text-[13px] hover:bg-muted', active ? 'bg-muted font-semibold text-accent' : 'text-muted-foreground')}>
-                    {item.label}
-                  </Link>
-                );
-              })}
+            <div key={group.title} className="mt-1">
+              <p className={cx('flex items-center gap-3 px-3 py-2.5 text-sm font-semibold', groupActive ? 'text-foreground' : 'text-foreground/80')}>
+                <Icon size={16} className="text-accent" />{group.title}
+              </p>
+              <div className="ml-4 border-l border-foreground/10 pl-2">
+                {group.items.map((item) => {
+                  const active = item === activeItem;
+                  return (
+                    <Link key={item.href} href={item.href} aria-current={active ? 'page' : undefined} className={cx('block rounded-lg px-3 py-2 text-[13px] hover:bg-muted', active ? 'bg-muted font-semibold text-accent' : 'text-muted-foreground')}>
+                      {item.label}
+                    </Link>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </nav>
     </aside>
+  );
+}
+
+/** Small "Section / Page" trail shown above a page header, so nested admin pages say where they sit. */
+export function Breadcrumbs({ items }: { items: Array<{ label: string; href?: string }> }) {
+  return (
+    <nav aria-label="Breadcrumb" className="mb-3 flex flex-wrap items-center gap-1.5 font-mono-face text-[10px] uppercase tracking-[.14em] text-muted-foreground">
+      {items.map((item, i) => (
+        <span key={`${item.label}-${i}`} className="inline-flex items-center gap-1.5">
+          {i > 0 && <ChevronRight size={10} className="opacity-60" />}
+          {item.href ? <Link href={item.href} className="hover:text-accent hover:underline">{item.label}</Link> : <span className="text-foreground/80">{item.label}</span>}
+        </span>
+      ))}
+    </nav>
   );
 }
 
@@ -239,11 +294,11 @@ export function OpsLayout({ children }: { children: ReactNode }) {
   return (
     <RequireAdmin>
       <div className="page-enter mx-auto max-w-[1440px] px-5 py-8 lg:px-10 lg:py-10">
-        <div className="grid gap-8 lg:grid-cols-[240px_1fr]">
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-[240px_1fr]">
           <div className="space-y-3">
             <GlobalSearch />
             <SideNav location={location} />
-            <p className="flex items-center gap-2 px-3 text-[11px] text-muted-foreground"><Sparkles size={12} className="text-accent" /> Agent 2 always waits for approval. The discovery automation's scan is off unless you turn it on.</p>
+            <p className="flex items-start gap-2 px-3 text-[11px] text-muted-foreground"><Sparkles size={12} className="mt-0.5 shrink-0 text-accent" /> Automatic discovery runs only when an admin switches it on. Outreach e-mails always wait for approval.</p>
           </div>
           <div className="min-w-0">{children}</div>
         </div>

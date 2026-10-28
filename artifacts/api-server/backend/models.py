@@ -147,7 +147,7 @@ class Event(Base):
     full_address: Mapped[str | None] = mapped_column(Text)
     city_name: Mapped[str | None] = mapped_column(Text)
     state_name: Mapped[str | None] = mapped_column(Text)
-    country_name: Mapped[str | None] = mapped_column(Text, default="India")
+    country_name: Mapped[str | None] = mapped_column(Text)
     online_meeting_url: Mapped[str | None] = mapped_column(Text)
     registration_url: Mapped[str | None] = mapped_column(Text)
     ticket_info: Mapped[dict | None] = mapped_column(JSON, default=dict)
@@ -312,9 +312,13 @@ class DiscoveredCommunity(Base):
     verification_notes: Mapped[list[str] | None] = mapped_column(JSON, default=list)
     approval_status: Mapped[str | None] = mapped_column(String(40), default="NEW")
     connection_status: Mapped[str | None] = mapped_column(String(40), default="NOT_CONNECTED")
+    rejection_reason: Mapped[str | None] = mapped_column(Text)
+    # The real `Community` row this lead was materialized into once approved.
+    community_id: Mapped[int | None] = mapped_column(ForeignKey("communities.id", use_alter=True))
     discovered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    sources: Mapped[list["CommunitySource"]] = relationship(cascade="all, delete-orphan")
 
 
 class CommunitySource(Base):
@@ -342,6 +346,10 @@ class Community(Base):
     risk_level: Mapped[str] = mapped_column(String(20), default="low", nullable=False)
     quality_score: Mapped[int] = mapped_column(Integer, default=85, nullable=False)
     last_checked: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Where to actually post (chat/channel id) once the bot is a member; unset = not connected.
+    platform_ref: Mapped[str | None] = mapped_column(Text)
+    # The discovery lead this community was created from (its topics/category).
+    discovered_community_id: Mapped[int | None] = mapped_column(ForeignKey("discovered_communities.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
     discussions: Mapped[list["Discussion"]] = relationship(back_populates="community", cascade="all, delete-orphan")
 
@@ -349,7 +357,7 @@ class Community(Base):
 class Discussion(Base):
     __tablename__ = "discussions"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    community_id: Mapped[int | None] = mapped_column(ForeignKey("communities.id"))
+    community_id: Mapped[int | None] = mapped_column(ForeignKey("communities.id", use_alter=True))
     platform: Mapped[str] = mapped_column(String(50), nullable=False)
     external_id: Mapped[str] = mapped_column(Text, unique=True, index=True, nullable=False)
     url: Mapped[str] = mapped_column(Text, nullable=False)
@@ -377,7 +385,13 @@ class Discussion(Base):
 class AcquisitionOpportunity(Base):
     __tablename__ = "acquisition_opportunities"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    discussion_id: Mapped[int] = mapped_column(ForeignKey("discussions.id"), nullable=False)
+    # "discussion_reply" (answering a discussion) or "community_promotion"
+    # (posting an event into a community — no discussion involved).
+    source_kind: Mapped[str] = mapped_column(String(30), default="discussion_reply", nullable=False)
+    discussion_id: Mapped[int | None] = mapped_column(ForeignKey("discussions.id"))
+    promoted_event_id: Mapped[int | None] = mapped_column(ForeignKey("events.id"))
+    target_community_id: Mapped[int | None] = mapped_column(ForeignKey("communities.id"))
+    match_explanation: Mapped[str | None] = mapped_column(Text)
     matching_events: Mapped[list[dict]] = mapped_column(JSON, default=list, nullable=False)
     relevance_score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     generated_response: Mapped[str] = mapped_column(Text, nullable=False)
@@ -391,7 +405,9 @@ class AcquisitionOpportunity(Base):
     published_url: Mapped[str | None] = mapped_column(Text)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
-    discussion: Mapped[Discussion] = relationship(back_populates="opportunities")
+    discussion: Mapped[Discussion | None] = relationship(back_populates="opportunities")
+    promoted_event: Mapped[Event | None] = relationship("Event")
+    target_community: Mapped[Community | None] = relationship("Community")
     actions: Mapped[list["AgentAction"]] = relationship(back_populates="opportunity", cascade="all, delete-orphan")
     referral_events: Mapped[list["AcquisitionReferralEvent"]] = relationship(back_populates="opportunity", cascade="all, delete-orphan")
     click_events: Mapped[list["ClickEvent"]] = relationship(back_populates="opportunity", cascade="all, delete-orphan")
@@ -532,7 +548,7 @@ class DiscoveredEvent(Base):
     location: Mapped[str | None] = mapped_column(Text)
     city: Mapped[str | None] = mapped_column(Text)
     state: Mapped[str | None] = mapped_column(Text)
-    country: Mapped[str | None] = mapped_column(Text, default="India")
+    country: Mapped[str | None] = mapped_column(Text)
     url: Mapped[str | None] = mapped_column(Text)
     ticket_url: Mapped[str | None] = mapped_column(Text)
     source_website: Mapped[str | None] = mapped_column(Text)
@@ -762,7 +778,7 @@ class Organization(Base):
     registration_number: Mapped[str | None] = mapped_column(String(100))
     city: Mapped[str | None] = mapped_column(Text)
     state: Mapped[str | None] = mapped_column(Text)
-    country: Mapped[str | None] = mapped_column(Text, default="India")
+    country: Mapped[str | None] = mapped_column(Text)
     verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
 
@@ -785,8 +801,8 @@ class OrganizerProfile(Base):
     bio: Mapped[str | None] = mapped_column(Text)
     city: Mapped[str | None] = mapped_column(Text)
     state: Mapped[str | None] = mapped_column(Text)
-    country: Mapped[str | None] = mapped_column(Text, default="India")
-    email_verified: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    country: Mapped[str | None] = mapped_column(Text)
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     identity_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     lifecycle_stage: Mapped[str] = mapped_column(String(40), default="SIGNED_UP", nullable=False)
     lifecycle_history: Mapped[list[dict]] = mapped_column(JSON, default=list, nullable=False)
@@ -804,7 +820,7 @@ class EventLocation(Base):
     full_address: Mapped[str | None] = mapped_column(Text)
     city: Mapped[str | None] = mapped_column(Text, index=True)
     state: Mapped[str | None] = mapped_column(Text)
-    country: Mapped[str | None] = mapped_column(Text, default="India")
+    country: Mapped[str | None] = mapped_column(Text)
     postal_code: Mapped[str | None] = mapped_column(String(30))
     online_meeting_url: Mapped[str | None] = mapped_column(Text)
     registration_url: Mapped[str | None] = mapped_column(Text)
@@ -1231,3 +1247,22 @@ class AttendeeNotificationLog(Base):
     email_status: Mapped[str] = mapped_column(String(30), default="not_requested", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
     __table_args__ = (UniqueConstraint("user_id", "dedupe_key", name="attendee_notification_user_key_idx"),)
+
+
+class SocialConnection(Base):
+    """An account an admin connected with the platform's own sign-in (OAuth)
+    on the Social Promotions page — one row per provider: "meta" (Facebook
+    Page + its Instagram business account) or "linkedin". Tokens live only in
+    `secret_encrypted` (Fernet, key derived from JWT_SECRET); `details` holds
+    what the UI may show (account/page names and ids, granted scopes)."""
+
+    __tablename__ = "social_connections"
+    provider: Mapped[str] = mapped_column(String(20), primary_key=True)
+    account_id: Mapped[str | None] = mapped_column(String(100))
+    account_name: Mapped[str | None] = mapped_column(String(200))
+    details: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    secret_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    connected_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    connected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

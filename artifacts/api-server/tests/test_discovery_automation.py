@@ -31,33 +31,45 @@ _DDG_RESULTS = """<html><body>
 </body></html>"""
 
 
-def test_search_results_are_parsed_unwrapped_and_ads_skipped():
-    assert web_search.parse_results(_DDG_RESULTS) == [
-        "https://allevents.in/mumbai/business",
-        "https://www.bengalurutechsummit.com/",
-    ]
-
-
 class _Response:
     def __init__(self, status_code, text):
         self.status_code = status_code
         self.text = text
 
 
-def test_search_returns_capped_results(monkeypatch):
-    monkeypatch.setattr(web_search, "_post", lambda query: _Response(200, _DDG_RESULTS))
-    monkeypatch.setattr(web_search, "_wait_turn", lambda: None)
+# The real parser, captured at import — conftest's no_live_web_search stubs
+# every provider's search() for each test; these tests fake only the HTTP call.
+from backend.services.discovery_agent.search_providers import web_fallback  # noqa: E402
 
-    assert web_search.search("business events Mumbai", max_results=1) == ["https://allevents.in/mumbai/business"]
+_REAL_DDG_SEARCH = web_fallback.WebFallbackProvider.search
+
+
+def _ddg(monkeypatch, status, body):
+    """The keyless DuckDuckGo provider (search_providers/web_fallback.py) answering with `body`."""
+    monkeypatch.setattr(web_fallback.WebFallbackProvider, "search", _REAL_DDG_SEARCH)
+    monkeypatch.setattr(web_fallback.httpx, "post", lambda *args, **kwargs: _Response(status, body))
+    monkeypatch.setattr(web_fallback.WebFallbackProvider, "_wait_turn", lambda self: None)
+    return web_fallback.WebFallbackProvider()
+
+
+def test_search_results_are_parsed_unwrapped_and_ads_skipped(monkeypatch):
+    provider = _ddg(monkeypatch, 200, _DDG_RESULTS)
+    assert [r.url for r in provider.search("business events Mumbai", max_results=10)] == [
+        "https://allevents.in/mumbai/business",
+        "https://www.bengalurutechsummit.com/",
+    ]
+
+
+def test_search_returns_capped_results(monkeypatch):
+    provider = _ddg(monkeypatch, 200, _DDG_RESULTS)
+    assert [r.url for r in provider.search("business events Mumbai", max_results=1)] == ["https://allevents.in/mumbai/business"]
 
 
 @pytest.mark.parametrize("status, body", [(202, "<html>anomaly</html>"), (200, '<div class="anomaly-modal">Unfortunately, bots use DuckDuckGo too.</div>'), (429, "")])
 def test_blocked_search_raises(monkeypatch, status, body):
-    monkeypatch.setattr(web_search, "_post", lambda query: _Response(status, body))
-    monkeypatch.setattr(web_search, "_wait_turn", lambda: None)
-
-    with pytest.raises(web_search.SearchBlocked):
-        web_search.search("anything", max_results=5)
+    provider = _ddg(monkeypatch, status, body)
+    with pytest.raises(RuntimeError):
+        provider.search("anything", max_results=5)
 
 
 # --- Best-effort text reader -------------------------------------------------------
@@ -174,7 +186,7 @@ def test_run_searches_the_web_and_stores_events_without_ai(db_session, monkeypat
     _serve(monkeypatch, {url: _PLAIN_EVENT_PAGE})
     _no_organizer(monkeypatch)
     queries: list[str] = []
-    monkeypatch.setattr(orchestrator.web_search, "search", lambda query, max_results: queries.append(query) or [url])
+    monkeypatch.setattr(orchestrator.web_search, "search", lambda query, max_results=5, **kwargs: queries.append(query) or [url])
 
     summary = orchestrator.run_discovery_agent(db_session, _config())
 
@@ -188,13 +200,15 @@ def test_run_searches_the_web_and_stores_events_without_ai(db_session, monkeypat
 
 
 def test_blocked_search_keeps_listing_results_and_reports_it(db_session, monkeypatch):
+    # The run is scoped to Technology, so the listed event has to be a technology one
+    # ("Startup Mixer" reads as Finance and would be set aside as off-sector).
     listing = "https://allevents.in/bangalore"
-    event_node = {"@type": "Event", "name": "Startup Mixer", "url": "https://allevents.in/bangalore/startup-mixer/1", "startDate": f"{NEXT_YEAR}-03-01",
+    event_node = {"@type": "Event", "name": "AI Developer Mixer", "url": "https://allevents.in/bangalore/ai-developer-mixer/1", "startDate": f"{NEXT_YEAR}-03-01",
                   "location": {"name": "WeWork Galaxy", "address": {"addressLocality": "Bengaluru"}}}
     _serve(monkeypatch, {listing: "<html><head>" + _ld(event_node) + "</head></html>"})
     _no_organizer(monkeypatch)
 
-    def blocked(query, max_results):
+    def blocked(query, max_results=5, **kwargs):
         raise web_search.SearchBlocked("DuckDuckGo is asking for a captcha")
 
     monkeypatch.setattr(orchestrator.web_search, "search", blocked)

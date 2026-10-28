@@ -5,6 +5,7 @@ and persists configuration to the project's .env file.
 """
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,57 @@ def get_smtp_info() -> dict[str, Any]:
     }
 
 
+class SmtpConfigError(ValueError):
+    """Raised when SMTP settings are invalid or could not be persisted."""
+
+
+_ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+_FORBIDDEN_VALUE_CHARS = ("\r", "\n", "\x00")
+
+
+def _validate_env_entries(entries: dict[str, str]) -> None:
+    """Every KEY=value line written to .env must stay exactly one line: a CR/LF
+    (or NUL) in a value would let a caller inject other variables (e.g. a new
+    JWT_SECRET or DATABASE_URL). Keys must be plain env-var names."""
+    for key, value in entries.items():
+        if not _ENV_KEY_RE.match(key) or "=" in key:
+            raise SmtpConfigError(f"Invalid settings key: {key!r}")
+        if any(ch in value for ch in _FORBIDDEN_VALUE_CHARS):
+            raise SmtpConfigError(f"{key} must not contain line breaks or control characters")
+
+
+def _write_env_file(env_path: Path, env_keys: dict[str, str]) -> None:
+    lines: list[str] = []
+    if env_path.exists():
+        with open(env_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+    existing_keys_found = set()
+    new_lines = []
+    for line in lines:
+        key_match = False
+        for k, v in env_keys.items():
+            if line.startswith(f"{k}=") or line.startswith(f"# {k}="):
+                new_lines.append(f"{k}={v}\n")
+                existing_keys_found.add(k)
+                key_match = True
+                break
+        if not key_match:
+            new_lines.append(line)
+
+    # Append any keys that weren't already in .env
+    remaining_keys = set(env_keys.keys()) - existing_keys_found
+    if remaining_keys:
+        if new_lines and not new_lines[-1].endswith("\n"):
+            new_lines.append("\n")
+        new_lines.append("\n# SMTP Email Delivery Configuration\n")
+        for k in sorted(remaining_keys):
+            new_lines.append(f"{k}={env_keys[k]}\n")
+
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.writelines(new_lines)
+
+
 def save_smtp_settings(
     host: str,
     port: int,
@@ -55,16 +107,44 @@ def save_smtp_settings(
     from_email: str,
     use_tls: bool = True,
 ) -> dict[str, Any]:
-    """Persist SMTP settings to .env and update the live runtime settings."""
+    """Persist SMTP settings to .env and update the live runtime settings.
+
+    Raises SmtpConfigError when a value is unsafe to write (validated before
+    anything changes) or when the .env file could not be written — a failed
+    save is never reported as success."""
     host = host.strip() if host else ""
     from_email = from_email.strip() if from_email else ""
     username = username.strip() if username else ""
+    if not isinstance(port, int) or isinstance(port, bool) or not (0 < port < 65536):
+        raise SmtpConfigError("SMTP port must be between 1 and 65535")
 
     current_settings = get_settings()
     # Keep existing password if not supplied in update
     actual_password = password if (password is not None and password != "") else (current_settings.smtp_password or "")
 
-    # 1. Update OS environment variables
+    env_keys = {
+        "SMTP_HOST": host,
+        "SMTP_PORT": str(port),
+        "SMTP_USERNAME": username,
+        "SMTP_PASSWORD": actual_password,
+        "SMTP_FROM_EMAIL": from_email,
+        "SMTP_USE_TLS": "true" if use_tls else "false",
+    }
+    # Validate everything before touching the environment or any file.
+    _validate_env_entries(env_keys)
+
+    # 1. Update .env files — any failure is reported, not swallowed.
+    failures: list[str] = []
+    for env_path in _get_env_paths():
+        try:
+            _write_env_file(env_path, env_keys)
+        except OSError as exc:
+            failures.append(f"{env_path.name} ({exc.__class__.__name__}: {exc.strerror or exc})")
+
+    if failures:
+        raise SmtpConfigError("Could not save SMTP settings to " + "; ".join(failures))
+
+    # 2. Update OS environment variables (only after the files were written)
     os.environ["SMTP_HOST"] = host
     os.environ["SMTP_PORT"] = str(port)
     os.environ["SMTP_USERNAME"] = username
@@ -74,50 +154,6 @@ def save_smtp_settings(
         del os.environ["SMTP_PASSWORD"]
     os.environ["SMTP_FROM_EMAIL"] = from_email
     os.environ["SMTP_USE_TLS"] = "true" if use_tls else "false"
-
-    # 2. Update .env files
-    env_keys = {
-        "SMTP_HOST": host,
-        "SMTP_PORT": str(port),
-        "SMTP_USERNAME": username,
-        "SMTP_PASSWORD": actual_password,
-        "SMTP_FROM_EMAIL": from_email,
-        "SMTP_USE_TLS": "true" if use_tls else "false",
-    }
-
-    for env_path in _get_env_paths():
-        try:
-            lines: list[str] = []
-            if env_path.exists():
-                with open(env_path, "r", encoding="utf-8") as f:
-                    lines = f.readlines()
-
-            existing_keys_found = set()
-            new_lines = []
-            for line in lines:
-                key_match = False
-                for k, v in env_keys.items():
-                    if line.startswith(f"{k}=") or line.startswith(f"# {k}="):
-                        new_lines.append(f"{k}={v}\n")
-                        existing_keys_found.add(k)
-                        key_match = True
-                        break
-                if not key_match:
-                    new_lines.append(line)
-
-            # Append any keys that weren't already in .env
-            remaining_keys = set(env_keys.keys()) - existing_keys_found
-            if remaining_keys:
-                if new_lines and not new_lines[-1].endswith("\n"):
-                    new_lines.append("\n")
-                new_lines.append("\n# SMTP Email Delivery Configuration\n")
-                for k in sorted(remaining_keys):
-                    new_lines.append(f"{k}={env_keys[k]}\n")
-
-            with open(env_path, "w", encoding="utf-8") as f:
-                f.writelines(new_lines)
-        except Exception:
-            pass
 
     # 3. Clear settings cache so new requests load fresh config
     get_settings.cache_clear()

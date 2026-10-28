@@ -36,10 +36,13 @@ _KEYWORDS: dict[str, tuple[str, ...]] = {
         "tech", "technology", "software", "computing", "developer", "coding", "ai", "cloud", "data", "cyber",
         "hackathon", "machine learning", "devops", "web3", "digital", "deep learning", "nlp", "iot", "robotics",
         "=api", "=apis", "rest api", "microservice", "javascript", "python", "golang", "kubernetes", "fullstack",
+        # Software "architecture" is not Construction's architecture.
+        "software architecture", "clean architecture", "solution architect", "solutions architect", "cloud architecture",
+        "enterprise architecture", "data architecture", "system design",
     ),
     "Pharmaceuticals": (
         "pharma", "pharmaceutic", "drug discover", "drug manufactur", "clinical trial", "active pharmaceutical ingredient", "pharma api",
-        "biosimilar", "formulation", "pharmacolog", "vaccine", "biopharma", "generic drug", "biotech",
+        "biosimilar", "formulation", "pharmacolog", "vaccine", "biopharma", "generic drug", "biotech", "=cphi",
     ),
     "Healthcare": (
         "healthcare", "=hospital", "=hospitals", "health", "healthtech", "telehealth", "patient care", "nursing",
@@ -52,6 +55,9 @@ _KEYWORDS: dict[str, tuple[str, ...]] = {
         "power generation", "renewable energy", "clean energy", "energy transition", "energy summit", "energy conference", "solar", "wind energy", "thermal power",
         "hydropower", "clean energy", "electricity", "power plant", "grid", "smart grid", "battery storage",
         "nuclear power", "power grid", "photovoltaic", "=ev", "=evs", "electric vehicle",
+        "energy week", "energy show", "energy expo", "energy forum", "energy congress", "energy storage",
+        "energy efficiency", "world energy", "power & energy", "energy & power", "hydrogen", "green energy",
+        "power electronics", "power system",
     ),
     "Telecommunications": (
         "telecom", "telecommunication", "=5g", "=6g", "wireless", "broadband", "optical fiber",
@@ -60,7 +66,9 @@ _KEYWORDS: dict[str, tuple[str, ...]] = {
     "Construction": (
         "construction", "infrastructure", "civil engineering", "civilengineer", "civil engineer", "builder", "building technology", "contech",
         "cement", "concrete", "smart cities", "architecture", "highway", "bridge", "urban planning",
-        "real estate development", "property", "real estate", "proptech", "interior design", "housing", "architect",
+        "real estate development", "property", "real estate", "proptech", "interior design", "housing", "=architect", "=architects",
+        "building materials", "green building", "built environment", "structural engineering", "=hvac", "=bim", "precast",
+        "tunnelling", "tunneling", "=infra", "cityscape",
     ),
     "Mining": (
         "mining", "mineral", "extraction", "=ore", "coal mining", "gold mining", "iron ore", "quarry",
@@ -73,7 +81,7 @@ _KEYWORDS: dict[str, tuple[str, ...]] = {
     ),
     "Packaging": (
         "packaging", "packtech", "packmach", "packplus", "propak", "corrugated", "flexible packaging", "carton", "bottling", "labeling",
-        "sustainable packaging", "food packaging", "blister pack", "container", "packaging machinery",
+        "sustainable packaging", "food packaging", "blister pack", "container", "packaging machinery", "print & pack", "=pack",
     ),
     "Transport and Logistics": (
         "transport", "logistics", "supply chain", "freight", "cargo", "shipping", "railway", "aviation",
@@ -82,6 +90,7 @@ _KEYWORDS: dict[str, tuple[str, ...]] = {
     "Oil and Gas": (
         "oil and gas", "oilandgas", "petroleum", "upstream", "downstream", "refinery", "pipeline", "drilling",
         "crude oil", "natural gas", "=lng", "=lpg", "petrochemical", "offshore", "hydrocarbon",
+        "oil & gas", "oil&gas", "fracturing", "fracking", "oilfield", "midstream", "subsea",
     ),
     "Textiles": (
         "textile", "fabric", "garment", "apparel", "spinning", "weaving", "yarn", "cotton",
@@ -94,9 +103,10 @@ _KEYWORDS: dict[str, tuple[str, ...]] = {
     ),
 }
 
-# Tie-break order: more specific categories first.
+# Tie-break order: more specific categories first. Technology and Finance
+# come last — their words ("technology", "digital", "trade", "business") also
+# appear in most sector events ("Offshore Technology Conference" is Oil and Gas).
 _PRIORITY = (
-    "Technology",
     "Pharmaceuticals",
     "Healthcare",
     "Energy and Power Generation",
@@ -108,6 +118,7 @@ _PRIORITY = (
     "Transport and Logistics",
     "Textiles",
     "Manufacturing",
+    "Technology",
     "Finance",
 )
 
@@ -186,11 +197,9 @@ def categorize(
     priority = [c for c in _PRIORITY if c in valid_categories] + [c for c in valid_categories if c not in _PRIORITY]
 
     scores: dict[str, int] = {}
-    for cat in valid_categories:
-        patterns = _patterns_for_category(cat)
-        score = sum(3 for p in patterns if p.search(title)) + sum(1 for p in patterns if p.search(context))
-        if score > 0:
-            scores[cat] = score
+    for weight, text in ((3, title), (1, context)):
+        for cat, hits in _keyword_hits(text, valid_categories).items():
+            scores[cat] = scores.get(cat, 0) + weight * len(hits)
 
     if scores:
         category = max(priority, key=lambda c: (scores.get(c, 0), -priority.index(c)))
@@ -198,6 +207,26 @@ def categorize(
         category = "Other"
 
     return category, _event_type(title) or _event_type(context)
+
+
+def _keyword_hits(text: str, categories: list[str]) -> dict[str, set[str]]:
+    """Each category's distinct keyword hits in `text`. A hit inside a longer
+    hit of another category is dropped ("clean architecture" is Technology,
+    not Construction; "building technology" is Construction, not Technology),
+    and overlapping hits of one category count once ("tech" in "technology")."""
+    if not text:
+        return {}
+    hits = [(m.start(), m.end(), cat) for cat in categories for p in _patterns_for_category(cat) for m in p.finditer(text)]
+    spans: dict[str, list[list[int]]] = {}
+    for start, end, cat in sorted(hits):
+        if any(c != cat and s <= start and end <= e and e - s > end - start for s, e, c in hits):
+            continue
+        merged = spans.setdefault(cat, [])
+        if merged and start < merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return {cat: {text[s:e] for s, e in merged} for cat, merged in spans.items()}
 
 
 def _event_type(text: str) -> str | None:

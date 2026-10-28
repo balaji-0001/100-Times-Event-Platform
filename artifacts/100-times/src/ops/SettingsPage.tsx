@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
+import { Link, useLocation, useSearch } from 'wouter';
 import {
+  ArrowRight,
   CheckCircle2,
+  Compass,
   Database,
   Eye,
   EyeOff,
@@ -10,7 +13,6 @@ import {
   RefreshCw,
   Send,
   Sliders,
-  Ticket,
   Trash2,
   XCircle,
 } from 'lucide-react';
@@ -19,7 +21,6 @@ import {
   useClearEmailOutbox,
   useEmailOutbox,
   useMe,
-  useOutreachStats,
   useProcessFollowups,
   useRunOutreachBatch,
   useSaveSmtpConfig,
@@ -42,16 +43,27 @@ import {
   fmtDateTime,
   inputClass,
 } from './ui';
-import { ManualResearchForm } from './ManualResearch';
-import { DiscoverySourcesManager } from './DiscoverySourcesManager';
 import { SourceRegistryView } from './SourceRegistryView';
+import { Breadcrumbs } from './OpsLayout';
+
+type SettingsTab = 'registry' | 'smtp' | 'system';
+const TABS: SettingsTab[] = ['registry', 'smtp', 'system'];
+
+/** A batch/follow-up result as label/value rows (all values come from the API response). */
+function ResultRows({ data }: { data: object }) {
+  return <DL rows={Object.entries(data).map(([k, v]) => [k.replace(/_/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase(), v === null || v === undefined ? 'â€”' : typeof v === 'object' ? JSON.stringify(v) : String(v)])} />;
+}
 
 export function SettingsPage() {
   const me = useMe();
-  const stats = useOutreachStats();
   const runBatch = useRunOutreachBatch();
   const followups = useProcessFollowups();
-  const [activeTab, setActiveTab] = useState<'registry' | 'sources' | 'smtp' | 'system'>('registry');
+  // The open tab is in the URL (?tab=smtp) so other pages can link straight to it.
+  const search = useSearch();
+  const [, setLocation] = useLocation();
+  const tabParam = new URLSearchParams(search).get('tab');
+  const activeTab: SettingsTab | 'sources' = tabParam === 'sources' ? 'sources' : (TABS as string[]).includes(tabParam ?? '') ? (tabParam as SettingsTab) : 'registry';
+  const setActiveTab = (tab: SettingsTab) => setLocation(tab === 'registry' ? '/admin/settings' : `/admin/settings?tab=${tab}`, { replace: true });
   const [maxCandidates, setMaxCandidates] = useState('10');
 
   // SMTP Settings State
@@ -97,14 +109,18 @@ export function SettingsPage() {
 
   const handleSaveSmtp = (e: React.FormEvent) => {
     e.preventDefault();
-    saveSmtp.mutate({
-      host,
-      port: Number(port) || 587,
-      username: username || undefined,
-      password: password || undefined,
-      fromEmail,
-      useTls,
-    });
+    saveSmtp.mutate(
+      {
+        host,
+        port: Number(port) || 587,
+        username: username || undefined,
+        password: password || undefined,
+        fromEmail,
+        useTls,
+      },
+      // The form re-reads the saved config (the hook invalidates it); the password is never sent back, so clear it.
+      { onSuccess: () => setPassword('') },
+    );
   };
 
   const handleSendTest = (e: React.FormEvent) => {
@@ -117,10 +133,11 @@ export function SettingsPage() {
 
   return (
     <div>
+      <Breadcrumbs items={[{ label: 'Administration' }, { label: 'Providers & API keys' }]} />
       <PageHeader
-        kicker="Settings"
-        title="Console settings and platform controls"
-        subtitle="Manage event discovery sources & APIs, website scrapers, SMTP email delivery, and agent schedules."
+        kicker="Administration"
+        title="Providers & API keys"
+        subtitle="The source registry (which discovery sources may run at all), outgoing e-mail (SMTP) and account details. What a discovery run searches is set in Discovery configuration."
       />
 
       {/* Settings Navigation Tabs */}
@@ -134,22 +151,16 @@ export function SettingsPage() {
               : 'border border-foreground/10 bg-card text-muted-foreground hover:bg-muted/40 hover:text-foreground'
           }`}
         >
-          <Database size={14} /> Global Source Registry (76+)
-          <Badge tone="accent">Directory & Adapters</Badge>
+          <Database size={14} /> Source registry
         </button>
 
-        <button
-          type="button"
-          onClick={() => setActiveTab('sources')}
-          className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold transition-all ${
-            activeTab === 'sources'
-              ? 'bg-accent text-accent-foreground shadow-sm ring-1 ring-accent/30'
-              : 'border border-foreground/10 bg-card text-muted-foreground hover:bg-muted/40 hover:text-foreground'
-          }`}
+        <Link
+          href="/admin/discover/configuration#sources"
+          title="Search providers, channels, listing websites and the Ticketmaster key are edited in Discovery configuration"
+          className="flex items-center gap-2 rounded-xl border border-foreground/10 bg-card px-4 py-2.5 text-xs font-bold text-muted-foreground transition-all hover:bg-muted/40 hover:text-foreground"
         >
-          <Globe size={14} /> Discovery Channels & Custom Websites
-          <Badge tone="accent">Ticketmaster & URLs</Badge>
-        </button>
+          <Globe size={14} /> Discovery sources & providers <ArrowRight size={12} />
+        </Link>
 
         <button
           type="button"
@@ -160,8 +171,8 @@ export function SettingsPage() {
               : 'border border-foreground/10 bg-card text-muted-foreground hover:bg-muted/40 hover:text-foreground'
           }`}
         >
-          <Mail size={14} /> Outgoing Email & SMTP Relay
-          <Badge tone={isReal ? 'good' : 'warn'}>{isReal ? 'Live SMTP' : 'Mock Mode'}</Badge>
+          <Mail size={14} /> Outgoing e-mail (SMTP)
+          {smtpConfigQuery.data && <Badge tone={isReal ? 'good' : 'warn'}>{isReal ? 'Live SMTP' : 'Not configured'}</Badge>}
         </button>
 
         <button
@@ -173,55 +184,58 @@ export function SettingsPage() {
               : 'border border-foreground/10 bg-card text-muted-foreground hover:bg-muted/40 hover:text-foreground'
           }`}
         >
-          <Sliders size={14} /> Agent Controls & Account
+          <Sliders size={14} /> Agent runs & account
         </button>
       </div>
 
-      {/* Tab 0: Global Source Registry (76+) */}
+      {/* Tab 0: Source registry */}
       {activeTab === 'registry' && (
         <div className="mt-6">
           <SourceRegistryView />
         </div>
       )}
 
-      {/* Tab 1: Discovery Sources & APIs */}
+      {/* Old "Discovery Channels & Custom Websites" tab (?tab=sources): moved to Discovery configuration. */}
       {activeTab === 'sources' && (
         <div className="mt-6">
           <Panel className="p-6">
-            <div className="border-b border-foreground/10 pb-4 mb-6">
-              <h3 className="font-display text-lg font-bold flex items-center gap-2">
-                <Globe size={18} className="text-accent" /> Event Discovery Sources & External APIs
-              </h3>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Configure official event APIs (Ticketmaster Discovery API v2), manage target website URL templates (add/remove custom listing websites), and toggle multi-channel scrapers.
-              </p>
-            </div>
-            <DiscoverySourcesManager />
+            <h3 className="font-display text-lg font-bold flex items-center gap-2"><Globe size={18} className="text-accent" /> Discovery sources & providers have moved</h3>
+            <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+              Search providers, directories and aggregators, listing websites, source health checks and the Ticketmaster key are now edited
+              together with the rest of the saved discovery settings, in one place.
+            </p>
+            <Link href="/admin/discover/configuration#sources" className="button-press mt-4 inline-flex items-center gap-1.5 rounded-full bg-accent px-4 py-2 text-xs font-bold text-accent-foreground hover:bg-primary hover:text-primary-foreground">
+              Open Discovery configuration â†’ Sources & providers <ArrowRight size={12} />
+            </Link>
           </Panel>
         </div>
       )}
 
-      {/* Tab 3: System & Manual Agent Runs */}
+      {/* Tab 3: Agent runs & account */}
       {activeTab === 'system' && (
         <div className="mt-6 grid gap-6 lg:grid-cols-2">
           {/* Account & Platform Info */}
           <Panel className="p-6">
             <Section title="Signed in as">
-              <DL rows={[['Name', me.data?.name ?? '—'], ['Email', me.data?.email ?? '—'], ['Role', me.data?.role ?? '—']]} />
+              <DL rows={[['Name', me.data?.name ?? 'â€”'], ['Email', me.data?.email ?? 'â€”'], ['Role', me.data?.role ?? 'â€”']]} />
             </Section>
 
             <Section title="Schedules & Automation">
               <p className="text-sm text-muted-foreground">
-                The discovery automation's scan has its own on/off switch on the Dashboard. Outreach batches are drafted only via
-                “Generate outreach batch”, and every email waits for human approval before delivery.
+                Automatic discovery is switched on or off on its own page, <Link href="/admin/discover/automatic" className="text-accent hover:underline">Automatic discovery</Link>.
+                Outreach drafting has its switch under <Link href="/admin/automations" className="text-accent hover:underline">Automations</Link>, and every e-mail waits for human approval before delivery.
               </p>
             </Section>
           </Panel>
 
           {/* Manual Runs Panel */}
           <Panel className="p-6">
-            <Section title="Run Organizer Discovery (automation) — manual research">
-              <ManualResearchForm />
+            <Section title="Run event discovery">
+              <p className="text-sm text-muted-foreground">Discovery runs are started from the guided Run discovery page; their progress and reports are under Run history &amp; reports.</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Link href="/admin/discover" className="button-press inline-flex items-center gap-1.5 rounded-full bg-accent px-4 py-2 text-xs font-bold text-accent-foreground hover:bg-primary hover:text-primary-foreground"><Compass size={13} /> Run discovery</Link>
+                <Link href="/admin/discover/runs" className="button-press inline-flex items-center gap-1.5 rounded-full border border-foreground/15 bg-background px-4 py-2 text-xs font-bold hover:border-accent hover:text-accent">Run history &amp; reports</Link>
+              </div>
             </Section>
             <Section title="Run Organizer Outreach (Agent 2)">
               <div className="grid gap-2 text-xs">
@@ -248,16 +262,19 @@ export function SettingsPage() {
                     Process follow-ups
                   </Btn>
                 </div>
-                <p className="text-[11px] text-muted-foreground">Drafts land in Outreach → Pending. Nothing is sent until approved.</p>
+                <p className="text-[11px] text-muted-foreground">Drafts land in <Link href="/admin/outreach/pending" className="text-accent hover:underline">Outreach â†’ Pending</Link>. Nothing is sent until approved.</p>
                 {runBatch.isError && <ErrorState error={runBatch.error} title="Batch failed" />}
                 {runBatch.isSuccess && (
-                  <Notice tone="info">
-                    <pre className="whitespace-pre-wrap font-mono-face text-[11px]">{JSON.stringify(runBatch.data, null, 2)}</pre>
+                  <Notice tone="good">
+                    <p className="mb-2 font-semibold">Outreach batch finished.</p>
+                    <ResultRows data={runBatch.data} />
                   </Notice>
                 )}
+                {followups.isError && <ErrorState error={followups.error} title="Processing follow-ups failed" />}
                 {followups.isSuccess && (
-                  <Notice tone="info">
-                    <pre className="whitespace-pre-wrap font-mono-face text-[11px]">{JSON.stringify(followups.data, null, 2)}</pre>
+                  <Notice tone="good">
+                    <p className="mb-2 font-semibold">Follow-ups processed.</p>
+                    <ResultRows data={followups.data} />
                   </Notice>
                 )}
               </div>
@@ -400,7 +417,7 @@ export function SettingsPage() {
               <div className="relative mt-1">
                 <input
                   type={showPassword ? 'text' : 'password'}
-                  placeholder={smtpConfigQuery.data?.hasPassword ? '•••••••• (leave blank to keep)' : 'Enter SMTP password'}
+                  placeholder={smtpConfigQuery.data?.hasPassword ? 'â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢ (leave blank to keep)' : 'Enter SMTP password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className={`${inputClass} pr-9`}
@@ -511,7 +528,7 @@ export function SettingsPage() {
                 <Btn
                   variant="ghost"
                   size="sm"
-                  onClick={() => clearOutbox.mutate()}
+                  onClick={() => { if (window.confirm('Clear the outbox log? This only removes the log entries shown here; no e-mail is recalled.')) clearOutbox.mutate(); }}
                   loading={clearOutbox.isPending}
                 >
                   <Trash2 size={13} /> Clear

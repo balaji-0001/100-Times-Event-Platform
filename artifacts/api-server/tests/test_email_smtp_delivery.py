@@ -16,7 +16,30 @@ from backend.services.social_agent.outreach.senders import (
     get_email_provider,
     get_outbox,
     provider_status,
+    record_outbox,
 )
+
+
+@pytest.fixture(autouse=True)
+def isolated_smtp_env(tmp_path, monkeypatch):
+    """save_smtp_settings writes .env files and os.environ. Without this, a
+    test run rewrote the project's REAL .env files (and blanked SMTP_* in its
+    cleanup). Redirect writes to a temp file and restore the process env."""
+    import os
+
+    from backend.core.config import get_settings
+    from backend.services import smtp_config
+
+    monkeypatch.setattr(smtp_config, "_get_env_paths", lambda: [tmp_path / ".env"])
+    keys = ("SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM_EMAIL", "SMTP_USE_TLS")
+    saved = {k: os.environ.get(k) for k in keys}
+    yield
+    for key, value in saved.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+    get_settings.cache_clear()
 
 
 def _admin_user():
@@ -45,9 +68,10 @@ def test_mock_email_provider_records_outbox():
     clear_outbox()
     provider = MockEmailProvider()
     result = provider.send_message("recipient@test.com", "Welcome Subject", "Hello body")
-    assert result.success is True
-    assert result.ok is True
-    assert result.message_id.startswith("mock-")
+    # Without SMTP nothing is delivered: never report success.
+    assert result.success is False
+    assert result.ok is False
+    assert "SMTP is not configured" in result.message
 
     # Verify outbox has recorded this message
     outbox = get_outbox()
@@ -56,10 +80,23 @@ def test_mock_email_provider_records_outbox():
     assert item["recipient"] == "recipient@test.com"
     assert item["subject"] == "Welcome Subject"
     assert item["provider"] == "mock"
-    assert item["status"] == "MOCK_LOGGED"
+    assert item["status"] == "NOT_SENT"
 
 
-def test_send_templated_notification_with_email_provider(db_session):
+def test_send_templated_notification_with_email_provider(db_session, monkeypatch):
+    # A provider that really delivers (records to the Outbox like the SMTP one);
+    # this test used to pass only by sending through a real SMTP account.
+    from backend.services import notifications
+    from backend.services.social_agent.outreach.types import SendResult
+
+    class _Delivering:
+        is_real = True
+
+        def send(self, recipient, subject, body, html=None):
+            record_outbox(recipient, subject, body, html, provider="smtp", status="DELIVERED", message_id="test-1")
+            return SendResult(success=True, message_id="test-1", message="delivered")
+
+    monkeypatch.setattr(notifications, "get_email_provider", lambda: _Delivering())
     clear_outbox()
     user = User(name="Test Attendee", email="attendee@example.com", role="USER", password_hash="pwd")
     db_session.add(user)
@@ -145,3 +182,12 @@ def test_smtp_connection_test_invalid_host():
     )
     assert success is False
     assert len(message) > 0
+
+
+def test_outbox_never_shows_one_time_tokens():
+    from backend.services.social_agent.outreach.senders.outbox import record_outbox
+    clear_outbox()
+    record_outbox("a@b.test", "Reset", "Reset here: http://app.test/reset-password?token=abc123SECRET&x=1")
+    body = get_outbox()[0]["body"]
+    assert "abc123SECRET" not in body
+    assert "reset-password?token=[redacted]&x=1" in body

@@ -34,7 +34,7 @@ def client(db_session: Session):
 def test_seed_source_registry_populates_all_candidates(db_session: Session):
     """Ensures all candidate sources are seeded with correct categories and attributes."""
     result = seed_or_sync_source_registry(db_session)
-    assert result["total"] >= 70
+    assert result["total"] == len(ALL_CANDIDATE_SOURCES)
     assert result["created"] > 0 or result["updated"] >= 0
 
     # Test idempotency
@@ -48,7 +48,7 @@ def test_registry_summary_stats(db_session: Session):
     seed_or_sync_source_registry(db_session)
     stats = get_registry_summary_stats(db_session)
 
-    assert stats["total_sources"] >= 70
+    assert stats["total_sources"] == len(ALL_CANDIDATE_SOURCES)
     assert stats["operational_sources"] > 0
     assert "status_breakdown" in stats
     assert "Operational" in stats["status_breakdown"]
@@ -81,13 +81,13 @@ def test_update_source_configuration(db_session: Session):
     seed_or_sync_source_registry(db_session)
 
     # Disable source
-    updated = update_source(db_session, "10times", {"is_enabled": False, "permission_status": "Reviewed"})
+    updated = update_source(db_session, "eventseye", {"is_enabled": False, "permission_status": "Reviewed"})
     assert updated is not None
     assert updated.is_enabled is False
     assert updated.permission_status == "Reviewed"
 
     # Re-enable
-    updated_again = update_source(db_session, "10times", {"is_enabled": True})
+    updated_again = update_source(db_session, "eventseye", {"is_enabled": True})
     assert updated_again.is_enabled is True
 
 
@@ -97,7 +97,7 @@ def test_record_source_execution(db_session: Session):
 
     record_source_execution(
         db_session,
-        source_id="10times",
+        source_id="eventseye",
         events_discovered=15,
         events_extracted=14,
         unique_events=12,
@@ -105,7 +105,7 @@ def test_record_source_execution(db_session: Session):
         health_status="healthy",
     )
 
-    s = get_source(db_session, "10times")
+    s = get_source(db_session, "eventseye")
     assert s is not None
     assert s.events_discovered == 15
     assert s.unique_events_discovered == 12
@@ -116,7 +116,7 @@ def test_record_source_execution(db_session: Session):
 def test_adapter_manager_initialization():
     """Validates that all catalogued sources have corresponding modular adapters."""
     adapters = adapter_manager.list_adapters()
-    assert len(adapters) >= 70
+    assert len(adapters) == len(ALL_CANDIDATE_SOURCES)
 
     tm = adapter_manager.get_adapter("ticketmaster_api")
     assert tm is not None
@@ -132,7 +132,8 @@ def test_adapter_health_check():
     probe = adapter_manager.check_health("eventbrite_api")
     assert "status" in probe
     assert "latency_ms" in probe
-    assert probe["status"] in ("awaiting_credentials", "healthy", "degraded", "unreachable")
+    # No Eventbrite API client exists in the app: the probe says so instead of "healthy".
+    assert probe["status"] == "not_implemented" and "No discovery client" in probe["error"]
 
 
 def test_api_sources_endpoints(db_session: Session):
@@ -154,14 +155,14 @@ def test_api_sources_endpoints(db_session: Session):
         resp = client.get("/api/discovery/sources")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["total"] >= 70
-        assert len(data["sources"]) >= 70
+        assert data["total"] == len(ALL_CANDIDATE_SOURCES)
+        assert len(data["sources"]) == len(ALL_CANDIDATE_SOURCES)
 
         # 2. GET /api/discovery/sources/stats
         resp_stats = client.get("/api/discovery/sources/stats")
         assert resp_stats.status_code == 200
         stats = resp_stats.json()
-        assert stats["total_sources"] >= 70
+        assert stats["total_sources"] == len(ALL_CANDIDATE_SOURCES)
         assert stats["operational_sources"] > 0
 
         # 3. GET /api/discovery/sources/ticketmaster_api

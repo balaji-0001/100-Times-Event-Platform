@@ -32,10 +32,10 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import urlparse
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from backend.models import DiscoveredEvent, DiscoveredOrganizer, Event, Venue
+from backend.models import AttendeeEventActivity, DiscoveredEvent, DiscoveredOrganizer, Event, Registration, SavedEvent, Venue
 from backend.services.discovery_agent.country_utils import normalize_country
 
 PLATFORM = "platform"
@@ -450,6 +450,72 @@ def get_event(db: Session, kind: str, event_id: int, today: date | None = None) 
     if kind == DISCOVERED:
         dev = db.scalar(_discovered_query().where(DiscoveredEvent.id == event_id))
         return from_discovered(dev, today) if dev else None
+    return None
+
+
+def is_publicly_listed_platform(ev: Event) -> bool:
+    """Same rule as the public event pages (`routes/events.py`): only
+    published events are visible to non-owners."""
+    return ev.status == "published"
+
+
+def is_publicly_listed_discovered(dev: DiscoveredEvent) -> bool:
+    """Discovered events an admin (or the Discovery Agent) rejected are never
+    shown to attendees."""
+    return (dev.discovery_status or "").upper() != "REJECTED" and (dev.verification_status or "").upper() != "REJECTED"
+
+
+def _viewer_tracks_platform(db: Session, user_id: int, event_id: int) -> bool:
+    saved = db.scalar(select(SavedEvent.event_id).where(SavedEvent.user_id == user_id, SavedEvent.event_id == event_id).limit(1))
+    if saved is not None:
+        return True
+    return db.scalar(select(Registration.id).where(Registration.user_id == user_id, Registration.event_id == event_id).limit(1)) is not None
+
+
+def _viewer_tracks_discovered(db: Session, user_id: int, event_id: int) -> bool:
+    row = db.scalar(
+        select(AttendeeEventActivity.id).where(
+            AttendeeEventActivity.user_id == user_id,
+            AttendeeEventActivity.discovered_event_id == event_id,
+            or_(AttendeeEventActivity.is_saved.is_(True), AttendeeEventActivity.external_registration_status == "REGISTERED"),
+        ).limit(1)
+    )
+    return row is not None
+
+
+def get_event_for_viewer(
+    db: Session,
+    kind: str,
+    event_id: int,
+    *,
+    user_id: int,
+    is_admin: bool,
+    today: date | None = None,
+) -> CatalogEvent | None:
+    """`get_event`, limited to what this viewer may see. Admins see everything.
+    Anyone else sees what the public listing shows (published platform events,
+    non-rejected discovered events), plus platform events whose organizer they
+    own, plus events they already saved or registered for — those stay
+    viewable (with the ineligibility reason) after being cancelled or pulled.
+    Returns None when the event does not exist or is not visible."""
+    today = today or date.today()
+    if kind == PLATFORM:
+        ev = db.scalar(_platform_query().where(Event.id == event_id))
+        if ev is None:
+            return None
+        visible = (
+            is_admin
+            or is_publicly_listed_platform(ev)
+            or (ev.organizer is not None and ev.organizer.user_id == user_id)
+            or _viewer_tracks_platform(db, user_id, ev.id)
+        )
+        return from_platform(ev, today) if visible else None
+    if kind == DISCOVERED:
+        dev = db.scalar(_discovered_query().where(DiscoveredEvent.id == event_id))
+        if dev is None:
+            return None
+        visible = is_admin or is_publicly_listed_discovered(dev) or _viewer_tracks_discovered(db, user_id, dev.id)
+        return from_discovered(dev, today) if visible else None
     return None
 
 

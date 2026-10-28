@@ -42,15 +42,42 @@ class ProviderExecutionLog:
 
 
 class BaseSearchProvider(abc.ABC):
-    """Abstract interface for modern web search providers."""
+    """Abstract interface for modern web search providers.
+
+    Class attributes describe the provider for the source registry / UI:
+    `is_free` (asked first), `cost_rank` (paid providers top up cheapest
+    first), `last_resort` (only when every other provider returned nothing),
+    `setup_env` (environment variables it needs) and `docs_url`."""
 
     provider_id: str
     provider_name: str
+    display_name: str = ""
+    is_free: bool = False
+    cost_rank: int = 50
+    last_resort: bool = False
+    setup_env: tuple[str, ...] = ()
+    docs_url: str | None = None
+    # Known, permanent reason the provider cannot be used even with a key
+    # (e.g. the API was retired); shown instead of "configured".
+    retired_reason: str | None = None
 
     @abc.abstractmethod
     def is_configured(self) -> bool:
         """Returns True if the provider has the credentials/setup required to execute."""
         pass
+
+    def unavailable_reason(self) -> str | None:
+        """Why this provider cannot run before even trying it, or None."""
+        if self.retired_reason:
+            return self.retired_reason
+        if not self.is_configured():
+            needed = " and ".join(self.setup_env) or "credentials"
+            return f"Not configured: set {needed} in the backend .env"
+        return None
+
+    def consume_cost(self) -> float | None:
+        """USD cost the provider reported for the last search on this thread, if any."""
+        return None
 
     @abc.abstractmethod
     def search(

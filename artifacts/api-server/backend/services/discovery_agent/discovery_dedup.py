@@ -79,7 +79,7 @@ class DedupIndex:
 
     def _index_organizer(self, org_id, name, email, website) -> None:
         if email:
-            self.orgs_by_email.setdefault(email, org_id)
+            self.orgs_by_email.setdefault(email.strip().lower(), org_id)  # addresses are case-insensitive
         domain = extract_domain(website)
         if domain:
             self.orgs_by_domain.setdefault(domain, org_id)
@@ -113,8 +113,8 @@ class DedupIndex:
         return None
 
     def find_organizer_id(self, *, name, email=None, website=None) -> int | None:
-        if email and email in self.orgs_by_email:
-            return self.orgs_by_email[email]
+        if email and email.strip().lower() in self.orgs_by_email:
+            return self.orgs_by_email[email.strip().lower()]
         domain = extract_domain(website)
         if domain and domain in self.orgs_by_domain:
             return self.orgs_by_domain[domain]
@@ -149,13 +149,17 @@ def find_duplicate_event(
         return None
 
     normalized_target = normalize_name(name)
-    clean_prefix = name.strip()[:30].lower()
+    if not normalized_target:
+        return None
+    # Narrow in SQL by the name's longest word (the same in every spelling of the
+    # name: spacing, case and punctuation differ), then apply the exact
+    # normalized-name rule below — the same rule DedupIndex uses.
+    anchor = max(normalized_target.split(), key=len)
     stmt = (
         select(DiscoveredEvent)
         .where(DiscoveredEvent.name.isnot(None))
-        .where(func.lower(DiscoveredEvent.name).like(f"{clean_prefix}%") | (func.lower(DiscoveredEvent.name) == name.strip().lower()))
+        .where(func.lower(DiscoveredEvent.name).contains(anchor))
         .where(not_rejected)
-        .limit(30)
     )
     candidates = db.execute(stmt).scalars().all()
     for candidate in candidates:
@@ -186,7 +190,7 @@ def find_duplicate_organizer(
         return db.get(DiscoveredOrganizer, found) if found is not None else None
 
     if email:
-        existing = db.execute(select(DiscoveredOrganizer).where(DiscoveredOrganizer.email == email)).scalars().first()
+        existing = db.execute(select(DiscoveredOrganizer).where(func.lower(DiscoveredOrganizer.email) == email.strip().lower())).scalars().first()
         if existing is not None:
             return existing
 

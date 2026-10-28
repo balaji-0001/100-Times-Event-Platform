@@ -152,8 +152,8 @@ def test_single_page_without_structured_data_or_a_date_returns_none(monkeypatch)
 
 def test_discovery_fetches_wait_between_requests_to_the_same_site(monkeypatch):
     sleeps: list[float] = []
-    # Clock reads: first request (check, stamp), second request (check, stamp).
-    clock = iter([100.0, 100.0, 100.2, 101.7])
+    # First request takes its slot at 100.0; the second arrives at 100.2 and waits for 101.5.
+    clock = iter([100.0, 100.2])  # one clock read per request (slot reservation)
     monkeypatch.setattr(web_fetch, "_http_get", lambda url: "<html>" + "x" * 600 + "</html>")
     monkeypatch.setattr(web_fetch.time, "monotonic", lambda: next(clock))
     monkeypatch.setattr(web_fetch.time, "sleep", sleeps.append)
@@ -170,7 +170,9 @@ def test_discovery_fetches_wait_between_requests_to_the_same_site(monkeypatch):
 
 def _config(**overrides) -> DiscoveryConfig:
     values = dict(
-        cities=["Mumbai"], states=[], categories=["Technology"], search_depth=1, sources_per_query=1,
+        # No sector chosen, so these festival listings are kept (as 'Other');
+        # a run limited to sectors skips off-sector events.
+        cities=["Mumbai"], states=[], categories=[], search_depth=1, sources_per_query=1,
         daily_limit=200, confidence_threshold=60,
         listing_urls=["https://allevents.in/{city}"], events_per_listing=10,
         require_organizer_email=False,

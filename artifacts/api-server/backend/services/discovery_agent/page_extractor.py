@@ -27,6 +27,9 @@ from backend.services.social_agent.web_fetch import fetch, find_json_ld_nodes
 # A page needs at least this many same-site event links to be treated as a
 # listing; fewer are usually "related events" links on a single event page.
 _MIN_LISTING_LINKS = 2
+# Path segments that mark a same-site link as an event page on venue /
+# organizer calendars ("/events/x", "/whats-on/x" on ExCeL London, …).
+_EVENT_PATH_HINTS = ("/event", "/whats-on/", "/exhibitions/", "/trade-fairs/", "/fairs/", "/shows/")
 
 
 def _event_nodes(soup: BeautifulSoup) -> list[dict]:
@@ -137,7 +140,7 @@ def _event_page_links(soup: BeautifulSoup, listing_url: str) -> list[str]:
     for anchor in soup.find_all("a", href=True):
         url = urljoin(listing_url, anchor["href"]).split("#", 1)[0]
         path = urlparse(url).path.rstrip("/")
-        if not same_host(url, listing_url) or "/event" not in path.lower():
+        if not same_host(url, listing_url) or not any(hint in path.lower() + "/" for hint in _EVENT_PATH_HINTS):
             continue
         if path == listing_path or path.count("/") < 2:
             continue  # the listing itself, or a section index like /events
@@ -154,6 +157,22 @@ def extract_events_from_page(page_url: str, max_events: int, cities: list[str] |
     html = fetch(page_url, render_js=browser_fetch_enabled())
     if not html:
         return []
+    return events_from_html(page_url, html, max_events, cities)
+
+
+def events_from_html(
+    page_url: str,
+    html: str,
+    max_events: int,
+    cities: list[str] | None = None,
+    page_may_be_event: bool = True,
+    max_event_links: int = 6,
+) -> list[ExtractedEventCandidate]:
+    """`extract_events_from_page` for HTML already fetched — lets a source
+    adapter tell "the page could not be read" from "the page lists no events".
+    A directory's calendar page is never itself an event: adapters pass
+    `page_may_be_event=False` so its title ("Events", "Calendar") is not read
+    as one when the page has no structured or linked events."""
     soup = BeautifulSoup(html, "html.parser")
 
     nodes = _event_nodes(soup)
@@ -172,10 +191,12 @@ def extract_events_from_page(page_url: str, max_events: int, cities: list[str] |
 
     links = _event_page_links(soup, page_url)
     if len(links) >= _MIN_LISTING_LINKS:
-        sublink_cap = min(max_events, 6)
+        sublink_cap = min(max_events, max_event_links)
         events = [event for event in (extract_event_from_page(_source_for(url), cities, render_js=False) for url in links[:sublink_cap]) if event is not None]
         if events:
             return events
 
+    if not page_may_be_event:
+        return []
     best_effort = extract_best_effort(_source_for(page_url), html, cities or [])
     return [best_effort] if best_effort else []

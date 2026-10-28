@@ -1,7 +1,8 @@
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -23,8 +24,9 @@ from backend.schemas import (
     UserOut,
 )
 from backend.serializers import event_card
-from backend.routes.events import slugify
+from backend.routes.platform_ops import owned_organizer, owned_organizer_ids, unique_organizer_slug
 from backend.services import event_creation
+from backend.services.lifecycle import transition_event_state
 
 router = APIRouter(tags=["dashboards"])
 
@@ -34,7 +36,7 @@ def registration_out(registration: Registration, user: User | None = None) -> Re
     u = user or (registration.user if hasattr(registration, "user") else None)
     ticket_code = f"100T-{event.id:04d}-{registration.id:05d}" if event else f"100T-0000-{registration.id:05d}"
     qr_data = f"100TIMES:PASS:EVENT={event.slug if event else 'event'}:REG={ticket_code}:USER={u.email if u else ''}:TIER={registration.ticket_type}"
-    venue_name = event.venue.name if event and event.venue else "Convention Center"
+    venue_name = event.venue.name if event and event.venue else ""
     city_name = event.venue.city.name if event and event.venue and event.venue.city else ""
     loc_str = f"{city_name}" if city_name else (event.location if event else "")
     return RegistrationOut(
@@ -54,7 +56,7 @@ def registration_out(registration: Registration, user: User | None = None) -> Re
         eventVenue=venue_name,
         eventStartDate=event.start_date.isoformat() if event and event.start_date else "",
         eventEndDate=event.end_date.isoformat() if event and event.end_date else "",
-        eventStartTime=event.start_time if event and event.start_time else "09:00",
+        eventStartTime=event.start_time if event and event.start_time else "",
     )
 
 
@@ -235,19 +237,48 @@ def notifications(db: Session = Depends(get_db), user: User = Depends(get_curren
     return [NotificationOut.model_validate(item) for item in rows]
 
 
-@router.get("/organizer", response_model=OrganizerDashboard)
-def organizer_dashboard(db: Session = Depends(get_db), user: User = Depends(require_roles("ORGANIZER", "ADMIN"))) -> OrganizerDashboard:
-    events = db.scalars(select(Event).options(selectinload(Event.category), selectinload(Event.organizer), selectinload(Event.venue).selectinload(Venue.city)).where(Event.organizer_id == user.id).order_by(desc(Event.created_at)).limit(5)).all()
-    event_ids = select(Event.id).where(Event.organizer_id == user.id)
-    registrations = int(db.scalar(select(func.count(Registration.id)).where(Registration.event_id.in_(event_ids))) or 0)
-    total = int(db.scalar(select(func.count(Event.id)).where(Event.organizer_id == user.id)) or 0)
-    published = int(db.scalar(select(func.count(Event.id)).where(Event.organizer_id == user.id, Event.status == "published")) or 0)
-    return OrganizerDashboard(totalEvents=total, publishedEvents=published, registrations=registrations, views=registrations * 19, conversionRate=round(registrations / max(total * 100, 1) * 100, 1), recentEvents=[event_card(db, item, user.id) for item in events])
+class OrganizerDashboardOut(OrganizerDashboard):
+    """OrganizerDashboard with honest nulls: event page views are not tracked
+    anywhere yet, so views and the view->registration conversion rate are
+    unknown (null) rather than invented. (Same fields/aliases as the shared
+    schema; move these two `| None` types into schemas.OrganizerDashboard.)"""
+
+    views: int | None = None
+    conversion_rate: float | None = Field(default=None, alias="conversionRate")
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _caller_event_ids(user: User):
+    """Ids of events whose organizer row the caller owns (Event.organizer_id is
+    an FK to organizers.id — never compared with a user id)."""
+    return select(Event.id).where(Event.organizer_id.in_(owned_organizer_ids(user)))
+
+
+@router.get("/organizer", response_model=OrganizerDashboardOut)
+def organizer_dashboard(db: Session = Depends(get_db), user: User = Depends(require_roles("ORGANIZER", "ADMIN"))) -> OrganizerDashboardOut:
+    mine = Event.organizer_id.in_(owned_organizer_ids(user))
+    events = db.scalars(select(Event).options(selectinload(Event.category), selectinload(Event.organizer), selectinload(Event.venue).selectinload(Venue.city)).where(mine).order_by(desc(Event.created_at)).limit(5)).all()
+    registrations = int(db.scalar(select(func.count(Registration.id)).where(Registration.event_id.in_(_caller_event_ids(user)))) or 0)
+    total = int(db.scalar(select(func.count(Event.id)).where(mine)) or 0)
+    published = int(db.scalar(select(func.count(Event.id)).where(mine, Event.status == "published")) or 0)
+    return OrganizerDashboardOut(
+        totalEvents=total,
+        publishedEvents=published,
+        registrations=registrations,
+        views=None,
+        conversionRate=None,
+        recentEvents=[event_card(db, item, user.id) for item in events],
+    )
 
 
 @router.get("/organizer/events", response_model=list[EventCard])
 def organizer_events(db: Session = Depends(get_db), user: User = Depends(require_roles("ORGANIZER", "ADMIN"))) -> list[EventCard]:
-    rows = db.scalars(select(Event).options(selectinload(Event.category), selectinload(Event.organizer), selectinload(Event.venue).selectinload(Venue.city)).where(Event.organizer_id == user.id).order_by(desc(Event.created_at))).all()
+    rows = db.scalars(select(Event).options(selectinload(Event.category), selectinload(Event.organizer), selectinload(Event.venue).selectinload(Venue.city)).where(Event.organizer_id.in_(owned_organizer_ids(user))).order_by(desc(Event.created_at))).all()
     return [event_card(db, item, user.id) for item in rows]
 
 
@@ -255,17 +286,17 @@ def organizer_events(db: Session = Depends(get_db), user: User = Depends(require
 def create_organizer_event(payload: EventInput, db: Session = Depends(get_db), user: User = Depends(require_roles("ORGANIZER", "ADMIN"))) -> EventCard:
     from backend.services.trust_agent import evaluate_event_trust
 
-    organizer = db.scalar(select(Organizer).where((Organizer.user_id == user.id) | (Organizer.id == user.id)))
+    organizer = owned_organizer(db, user)
     if not organizer:
         organizer = Organizer(
-            id=user.id,
+            # id assigned by the database; slug made unique (organizers.slug is UNIQUE).
             user_id=user.id,
             name=user.name,
-            slug=slugify(user.name),
+            slug=unique_organizer_slug(db, user.name, f"organizer-u{user.id}"),
             description="100 TIMES community organizer",
-            logo=user.name[:2].upper(),
+            logo=(user.name[:2] if user.name else "OR").upper(),
             email=user.email,
-            verified=True,
+            verified=False,
         )
         db.add(organizer)
         db.flush()
@@ -283,19 +314,67 @@ def create_organizer_event(payload: EventInput, db: Session = Depends(get_db), u
         price=payload.price,
         format=payload.format,
         organizer=organizer,
+        # Not public until the Trust Agent approves it (same flow as
+        # POST /organizer/events/full). Creating it "published" both skipped
+        # review and made the PUBLISHED -> TRUST_CHECK transition fail.
+        status="draft",
     )
     event.city_name = payload.location
     event.full_address = payload.location
+    event.lifecycle_state = "DRAFT"
+    db.flush()
+    transition_event_state(db, event, "SUBMITTED", actor=user.email, actor_id=user.id, reason="Submitted on creation")
     evaluate_event_trust(db, event, organizer=organizer, auto_publish_if_approved=True)
     db.commit()
     db.refresh(event)
     return event_card(db, event, user.id)
 
 
+ANALYTICS_WEEKS = 7
+GROWTH_DAYS = 7
+
+
 @router.get("/organizer/analytics", response_model=Analytics)
 def organizer_analytics(db: Session = Depends(get_db), user: User = Depends(require_roles("ORGANIZER", "ADMIN"))) -> Analytics:
-    count = int(db.scalar(select(func.count(Registration.id)).join(Event).where(Event.organizer_id == user.id)) or 0)
-    return Analytics(views=[count * 7, count * 10, count * 12, count * 15], registrations=[max(1, count // 4)] * 4, conversion=[3.4, 4.1, 4.8, 5.2], ticketDistribution={"Free": count // 5, "Standard": count, "Premium": count // 3, "VIP": count // 8})
+    """Only real numbers: registrations per week (last 7 weeks, oldest first)
+    and the ticket-type split of the caller's non-cancelled registrations.
+    Page views are not tracked, so `views` and `conversion` are empty."""
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(weeks=ANALYTICS_WEEKS)
+    my_event_ids = _caller_event_ids(user)
+
+    weekly = [0] * ANALYTICS_WEEKS
+    for registered_at in db.scalars(select(Registration.registered_at).where(Registration.event_id.in_(my_event_ids))).all():
+        ts = _as_utc(registered_at)
+        if ts is None or ts < window_start or ts > now:
+            continue
+        weeks_ago = int((now - ts) // timedelta(weeks=1))
+        if 0 <= weeks_ago < ANALYTICS_WEEKS:
+            weekly[ANALYTICS_WEEKS - 1 - weeks_ago] += 1
+
+    distribution_rows = db.execute(
+        select(Registration.ticket_type, func.count(Registration.id))
+        .where(Registration.event_id.in_(my_event_ids), func.lower(Registration.status) != "cancelled")
+        .group_by(Registration.ticket_type)
+    ).all()
+    distribution = {str(ticket_type or "Unspecified"): int(n) for ticket_type, n in distribution_rows}
+    return Analytics(views=[], registrations=weekly, conversion=[], ticketDistribution=distribution)
+
+
+def _daily_new_counts(db: Session, column, days: int) -> list[int]:
+    """Rows created on each of the last `days` UTC days (oldest first, today last)."""
+    today = datetime.now(timezone.utc).date()
+    first_day = today - timedelta(days=days - 1)
+    since = datetime.combine(first_day, datetime.min.time())
+    counts = [0] * days
+    for created_at in db.scalars(select(column).where(column >= since)).all():
+        ts = _as_utc(created_at)
+        if ts is None:
+            continue
+        index = (ts.date() - first_day).days
+        if 0 <= index < days:
+            counts[index] += 1
+    return counts
 
 
 @router.get("/admin", response_model=AdminDashboard)
@@ -304,7 +383,17 @@ def admin_dashboard(db: Session = Depends(get_db), user: User = Depends(require_
         return int(db.scalar(select(func.count(model.id))) or 0)
 
     categories = db.scalars(select(Category).order_by(Category.name).limit(5)).all()
-    return AdminDashboard(users=total(User), events=total(Event), organizers=total(Organizer), registrations=total(Registration), reviews=total(Review), userGrowth=[total(User)] * 7, eventGrowth=[total(Event)] * 7, popularCategories=[item.name for item in categories])
+    # Growth = new users / new events created on each of the last 7 days (real created_at).
+    return AdminDashboard(
+        users=total(User),
+        events=total(Event),
+        organizers=total(Organizer),
+        registrations=total(Registration),
+        reviews=total(Review),
+        userGrowth=_daily_new_counts(db, User.created_at, GROWTH_DAYS),
+        eventGrowth=_daily_new_counts(db, Event.created_at, GROWTH_DAYS),
+        popularCategories=[item.name for item in categories],
+    )
 
 
 class EventStatusUpdate(BaseModel):

@@ -531,19 +531,25 @@ def test_attendance_and_organizer_followup(db_session, seeded_catalog):
 # ---------------------------------------------------------------------------
 
 
-def test_n8n_webhooks_security_and_idempotency(db_session, seeded_catalog):
-    """Verifies that n8n webhook calls validate the secret header and enforce idempotency."""
+def test_n8n_webhooks_security_and_idempotency(db_session, seeded_catalog, monkeypatch):
+    """Verifies that n8n webhook calls validate the secret header and enforce idempotency.
+    Webhooks are off by default and refuse the built-in secret, so this test
+    enables them with a strong, test-only secret."""
     event = seeded_catalog["event"]
     attendee = _test_attendee_user()
     db_session.add(attendee)
     db_session.commit()
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "n8n_webhooks_enabled", True)
+    monkeypatch.setattr(settings, "n8n_webhook_secret", "test-only-strong-n8n-secret-0123456789")
 
     app = FastAPI()
     app.include_router(webhooks_n8n_routes.router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db_session
 
     client = TestClient(app)
-    expected_secret = get_settings().n8n_webhook_secret
+    expected_secret = settings.n8n_webhook_secret
 
     payload = {
         "idempotencyKey": f"wf01-test-{event.id}-{attendee.id}",

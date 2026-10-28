@@ -135,10 +135,12 @@ def test_ticketmaster_connection(api_key: str) -> dict[str, Any]:
                 "totalEvents": 0,
             }
     except requests.exceptions.RequestException as exc:
-        logger.warning("Ticketmaster connection test failed: %s", exc)
+        # The exception text embeds the request URL, query string and API key
+        # included — report only the error type (logs and UI alike).
+        logger.warning("Ticketmaster connection test failed: %s", type(exc).__name__)
         return {
             "success": False,
-            "message": f"Network error connecting to Ticketmaster: {str(exc)}",
+            "message": f"Network error connecting to Ticketmaster ({type(exc).__name__}). Check the internet connection and try again.",
             "totalEvents": 0,
         }
 
@@ -229,28 +231,35 @@ def fetch_ticketmaster_events(
     country: str | None = None,
     categories: list[str] | None = None,
     max_events_per_city: int = 25,
+    places: list[tuple[str, str | None]] | None = None,
 ) -> list[ExtractedEventCandidate]:
-    """Fetches upcoming events from Ticketmaster for specified cities or countries."""
-    if not api_key or not api_key.strip():
-        logger.info("Ticketmaster API key not provided — skipping Ticketmaster discovery.")
-        return []
+    """Fetches upcoming events from Ticketmaster for specified cities or countries.
 
-    target_cities = cities or ["London", "New York", "Mumbai", "San Francisco", "Dubai", "Singapore"]
+    `places` pairs each city with its own country (from the run's geo scope),
+    so each city is filtered by its own country code. Raises `SourceError`
+    when no request succeeded (invalid key, rate limit, network), so the run
+    reports Ticketmaster as failed rather than as "no events"."""
+    from backend.services.discovery_agent.adapters.base import SourceError
+
+    if not api_key or not api_key.strip():
+        raise SourceError("not_configured", "Ticketmaster API key not provided")
+
+    def code_for(name: str | None) -> str | None:
+        return COUNTRY_CODE_MAP.get((name or "").strip().lower())
+
+    if places:
+        targets = [(city, code_for(city_country)) for city, city_country in places]
+    else:
+        fallback_code = code_for(country) or next((code_for(c) for c in countries or [] if code_for(c)), None)
+        targets = [(city, fallback_code) for city in (cities or ["London", "New York", "Mumbai", "San Francisco", "Dubai", "Singapore"])]
+
     key = api_key.strip()
     candidates: list[ExtractedEventCandidate] = []
     seen_urls: set[str] = set()
+    errors: list[str] = []
+    succeeded = 0
 
-    # Determine country code filter if supplied
-    country_code = None
-    if country and country.strip().lower() in COUNTRY_CODE_MAP:
-        country_code = COUNTRY_CODE_MAP[country.strip().lower()]
-    elif countries:
-        for c in countries:
-            if c and c.strip().lower() in COUNTRY_CODE_MAP:
-                country_code = COUNTRY_CODE_MAP[c.strip().lower()]
-                break
-
-    for city in target_cities[:10]:  # Limit to 10 cities per batch to avoid rate limits
+    for city, country_code in targets[:10]:  # Limit to 10 cities per batch to avoid rate limits
         params: dict[str, Any] = {
             "apikey": key,
             "city": city,
@@ -262,25 +271,27 @@ def fetch_ticketmaster_events(
 
         try:
             resp = requests.get(TICKETMASTER_DISCOVERY_URL, params=params, timeout=12)
-            if resp.status_code == 200:
-                data = resp.json()
-                events_list = data.get("_embedded", {}).get("events", [])
-                logger.info("Ticketmaster returned %d events for city %r.", len(events_list), city)
-                for ev in events_list:
-                    cand = parse_ticketmaster_event(ev)
-                    if cand and cand.url and cand.url not in seen_urls:
-                        seen_urls.add(cand.url)
-                        candidates.append(cand)
-            elif resp.status_code == 401:
-                logger.warning("Ticketmaster API Key is invalid or expired.")
-                break
-            elif resp.status_code == 429:
-                logger.warning("Ticketmaster rate limit reached — pausing Ticketmaster queries.")
-                break
-            else:
-                logger.debug("Ticketmaster API returned status %d for city %r: %s", resp.status_code, city, resp.text[:120])
-        except Exception:
-            logger.exception("Failed to fetch Ticketmaster events for city %r", city)
+        except requests.RequestException as exc:
+            errors.append(f"{city}: network error ({type(exc).__name__})")
             continue
+        if resp.status_code == 200:
+            succeeded += 1
+            events_list = resp.json().get("_embedded", {}).get("events", [])
+            logger.info("Ticketmaster returned %d events for city %r.", len(events_list), city)
+            for ev in events_list:
+                cand = parse_ticketmaster_event(ev)
+                if cand and cand.url and cand.url not in seen_urls:
+                    seen_urls.add(cand.url)
+                    candidates.append(cand)
+        elif resp.status_code == 401:
+            errors.append("API key is invalid or expired (HTTP 401)")
+            break
+        elif resp.status_code == 429:
+            errors.append("rate limit / quota reached (HTTP 429)")
+            break
+        else:
+            errors.append(f"{city}: HTTP {resp.status_code}")
 
+    if not succeeded and errors:
+        raise SourceError("unreachable", f"Ticketmaster: {'; '.join(errors[:3])}")
     return candidates

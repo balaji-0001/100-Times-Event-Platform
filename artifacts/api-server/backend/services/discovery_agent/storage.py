@@ -18,15 +18,24 @@ from backend.services.discovery_agent.types import ExtractedEventCandidate, Orga
 _CONTACT_FIELDS = ("email", "phone", "linkedin", "twitter", "instagram", "facebook", "website")
 
 
-def get_or_create_organizer(db: Session, candidate: OrganizerCandidate, summary: RunSummary) -> DiscoveredOrganizer | None:
+def get_or_create_organizer(
+    db: Session,
+    candidate: OrganizerCandidate,
+    summary: RunSummary,
+    index: discovery_dedup.DedupIndex | None = None,
+) -> DiscoveredOrganizer | None:
     if not candidate.name:
         return None
 
-    existing = discovery_dedup.find_duplicate_organizer(db, name=candidate.name, email=candidate.email, website=candidate.website)
+    existing = discovery_dedup.find_duplicate_organizer(
+        db, name=candidate.name, email=candidate.email, website=candidate.website, index=index
+    )
     if existing is not None:
         organizer = existing
-        if candidate.organizer_type and not organizer.organizer_type:
-            organizer.organizer_type = candidate.organizer_type
+        # Fill what the stored organizer is missing; never replace a stored value.
+        for attr in ("email", "phone", "website", "linkedin", "organizer_type"):
+            if getattr(candidate, attr, None) and not getattr(organizer, attr, None):
+                setattr(organizer, attr, getattr(candidate, attr))
         organizer.last_updated_at = datetime.now(timezone.utc)
     else:
         organizer = DiscoveredOrganizer(
@@ -42,10 +51,15 @@ def get_or_create_organizer(db: Session, candidate: OrganizerCandidate, summary:
         )
         db.add(organizer)
         db.flush()
+        if index is not None:
+            index.add_organizer(organizer)
         summary.new_organizers += 1
     summary.organizers_found += 1
 
-    source_url = candidate.sources[0].url if candidate.sources else None
+    default_source = candidate.sources[0].url if candidate.sources else None
+    evidence = {**(getattr(candidate, "field_sources", None) or {})}
+    if candidate.email_source_url:
+        evidence["email"] = candidate.email_source_url
     values = {
         "email": candidate.email,
         "phone": candidate.phone,
@@ -71,7 +85,7 @@ def get_or_create_organizer(db: Session, candidate: OrganizerCandidate, summary:
                 discovered_organizer_id=organizer.id,
                 contact_type=contact_type,
                 value=value,
-                source_url=source_url,
+                source_url=evidence.get(contact_type) or default_source,
                 confidence_score=candidate.confidence_score,
                 is_primary=(contact_type == "email"),
                 created_at=datetime.now(timezone.utc),
@@ -93,26 +107,34 @@ def persist_event(
     event_date,
     summary: RunSummary,
     rejection_reason: str | None = None,
+    index: discovery_dedup.DedupIndex | None = None,
 ) -> DiscoveredEvent | None:
     """Returns the persisted row, or `None` if this was a duplicate (already
     counted in `summary.duplicate_events`) and nothing new was written."""
 
-    duplicate = discovery_dedup.find_duplicate_event(
-        db,
+    lookup = dict(
         name=candidate.name,
         organizer_name=organizer.name if organizer else None,
         date=candidate.date,
         city=candidate.city,
         url=candidate.ticket_url or candidate.url,
+        index=index,
     )
+    duplicate = discovery_dedup.find_duplicate_event(db, skip_rejected=True, **lookup)
     if duplicate is not None:
+        summary.duplicate_events += 1
+        return None
+    # Only a REJECTED copy exists (an earlier run's scope or rules turned it
+    # down): a rejection again is a duplicate; a pass re-evaluates that row.
+    previously_rejected = discovery_dedup.find_duplicate_event(db, **lookup)
+    if previously_rejected is not None and verification_status == "REJECTED":
         summary.duplicate_events += 1
         return None
 
     # A named organizer is kept even without an email (listing platforms
     # like Meetup name organizers but hide contacts). Outreach is unaffected:
     # it only picks events whose organizer_status is FOUND, i.e. with an email.
-    organizer_row = get_or_create_organizer(db, organizer, summary) if organizer and (organizer.found or organizer.name) else None
+    organizer_row = get_or_create_organizer(db, organizer, summary, index) if organizer and (organizer.found or organizer.name) else None
 
     # Annotate verification notes with rejection reason if rejected
     notes_to_store = list(verification_notes)
@@ -138,9 +160,15 @@ def persist_event(
         discovery_status = "NEW"
         if verification_status == "NEEDS_REVIEW":
             summary.events_needing_review += 1
+        elif verification_status == "VERIFIED":
+            summary.verified_events += 1
 
     primary = candidate.primary_source
-    event = DiscoveredEvent(
+    if previously_rejected is not None:
+        old_reason = next((n.split(":", 1)[1].strip() for n in previously_rejected.verification_notes or [] if n.startswith("REJECTION_REASON:")), "rejected")
+        notes_to_store.append(f"Re-evaluated {datetime.now(timezone.utc):%Y-%m-%d}: previously rejected ({old_reason}), passes the current run's rules.")
+    event = previously_rejected or DiscoveredEvent(created_at=datetime.now(timezone.utc), discovered_at=datetime.now(timezone.utc))
+    for field_name, value in dict(
         name=candidate.name,
         event_description=candidate.event_description,
         category=candidate.category,
@@ -167,13 +195,20 @@ def persist_event(
         discovery_status=discovery_status,
         discovered_by="web_discovery_agent",
         verification_notes=notes_to_store,
-        discovered_at=datetime.now(timezone.utc),
-        created_at=datetime.now(timezone.utc),
-    )
+    ).items():
+        if previously_rejected is not None and value in (None, "") and getattr(event, field_name, None) not in (None, ""):
+            continue  # an upgrade keeps details the earlier read found and this one didn't
+        setattr(event, field_name, value)
+    if previously_rejected is not None and organizer_row is None and event.organizer_id is not None:
+        event.organizer_status = "FOUND" if event.organizer and event.organizer.email else event.organizer_status
+    if previously_rejected is not None:
+        event.last_updated_at = datetime.now(timezone.utc)
     db.add(event)
     db.flush()
+    if index is not None:
+        index.add_event(event, organizer_row.name if organizer_row else None)
 
-    seen_urls = set()
+    seen_urls = {s.source_url for s in event.sources} if previously_rejected is not None else set()
     all_sources = list(candidate.sources) + [s for s in (organizer.sources if organizer else [])]
     for source in all_sources:
         if source.url in seen_urls:

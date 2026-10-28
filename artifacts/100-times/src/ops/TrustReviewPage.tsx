@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { customFetch } from '@workspace/api-client-react';
 import { CheckCircle2, ShieldAlert, ShieldCheck, XCircle, RefreshCw, AlertTriangle, History } from 'lucide-react';
-import { Badge, Kicker, LoadingState } from './ui';
+import { Badge, ErrorState, Kicker, LoadingState } from './ui';
 import { Link } from 'wouter';
 
 interface TrustAuditEntry {
@@ -112,7 +112,25 @@ export function TrustReviewPage() {
         </div>
       </div>
 
-      {reviews.length === 0 ? (
+      {decisionMutation.isError && (
+        <div className="flex items-start justify-between gap-3 rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3 text-xs text-red-600 dark:text-red-300">
+          <span>
+            <strong>Decision failed:</strong>{' '}
+            {decisionMutation.error instanceof Error ? decisionMutation.error.message : 'Request failed'}
+          </span>
+          <button onClick={() => decisionMutation.reset()} className="shrink-0 text-muted-foreground hover:text-foreground">
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {reviewsQuery.isError ? (
+        <ErrorState
+          title="Could not load Trust Agent reviews."
+          error={reviewsQuery.error}
+          retry={() => reviewsQuery.refetch()}
+        />
+      ) : reviews.length === 0 ? (
         <div className="rounded-2xl border border-foreground/10 bg-card p-10 text-center">
           <ShieldCheck className="mx-auto text-accent" size={32} />
           <p className="mt-3 font-display text-xl font-bold">No Trust Agent reviews in this filter.</p>

@@ -22,6 +22,12 @@ class GoogleSearchProvider(BaseSearchProvider):
 
     provider_id = "google_search"
     provider_name = "Google Custom Search JSON API"
+    display_name = "Google Custom Search"
+    cost_rank = 40
+    setup_env = ("GOOGLE_SEARCH_API_KEY", "GOOGLE_CSE_ID")
+    # Google stopped onboarding new Custom Search JSON API customers; new
+    # keys get HTTP 403. "google_gemini" is the working Google route.
+    docs_url = "https://developers.google.com/custom-search/v1/overview"
 
     def __init__(self) -> None:
         self.settings = get_settings()

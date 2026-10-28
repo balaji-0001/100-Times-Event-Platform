@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useParams, useSearch } from 'wouter';
 import { Play, RotateCcw } from 'lucide-react';
-import { type OutreachMessage, OUTREACH_STATUSES, OUTREACH_TABS, type OutreachTabKey, STATUS_LABEL, useDiscoveredOrganizers, useOutreachMessages, useOutreachStats, useProcessFollowups, useRunOutreachBatch } from './api';
+import { type OutreachMessage, OUTREACH_STATUSES, OUTREACH_TABS, type OutreachTabKey, STATUS_LABEL, useDiscoveredOrganizers, useOutreachMessages, useOutreachStats, useOutreachBacklog, useProcessFollowups, useRunOutreachBatch } from './api';
 import { AdminTable, Btn, ErrorState, EmptyState, LoadingState, NA, Notice, PageHeader, Pager, SearchBox, SelectFilter, StatCard, StatusBadge, cell, cellMuted, cx, fmtDateTime, useDebounce, usePagination } from './ui';
 import { OutreachDrawer } from './OutreachDrawer';
 import { OutreachSettingsButton } from './OutreachSettingsModal';
@@ -10,6 +10,7 @@ const ALL = '__all__';
 const uniq = (vals: Array<string | null | undefined>) => Array.from(new Set(vals.filter((v): v is string => Boolean(v)))).sort();
 
 export function OutreachPage() {
+  const backlog = useOutreachBacklog();
   const params = useParams<{ tab?: string }>();
   const tab = (OUTREACH_TABS.some((t) => t.key === params.tab) ? params.tab : 'all') as OutreachTabKey;
   const [, setLocation] = useLocation();
@@ -54,8 +55,6 @@ export function OutreachPage() {
   if (messages.isError) return <ErrorState error={messages.error} retry={() => messages.refetch()} />;
 
   const org = organizers.data ?? [];
-  const contactedIds = new Set(all.filter((m) => m.organizer?.id).map((m) => m.organizer!.id));
-  const ready = org.filter((o) => o.email && !o.blocked && !contactedIds.has(o.id)).length;
   const sent = all.filter((m) => m.sentAt).length;
   const delivered = all.filter((m) => ['DELIVERED', 'REPLIED', 'FOLLOW_UP_DUE', 'COMPLETED'].includes(m.status)).length;
   const replies = all.filter((m) => m.responseAt).length;
@@ -71,13 +70,39 @@ export function OutreachPage() {
           <Btn variant="primary" loading={runBatch.isPending} onClick={() => runBatch.mutate({})}><Play size={13} /> Generate outreach batch</Btn>
         </>} />
       {runBatch.isError && <div className="mt-4"><ErrorState error={runBatch.error} title="Outreach batch failed" /></div>}
-      {runBatch.isSuccess && <div className="mt-4"><Notice tone="info">Batch finished: {JSON.stringify(runBatch.data)}</Notice></div>}
+      {runBatch.isSuccess && (
+        <div className="mt-4"><Notice tone="info">
+          Batch finished: <strong>{runBatch.data.drafted} new draft{runBatch.data.drafted === 1 ? '' : 's'}</strong> added to Pending
+          {runBatch.data.skipped_duplicate > 0 && ` · ${runBatch.data.skipped_duplicate} already drafted`}
+          {(runBatch.data.skipped_past_event ?? 0) > 0 && ` · ${runBatch.data.skipped_past_event} already took place`}
+          {runBatch.data.skipped_suppressed > 0 && ` · ${runBatch.data.skipped_suppressed} blocked or unsubscribed`}.
+        </Notice></div>
+      )}
+      {backlog.data && backlog.data.waiting > 0 && (
+        <div className="mt-4"><Notice tone={backlog.data.ready > 0 ? 'warn' : 'info'}>
+          <strong>{backlog.data.waiting} discovered event{backlog.data.waiting === 1 ? ' has' : 's have'} an organizer e-mail but no outreach draft yet.</strong>{' '}
+          {backlog.data.ready > 0 ? `${backlog.data.ready} match your outreach settings and can be drafted now` : 'None of them match your outreach settings right now'}
+          {backlog.data.outside_sectors > 0 && ` · ${backlog.data.outside_sectors} are outside your outreach sectors (${backlog.data.sectors.join(', ')})`}
+          {backlog.data.outside_locations > 0 && ` · ${backlog.data.outside_locations} are outside your outreach countries/cities`}
+          {backlog.data.past_event > 0 && ` · ${backlog.data.past_event} already took place (never drafted)`}
+          {backlog.data.suppressed > 0 && ` · ${backlog.data.suppressed} organizers are blocked or unsubscribed`}.
+          {!backlog.data.autoEnabled && ' Automatic outreach is off, so drafts are created only when you click “Generate outreach batch”.'}
+          {(backlog.data.outside_sectors > 0 || backlog.data.outside_locations > 0) && ' Change the sectors or places in Settings to include more events.'}
+          {backlog.data.ready > 0 && (
+            <span className="ml-2 inline-block align-middle">
+              <Btn size="sm" variant="primary" loading={runBatch.isPending} onClick={() => runBatch.mutate({ maxCandidates: Math.min(backlog.data!.ready, 200) })}>
+                <Play size={11} /> Draft {Math.min(backlog.data.ready, 200)} now
+              </Btn>
+            </span>
+          )}
+        </Notice></div>
+      )}
       {followups.isSuccess && <div className="mt-4"><Notice tone="info">Follow-up sweep: {JSON.stringify(followups.data)}</Notice></div>}
-      {stats.data?.emailProviderStatus === 'NOT_CONFIGURED' && <div className="mt-4"><Notice tone="warn"><strong>Email provider: mock.</strong> SMTP is not configured, so “Send” hands the message to a mock provider and no real email reaches the organizer. Statuses below reflect that.</Notice></div>}
+      {stats.data?.emailProviderStatus === 'NOT_CONFIGURED' && <div className="mt-4"><Notice tone="warn"><strong>Email provider not configured.</strong> SMTP is not set up, so “Send” cannot deliver anything — the message stays Approved and its failure reason (“Not sent: …”) is shown below.</Notice></div>}
 
       <div className="mt-8 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         <StatCard label="Total organizers" value={org.length} />
-        <StatCard label="Ready for outreach" value={ready} sub="with email, not yet contacted" />
+        <StatCard label="Ready to draft" value={backlog.data ? backlog.data.ready : '—'} sub={backlog.data ? `of ${backlog.data.waiting} events waiting · matches your settings` : 'events matching your outreach settings'} />
         <StatCard label="Emails sent" value={sent} />
         <StatCard label="Delivered" value={delivered} tone="good" />
         <StatCard label="Replies" value={replies} />

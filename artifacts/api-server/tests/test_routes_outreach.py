@@ -81,7 +81,7 @@ def test_edit_outreach_rejected_after_send(client, db_session):
     assert response.status_code == 409
 
 
-def test_approve_then_send_action_uses_mock_provider(client, db_session):
+def test_approve_then_send_action_delivers_through_the_provider(client, db_session, delivering_email_provider):
     message = _make_outreach(db_session, status="PENDING_APPROVAL")
     approve = client.post(f"/api/acquisition/outreach/{message.id}/action", json={"action": "approve"})
     assert approve.status_code == 200

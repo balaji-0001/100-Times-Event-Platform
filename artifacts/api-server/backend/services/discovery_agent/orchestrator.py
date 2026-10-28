@@ -525,7 +525,14 @@ class _DiscoveryPipeline:
 
         self._stats_lock = threading.Lock()
         self.stage_ms = {"search": 0.0, "page_read": 0.0, "organizer": 0.0}
-        self.counts = {"searches": 0, "search_results": 0, "pages_read": 0, "organizer_lookups": 0, "result_urls_skipped": 0}
+        # Real per-stage progress, persisted with the run (Plan → Collect → Read
+        # pages → Screen → Find organizer → Decide & save) for the progress view.
+        self.counts = {
+            "planned_queries": 0, "planned_source_reads": 0,
+            "searches": 0, "search_results": 0, "pages_read": 0, "result_urls_skipped": 0,
+            "screened": 0, "passed_screening": 0,
+            "organizer_lookups": 0,
+        }
         self.db_ms = 0.0
         self.milestones: dict[str, float] = {}
         self.scope_stats: dict = {}
@@ -538,6 +545,8 @@ class _DiscoveryPipeline:
         self._plan()
         self.source_jobs = self._round_robin_by_source(self.source_jobs)
         self.source_jobs_planned = list(self.source_jobs)
+        self.counts["planned_queries"] = len(self.queries) + sum(len(wave) for wave in self.query_waves)
+        self.counts["planned_source_reads"] = len(self.source_jobs)
 
     @staticmethod
     def _round_robin_by_source(jobs) -> deque:
@@ -775,7 +784,9 @@ class _DiscoveryPipeline:
             start = time.perf_counter()
             keep = _screen_candidate(self.db, self.run, candidate, self.config, self.summary, self.categories, self.index)
             self.db_ms += (time.perf_counter() - start) * 1000
+            self.counts["screened"] += 1
             if keep:
+                self.counts["passed_screening"] += 1
                 self.organizer_jobs.append(candidate)
             elif summary.duplicate_events > before[0]:
                 self.report.outcome(origin, "duplicates")

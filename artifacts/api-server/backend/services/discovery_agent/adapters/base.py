@@ -22,6 +22,30 @@ from backend.services.discovery_agent.types import CandidateSource, DiscoveryCon
 logger = logging.getLogger("discovery_agent.adapters")
 
 
+class SourceError(Exception):
+    """The source could not be read. Raised instead of returning [] so a run
+    reports the source as failed (with this reason), never as "no events".
+    `kind`: not_configured | not_implemented | unreachable | parse_error."""
+
+    def __init__(self, kind: str, message: str) -> None:
+        super().__init__(message)
+        self.kind = kind
+
+
+# Config keys that name the page a source's events are listed on, most
+# specific first. The site's homepage (`website_url`) is only the fallback.
+_LISTING_URL_KEYS = ("listing_template", "calendar_url", "listing_url", "search_url")
+# Section pages a calendar links to that are not events ("What's on" on ExCeL).
+_GENERIC_PAGE_NAMES = {"events", "event", "whats on", "what s on", "calendar", "event calendar", "events calendar",
+                       "exhibitions", "upcoming events", "all events", "home", "trade fairs", "conferences"}
+
+
+def _is_generic_name(name: str | None) -> bool:
+    import re as _re
+
+    return " ".join(_re.sub(r"[^a-z0-9]+", " ", (name or "").lower()).split()) in _GENERIC_PAGE_NAMES
+
+
 class BaseSourceAdapter(abc.ABC):
     """Abstract base class for all global event discovery source adapters."""
 
@@ -31,6 +55,9 @@ class BaseSourceAdapter(abc.ABC):
     access_method: str  # schema_org | official_api | html_listing | rss_ical | search_engine
     website_url: str
     rate_limit_delay: float = 1.0  # seconds between requests to respect robots/servers
+    # False for catalogue entries with no working discovery client: they are
+    # never scheduled and never counted as available sources.
+    implemented: bool = True
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         self.config = config or {}
@@ -86,6 +113,58 @@ class BaseSourceAdapter(abc.ABC):
             }
         """
         raise NotImplementedError
+
+    def listing_template(self) -> str:
+        """The events page this source is configured with (may hold {city}/{country})."""
+        for key in _LISTING_URL_KEYS:
+            value = self.config.get(key)
+            if isinstance(value, str) and value.startswith(("http://", "https://")):
+                return value
+        return self.website_url
+
+    def target_urls(self, config: DiscoveryConfig | None, max_urls: int = 5) -> list[str]:
+        """The concrete pages to read for this run: the configured events page,
+        expanded for the run's cities/countries when it is a template."""
+        template = self.listing_template()
+        if "{city}" not in template and "{country}" not in template:
+            return [template]
+        from backend.services.discovery_agent import geo_scope, listing_sources
+
+        geo = geo_scope.resolve(config) if config is not None else geo_scope.GeoScope()
+        urls = listing_sources.build_listing_urls([template], [], countries=geo.countries, places=geo.anchor_places(max_urls))
+        return urls[:max_urls]
+
+    def read_pages(self, urls: list[str], limit: int, cities: list[str] | None = None) -> list[ExtractedEventCandidate]:
+        """Read each page and extract its events (JSON-LD, linked event pages,
+        then the page text). Raises `SourceError` only when NO page could be
+        read; a page that loads but lists nothing just contributes nothing."""
+        from backend.services.discovery_agent.page_extractor import events_from_html
+        from backend.services.social_agent.browser_fetch import browser_fetch_enabled
+        from backend.services.social_agent.web_fetch import failure_reason, fetch
+
+        results: list[ExtractedEventCandidate] = []
+        failures: list[str] = []
+        read_any = False
+        for url in urls:
+            if len(results) >= limit:
+                break
+            self._respect_rate_limit()
+            html = fetch(url, render_js=browser_fetch_enabled())
+            if not html:
+                failures.append(f"{url}: {failure_reason(url) or 'no response'}")
+                continue
+            read_any = True
+            # A directory/calendar page: follow up to 15 of its event links.
+            for event in events_from_html(url, html, limit - len(results), cities, page_may_be_event=False, max_event_links=15):
+                if _is_generic_name(event.name):
+                    continue
+                if event.primary_source:
+                    event.primary_source.source_website = self.name
+                    event.primary_source.source_type = self.access_method
+                results.append(event)
+        if not read_any and failures:
+            raise SourceError("unreachable", "; ".join(failures[:3]))
+        return results[:limit]
 
     def build_candidate_source(self, url: str) -> CandidateSource:
         """Helper to create provenance source attribution."""

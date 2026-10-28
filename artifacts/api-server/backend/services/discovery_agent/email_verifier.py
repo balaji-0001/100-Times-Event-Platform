@@ -72,6 +72,10 @@ _GENERIC_SYSTEM_LOCALS = {
 }
 
 
+_PLACEHOLDER_LOCALS = {"name", "yourname", "your.name", "you", "your", "user", "username", "email", "youremail", "firstname.lastname", "john.doe", "jane.doe", "someone"}
+_PLACEHOLDER_DOMAIN_LABELS = {"email", "mail", "domain", "company", "yourdomain", "yourcompany", "website", "example", "gmail"}
+
+
 def is_valid_organizer_email(
     email: str | None,
     allow_test_domains: bool = True,
@@ -110,7 +114,7 @@ def is_valid_organizer_email(
         return False, None, "Email matches a static asset or image filename"
 
     # Reject placeholder / dummy domains
-    if domain in _DUMMY_DOMAINS:
+    if domain in _DUMMY_DOMAINS or any(domain.endswith("." + dummy) for dummy in _DUMMY_DOMAINS):  # incl. "o123.ingest.sentry.io"
         return False, None, f"Domain {domain!r} is an unverified placeholder or dummy domain"
 
     if not allow_test_domains and (domain.endswith(".test") or domain.endswith(".example") or domain.endswith(".invalid")):
@@ -119,5 +123,9 @@ def is_valid_organizer_email(
     # Reject generic automated system mailboxes
     if local in _GENERIC_SYSTEM_LOCALS:
         return False, None, f"Generic automated mailbox ({local}) does not belong to the organizer or event team"
+
+    # Form placeholders ("name@email.com", "you@domain.com") are not anyone's address.
+    if local in _PLACEHOLDER_LOCALS and domain.split(".", 1)[0] in _PLACEHOLDER_DOMAIN_LABELS:
+        return False, None, f"Placeholder address ({normalized}) from a form field, not a real mailbox"
 
     return True, normalized, None

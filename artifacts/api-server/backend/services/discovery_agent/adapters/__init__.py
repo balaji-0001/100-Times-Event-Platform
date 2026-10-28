@@ -1,6 +1,6 @@
 """Modular source adapters package for 100 TIMES Global Event Discovery."""
 
-from backend.services.discovery_agent.adapters.base import BaseSourceAdapter
+from backend.services.discovery_agent.adapters.base import BaseSourceAdapter, SourceError
 from backend.services.discovery_agent.adapters.api_adapters import (
     CredentialAwarePlatformAdapter,
     TicketmasterAdapter,
@@ -13,6 +13,7 @@ from backend.services.discovery_agent.adapters.manager import SourceAdapterManag
 
 __all__ = [
     "BaseSourceAdapter",
+    "SourceError",
     "TicketmasterAdapter",
     "CredentialAwarePlatformAdapter",
     "HtmlListingAdapter",

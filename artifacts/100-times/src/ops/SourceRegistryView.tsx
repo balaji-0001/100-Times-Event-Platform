@@ -1,23 +1,19 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
+import { Link } from 'wouter';
+import { useQueryClient } from '@tanstack/react-query';
 import {
-  Activity,
-  AlertCircle,
-  CheckCircle2,
-  Clock,
   ExternalLink,
-  Filter,
   KeyRound,
   Play,
   RefreshCw,
   Search,
-  ShieldCheck,
   ToggleLeft,
   ToggleRight,
   Wifi,
-  X,
 } from 'lucide-react';
 import {
   type EventDiscoverySource,
+  runScopedKeys,
   useDiscoverySources,
   useDiscoverySourceStats,
   useProbeSourceHealth,
@@ -34,13 +30,13 @@ import {
   EmptyState,
   ErrorState,
   LoadingState,
+  Notice,
   Panel,
   Section,
   StatCard,
   cell,
   cellMuted,
   cx,
-  fmtDateTime,
   inputClass,
   useDebounce,
 } from './ui';
@@ -99,20 +95,6 @@ const statusTone = (status: string) => {
   }
 };
 
-const healthTone = (health: string) => {
-  switch (health) {
-    case 'healthy':
-      return 'good';
-    case 'degraded':
-      return 'warn';
-    case 'failing':
-    case 'unreachable':
-      return 'danger';
-    default:
-      return 'neutral';
-  }
-};
-
 export function SourceRegistryView() {
   const [category, setCategory] = useState('__all__');
   const [status, setStatus] = useState('__all__');
@@ -137,72 +119,106 @@ export function SourceRegistryView() {
   const probeHealth = useProbeSourceHealth();
   const testExtraction = useTestSourceExtraction();
   const syncSources = useSyncDiscoverySources();
+  const qc = useQueryClient();
+  // One line of feedback for the last action taken in this table (toggle, probe, test, sync).
+  const [feedback, setFeedback] = useState<{ tone: 'good' | 'warn' | 'danger'; text: string } | null>(null);
+  const errText = (e: unknown) => (e instanceof Error ? e.message : 'unknown error');
+  // The registry decides which sources may run; the discovery configuration page reads that through the catalog.
+  const refreshCatalog = () => qc.invalidateQueries({ queryKey: runScopedKeys.catalog });
 
   const stats = statsQuery.data;
   const sources = sourcesQuery.data?.sources ?? [];
 
   const handleToggle = (source: EventDiscoverySource) => {
-    updateSource.mutate({
-      sourceId: source.id,
-      updates: { is_enabled: !source.is_enabled },
-    });
+    setFeedback(null);
+    updateSource.mutate(
+      { sourceId: source.id, updates: { is_enabled: !source.is_enabled } },
+      {
+        onSuccess: () => { refreshCatalog(); setFeedback({ tone: 'good', text: `${source.name} ${source.is_enabled ? 'disabled' : 'enabled'}.` }); },
+        onError: (e) => setFeedback({ tone: 'danger', text: `Couldn't change ${source.name}: ${errText(e)}` }),
+      },
+    );
   };
 
   const handleProbe = (source: EventDiscoverySource) => {
+    setFeedback(null);
     probeHealth.mutate(source.id, {
       onSuccess: (data) => {
-        alert(
-          `Health Check for ${source.name}:\nStatus: ${data.status.toUpperCase()}\nLatency: ${data.latency_ms} ms\n${data.error ? `Error: ${data.error}` : 'Connection verified successfully.'}`
-        );
+        refreshCatalog();
+        setFeedback({
+          tone: data.error ? 'danger' : 'good',
+          text: `Probe of ${source.name}: ${data.status} · ${data.latency_ms} ms${data.error ? ` · ${data.error}` : ' · reachable'}`,
+        });
       },
+      onError: (e) => setFeedback({ tone: 'danger', text: `Probe of ${source.name} failed: ${errText(e)}` }),
     });
   };
 
   const handleTest = (source: EventDiscoverySource) => {
+    setFeedback(null);
     testExtraction.mutate(
       { sourceId: source.id },
       {
         onSuccess: (data) => {
+          refreshCatalog();
           setActiveTest({ source, result: data });
         },
+        onError: (e) => setFeedback({ tone: 'danger', text: `Extraction test of ${source.name} failed: ${errText(e)}` }),
       }
     );
   };
 
+  const handleSync = () => {
+    setFeedback(null);
+    syncSources.mutate(undefined, {
+      onSuccess: () => { refreshCatalog(); setFeedback({ tone: 'good', text: 'Registry synchronised with the master catalog.' }); },
+      onError: (e) => setFeedback({ tone: 'danger', text: `Sync failed: ${errText(e)}` }),
+    });
+  };
+
   return (
     <div className="space-y-6">
+      <Notice tone="info">
+        This registry decides which sources may run at all (<strong>Enabled</strong>). Which of the enabled sources automatic discovery actually uses is chosen in{' '}
+        <Link href="/admin/discover/configuration#sources" className="font-semibold underline">Discovery configuration → Sources &amp; providers</Link>.
+      </Notice>
       {/* KPI Overview Cards */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <StatCard
           label="Total Sources"
-          value={stats?.total_sources ?? 76}
+          value={stats?.total_sources ?? '—'}
         />
         <StatCard
           label="Operational"
-          value={stats?.operational_sources ?? 35}
+          value={stats?.operational_sources ?? '—'}
           tone="good"
         />
         <StatCard
           label="Implemented"
-          value={stats?.sources_integrated ?? 29}
+          value={stats?.sources_integrated ?? '—'}
           tone="accent"
         />
         <StatCard
           label="Awaiting Credentials"
-          value={stats?.awaiting_credentials ?? 5}
+          value={stats?.awaiting_credentials ?? '—'}
           tone="warn"
         />
         <StatCard
           label="Venue Calendars"
-          value={stats?.by_category?.['Venue Calendar'] ?? 10}
+          value={stats ? stats.by_category?.['Venue Calendar'] ?? 0 : '—'}
           tone="accent"
         />
         <StatCard
           label="Enabled Active"
-          value={stats?.enabled_sources ?? 76}
+          value={stats?.enabled_sources ?? '—'}
           tone="good"
         />
       </div>
+      {statsQuery.isError && (
+        <p className="text-xs text-red-600 dark:text-red-300">
+          Could not load source statistics{statsQuery.error instanceof Error ? `: ${statsQuery.error.message}` : '.'}
+        </p>
+      )}
 
       {/* Filter and Control Bar */}
       <Panel className="p-4">
@@ -215,7 +231,7 @@ export function SourceRegistryView() {
               />
               <input
                 type="text"
-                placeholder="Search 76+ sources by name, URL, or ID..."
+                placeholder={stats?.total_sources != null ? `Search ${stats.total_sources} sources by name, URL, or ID...` : 'Search sources by name, URL, or ID...'}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className={cx(inputClass, 'pl-8 text-xs')}
@@ -267,13 +283,14 @@ export function SourceRegistryView() {
               size="sm"
               variant="secondary"
               loading={syncSources.isPending}
-              onClick={() => syncSources.mutate()}
-              title="Resynchronize all 74+ sources with master catalog"
+              onClick={handleSync}
+              title="Resynchronize sources with the master catalog"
             >
               <RefreshCw size={12} className="mr-1.5" /> Sync Catalog
             </Btn>
           </div>
         </div>
+        {feedback && <div className="mt-3"><Notice tone={feedback.tone}>{feedback.text}</Notice></div>}
       </Panel>
 
       {/* Main Sources Table */}
@@ -281,6 +298,14 @@ export function SourceRegistryView() {
         {sourcesQuery.isLoading ? (
           <div className="p-8">
             <LoadingState label="Loading Global Source Registry..." />
+          </div>
+        ) : sourcesQuery.isError ? (
+          <div className="p-8">
+            <ErrorState
+              title="Could not load the source registry."
+              error={sourcesQuery.error}
+              retry={() => sourcesQuery.refetch()}
+            />
           </div>
         ) : sources.length === 0 ? (
           <div className="p-8">
@@ -380,9 +405,13 @@ export function SourceRegistryView() {
 
                 <td className={cell}>
                   <button
+                    type="button"
+                    role="switch"
+                    aria-checked={s.is_enabled}
+                    aria-label={`${s.is_enabled ? 'Disable' : 'Enable'} ${s.name}`}
                     onClick={() => handleToggle(s)}
                     disabled={updateSource.isPending}
-                    className="cursor-pointer text-foreground/80 hover:text-foreground"
+                    className="cursor-pointer text-foreground/80 hover:text-foreground disabled:cursor-wait disabled:opacity-60"
                     title={s.is_enabled ? 'Disable source' : 'Enable source'}
                   >
                     {s.is_enabled ? (
@@ -462,7 +491,7 @@ export function SourceRegistryView() {
               <div>
                 <div className="text-xs text-muted-foreground">Events Recognized</div>
                 <div className="text-base font-bold font-mono-face text-foreground">
-                  {activeTest.result.events_found ?? 0}
+                  {activeTest.result.events_found ?? '—'}
                 </div>
               </div>
             </div>

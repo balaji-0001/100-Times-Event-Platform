@@ -31,11 +31,13 @@ callers wrap unexpected exceptions themselves (see `discovery_pipeline.py`)
 so Organizer Outreach can never break the discovery pipeline it hangs off of.
 """
 
+import logging
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.core.config import get_settings
@@ -45,6 +47,10 @@ from backend.services.social_agent.outreach import duplicate_check, eligibility,
 from backend.services.social_agent.outreach.senders import get_email_provider
 from backend.services.social_agent.outreach.types import EventDetails, OrganizerContactInfo, OutreachRunConfig, OutreachRunSummary
 from backend.services.social_agent.pipeline.event_extraction import ExtractedEventAI
+
+logger = logging.getLogger("outreach.orchestrator")
+# Concurrent e-mail drafts per batch (each may be an AI call; the template path is instant).
+_DRAFT_WORKERS = 4
 
 
 def _log(opportunity_id: int | None, action_type: str, detail: str) -> AgentAction:
@@ -92,13 +98,41 @@ def _get_or_create_organizer(db: Session, contact: OrganizerContactInfo) -> Disc
 
 
 def _today_sent_count(db: Session) -> int:
-    today = datetime.now(timezone.utc).date()
-    rows = db.execute(select(OutreachMessage.sent_at).where(OutreachMessage.sent_at.isnot(None))).scalars().all()
-    return sum(1 for sent_at in rows if sent_at and sent_at.date() == today)
+    """E-mails sent today (UTC): first messages and follow-ups, counted in SQL."""
+    start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+    first = db.scalar(select(func.count(OutreachMessage.id)).where(OutreachMessage.sent_at >= start)) or 0
+    followups = db.scalar(select(func.count(OutreachMessage.id)).where(OutreachMessage.follow_up_sent_at >= start)) or 0
+    return int(first) + int(followups)
+
+
+def daily_send_limit(db: Session) -> int:
+    """The daily limit saved in the Outreach settings, else OUTREACH_DAILY_CAP."""
+    from backend.services.social_agent.outreach.auto_toggle import get_outreach_auto_settings
+
+    saved = get_outreach_auto_settings(db).get("daily_limit")
+    return int(saved) if isinstance(saved, (int, float)) and saved > 0 else get_settings().outreach_daily_cap
 
 
 def daily_cap_available(db: Session) -> bool:
-    return _today_sent_count(db) < get_settings().outreach_daily_cap
+    return _today_sent_count(db) < daily_send_limit(db)
+
+
+def outreach_config_from_settings(db: Session, max_candidates: int | None = None) -> OutreachRunConfig:
+    """The targeting saved in the Outreach settings — used by the automatic
+    run AND the "Generate outreach batch" button, so both draft the same events."""
+    from backend.services.social_agent.outreach.auto_toggle import get_outreach_auto_settings
+
+    saved = get_outreach_auto_settings(db)
+    countries = saved.get("countries") or ([saved["country"]] if saved.get("country") else [])
+    return OutreachRunConfig(
+        max_candidates=max_candidates or saved.get("max_candidates") or get_settings().outreach_max_candidates_per_run,
+        countries=countries,
+        states=saved.get("states") or [],
+        cities=saved.get("cities") or [],
+        categories=saved.get("categories") or [],
+        sender_name=saved.get("sender_name"),
+        template_style=saved.get("template_style"),
+    )
 
 
 def send_outreach_message(db: Session, message: OutreachMessage) -> str:
@@ -280,17 +314,7 @@ def run_outreach_agent(db: Session, config: OutreachRunConfig | None = None) -> 
     instead of a personalized draft), never blocks the run; every message's
     `generated_by` field still records honestly which path produced it."""
     if config is None:
-        from backend.services.social_agent.outreach.auto_toggle import get_outreach_auto_settings
-        saved_settings = get_outreach_auto_settings(db)
-        config = OutreachRunConfig(
-            max_candidates=saved_settings.get("max_candidates", get_settings().outreach_max_candidates_per_run),
-            countries=saved_settings.get("countries", []),
-            states=saved_settings.get("states", []),
-            cities=saved_settings.get("cities", []),
-            categories=saved_settings.get("categories", []),
-            sender_name=saved_settings.get("sender_name"),
-            template_style=saved_settings.get("template_style"),
-        )
+        config = outreach_config_from_settings(db)
 
     run = AgentRun(
         agent_type="outreach", status="running", started_at=datetime.now(timezone.utc),
@@ -316,30 +340,37 @@ def run_outreach_agent(db: Session, config: OutreachRunConfig | None = None) -> 
         summary.skipped_suppressed = selection_summary.skipped_suppressed
         summary.skipped_no_organizer = selection_summary.skipped_no_organizer
 
-        for event, organizer in candidates:
+        summary.skipped_past_event = selection_summary.skipped_past_event
+
+        # Write the e-mails concurrently (each may be an AI call), then save
+        # them one by one on this thread — one commit per message.
+        style = {k: v for k, v in (("sender_name", config.sender_name), ("template_style", config.template_style)) if v}
+
+        def _draft(pair):
+            event, organizer = pair
+            try:
+                return message_generator.generate_outreach_message(to_event_details(event), to_organizer_contact_info(organizer), **style)
+            except Exception:
+                logger.exception("Drafting failed for event #%s — using the plain template", event.id)
+                return message_generator._deterministic_initial(to_event_details(event), to_organizer_contact_info(organizer), config.sender_name), "deterministic_fallback"
+
+        with ThreadPoolExecutor(max_workers=max(1, min(_DRAFT_WORKERS, len(candidates)))) as pool:
+            drafts = list(pool.map(_draft, candidates))
+
+        for (event, organizer), (content, generated_by) in zip(candidates, drafts):
             message = OutreachMessage(
                 event_id=event.id, organizer_id=organizer.id, campaign_id=campaign.id,
                 recipient=organizer.email, status="NEW", created_at=datetime.now(timezone.utc),
             )
-            db.add(message)
-            db.flush()
-
-            message.status = state_machine.transition_outreach_message(message.status, "RESEARCHED")
-            db.commit()
-
-            event_details = to_event_details(event)
-            contact = to_organizer_contact_info(organizer)
-            content, generated_by = message_generator.generate_outreach_message(event_details, contact)
-
+            for state in ("RESEARCHED", "EMAIL_GENERATED", "PENDING_APPROVAL"):
+                message.status = state_machine.transition_outreach_message(message.status, state)
             message.subject = content.subject
             message.message = content.body
             message.generated_by = generated_by
-            message.status = state_machine.transition_outreach_message(message.status, "EMAIL_GENERATED")
-            message.status = state_machine.transition_outreach_message(message.status, "PENDING_APPROVAL")
+            db.add(message)
+            db.flush()
             db.add(_log(None, "outreach_drafted_pending_approval", f"Outreach message #{message.id} drafted for {organizer.email} — awaiting human approval."))
-            db.commit()
             summary.drafted += 1
-
             run.summary = summary.as_dict()
             db.add(run)
             db.commit()

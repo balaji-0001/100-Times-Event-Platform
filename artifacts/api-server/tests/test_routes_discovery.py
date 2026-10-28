@@ -220,3 +220,49 @@ def test_get_run_discovered_events(client, db_session):
     assert resp.status_code == 200
     assert len(resp.json()) == 1
     assert resp.json()[0]["id"] == ev.id
+
+
+def test_saved_discovery_configuration_round_trips(client, db_session):
+    """Discovery configuration page: what is saved comes back exactly after a
+    reload (sources, providers, listing pages, places, sectors, rules)."""
+    payload = {
+        "countries": ["Germany", "United Arab Emirates"],
+        "locations": [{"country": "Germany", "city": "Munich"}, {"country": "United Arab Emirates"}],
+        "cities": ["Munich"],
+        "categories": ["Construction", "Energy and Power Generation"],
+        "sources": ["web", "global_adapters", "eventseye"],
+        "searchProviders": ["searxng"],
+        "listingUrls": ["https://example-venue.test/events"],
+        "requireOrganizerEmail": True,
+        "keepRejectedEvents": False,
+        "targetValidEvents": 30,
+    }
+    assert client.patch("/api/discovery/auto", json=payload).status_code == 200
+
+    saved = client.get("/api/discovery/auto").json()  # a fresh read, as after a page reload
+
+    for key in ("countries", "cities", "categories", "sources", "searchProviders", "listingUrls"):
+        assert saved[key] == payload[key], key
+    assert saved["requireOrganizerEmail"] is True and saved["keepRejectedEvents"] is False and saved["targetValidEvents"] == 30
+    assert saved["enabled"] is False  # saving configuration never switches automation on
+
+
+def test_clearing_all_countries_and_saving_the_interval_persist(client, db_session):
+    client.patch("/api/discovery/auto", json={"countries": ["Germany"]})
+    assert client.get("/api/discovery/auto").json()["countries"] == ["Germany"]
+
+    client.patch("/api/discovery/auto", json={"countries": [], "intervalMinutes": 180})
+    saved = client.get("/api/discovery/auto").json()
+
+    assert saved["countries"] == [] and saved["country"] is None  # no fallback to the old single country
+    assert saved["intervalMinutes"] == 180
+    assert client.patch("/api/discovery/auto", json={"intervalMinutes": 5}).status_code == 422  # at least 15 minutes
+
+
+def test_unsaved_run_sizes_are_what_runs_actually_use(client, db_session):
+    from backend.core.config import get_settings
+    from backend.services.discovery_agent.orchestrator import config_from_settings
+
+    shown = client.get("/api/discovery/auto").json()
+    used = config_from_settings(get_settings(), db=db_session)
+    assert (shown["eventsPerRun"], shown["targetValidEvents"]) == (used.events_per_run, used.target_valid_events)

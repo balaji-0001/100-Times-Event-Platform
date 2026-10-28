@@ -32,7 +32,9 @@ import {
   useUpdatePlatformSetting,
   useUpdatePromotionJobContent,
 } from './api';
-import { Badge, Btn, Drawer, EmptyState, Kicker, LoadingState, cx, fmtDateTime } from './ui';
+import { Btn, Drawer, EmptyState, ErrorState, Kicker, LoadingState, cx, fmtDateTime } from './ui';
+
+const errText = (e: unknown) => (e instanceof Error ? e.message : 'Request failed');
 
 const PLATFORM_ICONS: Record<string, typeof Share2> = {
   instagram: Instagram,
@@ -72,6 +74,14 @@ export function SocialPromotionsPage() {
   const updateContentMutation = useUpdatePromotionJobContent();
   const updateSettingMutation = useUpdatePlatformSetting();
   const triggerPromotionMutation = useTriggerEventPromotion();
+
+  // Surface every failed action instead of failing silently.
+  const actionErrors = [
+    { label: 'Approve / publish', m: approveMutation },
+    { label: 'Reject', m: rejectMutation },
+    { label: 'Retry', m: retryMutation },
+    { label: 'Update platform setting', m: updateSettingMutation },
+  ].filter((x) => x.m.isError);
 
   const handleCopy = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
@@ -137,7 +147,7 @@ export function SocialPromotionsPage() {
         </div>
         <div className="flex items-center gap-3">
           <Btn
-            onClick={() => setShowManualModal(true)}
+            onClick={() => { triggerPromotionMutation.reset(); setShowManualModal(true); }}
             className="flex items-center gap-2 rounded-xl bg-accent px-4 py-2 text-xs font-semibold text-accent-foreground shadow hover:opacity-90"
           >
             <Sparkles size={14} /> Promote Event
@@ -157,27 +167,43 @@ export function SocialPromotionsPage() {
         </div>
       </div>
 
+      {actionErrors.length > 0 && (
+        <div className="space-y-2">
+          {actionErrors.map(({ label, m }) => (
+            <div key={label} className="flex items-start justify-between gap-3 rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3 text-xs text-red-600 dark:text-red-300">
+              <span><strong>{label} failed:</strong> {errText(m.error)}</span>
+              <button onClick={() => m.reset()} className="shrink-0 text-muted-foreground hover:text-foreground" aria-label="Dismiss error">
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Metrics Banner */}
+      {stats.isError && (
+        <p className="text-xs text-red-600 dark:text-red-300">Could not load promotion stats: {errText(stats.error)}</p>
+      )}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         <div className="rounded-2xl border border-foreground/10 bg-card p-4">
           <p className="font-mono-face text-[10px] uppercase text-muted-foreground">Total Jobs</p>
-          <p className="mt-1 text-2xl font-bold">{stats.data?.totalJobs ?? 0}</p>
+          <p className="mt-1 text-2xl font-bold">{stats.data?.totalJobs ?? '—'}</p>
         </div>
         <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4">
           <p className="font-mono-face text-[10px] uppercase text-emerald-400">Live Published</p>
-          <p className="mt-1 text-2xl font-bold text-emerald-400">{stats.data?.published ?? 0}</p>
+          <p className="mt-1 text-2xl font-bold text-emerald-400">{stats.data?.published ?? '—'}</p>
         </div>
         <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 p-4">
           <p className="font-mono-face text-[10px] uppercase text-cyan-400">Dry-Run Simulated</p>
-          <p className="mt-1 text-2xl font-bold text-cyan-400">{stats.data?.dryRun ?? 0}</p>
+          <p className="mt-1 text-2xl font-bold text-cyan-400">{stats.data?.dryRun ?? '—'}</p>
         </div>
         <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4">
           <p className="font-mono-face text-[10px] uppercase text-amber-400">Pending Approval</p>
-          <p className="mt-1 text-2xl font-bold text-amber-400">{stats.data?.pendingApproval ?? 0}</p>
+          <p className="mt-1 text-2xl font-bold text-amber-400">{stats.data?.pendingApproval ?? '—'}</p>
         </div>
         <div className="rounded-2xl border border-rose-500/20 bg-rose-500/5 p-4">
           <p className="font-mono-face text-[10px] uppercase text-rose-400">Failed / Retrying</p>
-          <p className="mt-1 text-2xl font-bold text-rose-400">{stats.data?.failed ?? 0}</p>
+          <p className="mt-1 text-2xl font-bold text-rose-400">{stats.data?.failed ?? '—'}</p>
         </div>
       </div>
 
@@ -185,6 +211,11 @@ export function SocialPromotionsPage() {
       <div>
         <h2 className="text-lg font-semibold tracking-tight">Platform Configuration & Health</h2>
         <p className="text-xs text-muted-foreground">Toggle platform enablement, safety dry-run defaults, and auto-publishing rules.</p>
+        {settings.isError && (
+          <div className="mt-4">
+            <ErrorState title="Could not load platform settings." error={settings.error} retry={() => settings.refetch()} />
+          </div>
+        )}
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
           {settings.data?.map((setting) => {
             const Icon = PLATFORM_ICONS[setting.platform] || Share2;
@@ -273,7 +304,7 @@ export function SocialPromotionsPage() {
                 </div>
 
                 <p className="mt-3 truncate text-[10px] text-muted-foreground" title={setting.connectionMessage}>
-                  {setting.connectionMessage || 'Ready for simulation'}
+                  {setting.connectionMessage || '—'}
                 </p>
               </div>
             );
@@ -322,6 +353,10 @@ export function SocialPromotionsPage() {
           <div className="p-12">
             <LoadingState label="Loading promotion jobs..." />
           </div>
+        ) : jobs.isError ? (
+          <div className="p-12">
+            <ErrorState title="Could not load promotion jobs." error={jobs.error} retry={() => jobs.refetch()} />
+          </div>
         ) : !jobs.data?.items || jobs.data.items.length === 0 ? (
           <div className="p-12">
             <EmptyState
@@ -356,7 +391,7 @@ export function SocialPromotionsPage() {
                           {job.event?.title || `Event #${job.eventId}`}
                         </div>
                         <div className="text-[11px] text-muted-foreground">
-                          {job.event?.city || 'India'} &bull; {job.event?.category || 'General'}
+                          {[job.event?.city, job.event?.category].filter(Boolean).join(' • ') || '—'}
                         </div>
                       </td>
 
@@ -454,7 +489,7 @@ export function SocialPromotionsPage() {
                               Dry-Run
                             </button>
                             <button
-                              onClick={() => setEditingJob(job)}
+                              onClick={() => { updateContentMutation.reset(); setEditingJob(job); }}
                               className="rounded-lg bg-muted px-2.5 py-1 text-xs font-semibold text-foreground hover:bg-muted/80 transition"
                             >
                               Edit
@@ -505,7 +540,7 @@ export function SocialPromotionsPage() {
           <div className="space-y-6 text-sm">
             <div>
               <Kicker>{activeJob.platform.toUpperCase()} PROMOTION</Kicker>
-              <h3 className="mt-1 text-xl font-bold">{activeJob.title || activeJob.event?.title || 'Event Announcement'}</h3>
+              <h3 className="mt-1 text-xl font-bold">{activeJob.title || activeJob.event?.title || `Event #${activeJob.eventId}`}</h3>
               <p className="text-xs text-muted-foreground mt-0.5">Status: <span className="font-semibold text-foreground">{activeJob.status}</span> &bull; Mode: <span className="font-semibold text-foreground">{activeJob.isDryRun ? 'Dry-Run Simulation' : 'Live API'}</span></p>
             </div>
 
@@ -619,9 +654,15 @@ export function SocialPromotionsPage() {
               />
             </div>
 
+            {updateContentMutation.isError && (
+              <p className="rounded-lg bg-red-500/10 p-2 text-xs text-red-600 dark:text-red-300">
+                Could not save changes: {errText(updateContentMutation.error)}
+              </p>
+            )}
+
             <div className="flex items-center gap-2 pt-2">
-              <Btn type="submit" className="flex-1 bg-primary text-primary-foreground font-semibold">
-                Save Changes
+              <Btn type="submit" disabled={updateContentMutation.isPending} className="flex-1 bg-primary text-primary-foreground font-semibold">
+                {updateContentMutation.isPending ? 'Saving…' : 'Save Changes'}
               </Btn>
               <Btn type="button" variant="secondary" onClick={() => setEditingJob(null)}>
                 Cancel
@@ -663,6 +704,12 @@ export function SocialPromotionsPage() {
               <li>Jobs will land in <span className="font-semibold text-foreground">Pending Approval</span> (or auto-publish if enabled).</li>
             </ul>
           </div>
+
+          {triggerPromotionMutation.isError && (
+            <p className="rounded-lg bg-red-500/10 p-2 text-xs text-red-600 dark:text-red-300">
+              Could not generate promotions: {errText(triggerPromotionMutation.error)}
+            </p>
+          )}
 
           <div className="flex items-center gap-2 pt-2">
             <Btn

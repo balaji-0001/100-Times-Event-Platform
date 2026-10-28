@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { customFetch } from '@workspace/api-client-react';
-import { Workflow, ShieldCheck, CheckCircle2 } from 'lucide-react';
-import { Badge, Kicker, LoadingState } from './ui';
+import { Workflow, ShieldCheck } from 'lucide-react';
+import { Badge, ErrorState, Kicker, LoadingState } from './ui';
 
 interface WorkflowDef {
   id: string;
@@ -59,6 +59,12 @@ export function WorkflowsLogsPage({ mode = 'workflows' }: { mode?: 'workflows' |
   const runs = runsQuery.data ?? [];
   const audits = auditQuery.data ?? [];
 
+  // The workflow catalog is static; the only real signal of activity is the run log.
+  const latestRunFor = (workflowId: string) =>
+    runs
+      .filter((r) => r.workflowId === workflowId)
+      .sort((a, b) => (b.startedAt ?? '').localeCompare(a.startedAt ?? ''))[0];
+
   return (
     <div className="space-y-8">
       <div>
@@ -69,20 +75,33 @@ export function WorkflowsLogsPage({ mode = 'workflows' }: { mode?: 'workflows' |
         <p className="mt-1 text-sm text-muted-foreground">
           {mode === 'audit'
             ? 'Immutable audit trail across organizer signup, event lifecycle, Trust Agent decisions, registrations, and notifications.'
-            : 'All 8 reusable n8n workflows exported in /n8n/workflows/ with HMAC secret verification and idempotency keys.'}
+            : wfQuery.isError
+            ? 'Reusable n8n workflows exported in /n8n/workflows/ with HMAC secret verification and idempotency keys.'
+            : `${workflows.length} reusable n8n workflow${workflows.length === 1 ? '' : 's'} exported in /n8n/workflows/ with HMAC secret verification and idempotency keys.`}
         </p>
       </div>
 
       {mode === 'workflows' && (
         <>
+          {wfQuery.isError && (
+            <ErrorState title="Could not load the n8n workflow catalog." error={wfQuery.error} retry={() => wfQuery.refetch()} />
+          )}
           <div className="grid gap-4 md:grid-cols-2">
-            {workflows.map((wf) => (
+            {workflows.map((wf) => {
+              const last = latestRunFor(wf.id);
+              return (
               <div key={wf.id} className="rounded-2xl border border-foreground/10 bg-card p-5 space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <span className="inline-flex items-center gap-2 font-display text-base font-bold">
                     <Workflow size={16} className="text-accent" /> {wf.name}
                   </span>
-                  <Badge tone="good">ACTIVE</Badge>
+                  {last ? (
+                    <Badge tone={last.status === 'COMPLETED' ? 'good' : 'warn'}>
+                      Last run: {last.status} · {new Date(last.startedAt).toLocaleString()}
+                    </Badge>
+                  ) : (
+                    <Badge tone="neutral">{runsQuery.isError ? 'Run history unavailable' : 'No runs recorded'}</Badge>
+                  )}
                 </div>
                 <p className="text-xs text-muted-foreground">{wf.description}</p>
                 <div className="flex flex-wrap items-center justify-between gap-2 pt-2 font-mono-face text-[11px] text-muted-foreground">
@@ -90,11 +109,19 @@ export function WorkflowsLogsPage({ mode = 'workflows' }: { mode?: 'workflows' |
                   <span className="text-accent">POST {wf.webhook}</span>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
 
           <div className="rounded-2xl border border-foreground/10 bg-card p-6 space-y-4">
-            <h2 className="font-display text-lg font-bold">Recent Idempotent Workflow Runs ({runs.length})</h2>
+            <h2 className="font-display text-lg font-bold">
+              Recent Idempotent Workflow Runs{runsQuery.isError ? '' : ` (${runs.length})`}
+            </h2>
+            {runsQuery.isError ? (
+              <ErrorState title="Could not load workflow runs." error={runsQuery.error} retry={() => runsQuery.refetch()} />
+            ) : runs.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No workflow runs recorded yet.</p>
+            ) : null}
             <div className="space-y-2">
               {runs.map((r) => (
                 <div
@@ -121,12 +148,14 @@ export function WorkflowsLogsPage({ mode = 'workflows' }: { mode?: 'workflows' |
       <div className="rounded-2xl border border-foreground/10 bg-card p-6 space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="font-display text-lg font-bold flex items-center gap-2">
-            <ShieldCheck size={18} className="text-accent" /> Platform Audit Trail ({audits.length})
+            <ShieldCheck size={18} className="text-accent" /> Platform Audit Trail{auditQuery.isError ? '' : ` (${audits.length})`}
           </h2>
-          <span className="inline-flex items-center gap-1 font-mono-face text-[11px] text-emerald-400">
-            <CheckCircle2 size={12} /> Secret Redaction Active
-          </span>
         </div>
+        {auditQuery.isError ? (
+          <ErrorState title="Could not load audit logs." error={auditQuery.error} retry={() => auditQuery.refetch()} />
+        ) : audits.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No audit log entries recorded yet.</p>
+        ) : null}
         <div className="space-y-2">
           {audits.map((log) => (
             <div

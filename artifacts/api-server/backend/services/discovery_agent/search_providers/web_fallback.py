@@ -26,6 +26,10 @@ class WebFallbackProvider(BaseSearchProvider):
 
     provider_id = "web_fallback"
     provider_name = "Keyless Web Fallback (DuckDuckGo)"
+    display_name = "DuckDuckGo"
+    is_free = True
+    last_resort = True
+    docs_url = "https://lite.duckduckgo.com/lite/"
 
     def is_configured(self) -> bool:
         return True
@@ -46,8 +50,10 @@ class WebFallbackProvider(BaseSearchProvider):
                 timeout=5.0,
                 follow_redirects=True,
             )
-            if r.status_code != 200 or "anomaly" in r.text:
-                raise RuntimeError(f"DuckDuckGo search blocked or unavailable (HTTP {r.status_code})")
+            if "anomaly" in r.text:
+                raise RuntimeError(f"DuckDuckGo bot check blocked this server (HTTP {r.status_code}, anomaly page)")
+            if r.status_code != 200:
+                raise RuntimeError(f"DuckDuckGo HTTP {r.status_code}")
 
             soup = BeautifulSoup(r.text, "html.parser")
             results: list[SearchProviderResult] = []

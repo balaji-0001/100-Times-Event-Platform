@@ -171,3 +171,100 @@ def test_generic_send_failure_reverts_to_approved_for_retry(db_session, monkeypa
     assert message.send_attempt_count == 1
     assert "connection reset" in message.failure_reason
     assert suppression.is_suppressed(db_session, organizer.email) is False
+
+
+# --- Selection can't be starved; settings take effect -------------------------------------
+
+from datetime import date, timedelta  # noqa: E402
+
+from backend.services.social_agent.outreach.auto_toggle import set_outreach_auto_settings  # noqa: E402
+
+
+def test_already_drafted_events_never_crowd_out_waiting_ones(db_session):
+    """Before: the newest max_candidates*4 rows were fetched and filtered after,
+    so once those were all drafted every batch drafted nothing."""
+    waiting, _ = _seed_event(db_session, name="Older Waiting Expo", email="older@a.test")
+    waiting.discovered_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    for i in range(30):
+        event, org = _seed_event(db_session, name=f"Drafted {i}", email=f"d{i}@a.test")
+        db_session.add(OutreachMessage(event_id=event.id, organizer_id=org.id, status="PENDING_APPROVAL", created_at=datetime.now(timezone.utc)))
+    db_session.commit()
+
+    candidates, summary = eligibility.find_eligible_candidates(db_session, OutreachRunConfig(max_candidates=2))
+
+    assert [event.name for event, _ in candidates] == ["Older Waiting Expo"]
+    assert summary.skipped_duplicate == 30
+
+
+def test_events_that_already_took_place_are_not_drafted(db_session):
+    past, _ = _seed_event(db_session, name="Last Month Expo", email="past@a.test")
+    past.event_date = date.today() - timedelta(days=30)
+    upcoming, _ = _seed_event(db_session, name="Next Month Expo", email="next@a.test")
+    upcoming.event_date = date.today() + timedelta(days=30)
+    db_session.commit()
+
+    candidates, summary = eligibility.find_eligible_candidates(db_session, OutreachRunConfig(max_candidates=10))
+
+    assert [event.name for event, _ in candidates] == ["Next Month Expo"]
+    assert summary.skipped_past_event == 1
+
+
+def test_saved_daily_limit_and_followup_wait_are_used(db_session):
+    from backend.services.social_agent.outreach import followup
+
+    assert orchestrator.daily_send_limit(db_session) == orchestrator.get_settings().outreach_daily_cap
+    set_outreach_auto_settings(db_session, {"daily_limit": 150, "followup_wait_days": 3})
+    db_session.commit()
+    assert orchestrator.daily_send_limit(db_session) == 150
+
+    event, org = _seed_event(db_session, name="Followup Expo", email="f@a.test")
+    db_session.add(OutreachMessage(event_id=event.id, organizer_id=org.id, recipient="f@a.test", subject="s", message="m", status="DELIVERED",
+                                   sent_at=datetime.now(timezone.utc) - timedelta(days=4), created_at=datetime.now(timezone.utc)))
+    db_session.commit()
+
+    assert followup.process_followups(db_session)["followUpsDrafted"] == 1  # 4 days > the saved 3 (default is 7)
+
+
+def test_saved_sender_name_signs_the_email_and_no_country_is_assumed(db_session, monkeypatch):
+    monkeypatch.setattr(orchestrator.message_generator, "get_ai_client", lambda: FakeAIClient(configured=False))
+    event, _ = _seed_event(db_session, name="Dubai Build Expo", email="dubai@a.test")
+    event.city = "Dubai"
+    set_outreach_auto_settings(db_session, {"sender_name": "Balaji - 100 TIMES Partnerships"})
+    db_session.commit()
+
+    orchestrator.run_outreach_agent(db_session)
+
+    body = db_session.query(OutreachMessage).one().message
+    assert "Balaji - 100 TIMES Partnerships" in body
+    assert "across India" not in body and "in Dubai" in body
+
+
+def test_generate_button_uses_the_saved_targeting_and_backlog_explains_the_rest(db_session):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from backend.db import get_db
+    from backend.dependencies import get_current_user
+    from backend.models import User
+    from backend.routes import outreach as outreach_routes
+
+    tech, _ = _seed_event(db_session, name="AI Summit", email="ai@a.test")  # category Technology
+    construction, _ = _seed_event(db_session, name="Build Expo", email="build@a.test")
+    construction.category = "Construction"
+    over, _ = _seed_event(db_session, name="Old Build Expo", email="old@a.test")
+    over.category, over.event_date = "Construction", date.today() - timedelta(days=3)
+    set_outreach_auto_settings(db_session, {"categories": ["Construction"]})
+    db_session.commit()
+
+    app = FastAPI()
+    app.include_router(outreach_routes.router, prefix="/api")
+    app.dependency_overrides[get_db] = lambda: db_session
+    app.dependency_overrides[get_current_user] = lambda: User(id=1, name="A", email="a@x.test", password_hash="x", role="ADMIN")
+    client = TestClient(app)
+
+    backlog = client.get("/api/acquisition/outreach/backlog").json()
+    assert (backlog["waiting"], backlog["ready"], backlog["outside_sectors"], backlog["past_event"]) == (3, 1, 1, 1)
+
+    drafted = client.post("/api/acquisition/outreach/batch-run", json={}).json()
+    assert drafted["drafted"] == 1
+    assert [m.event_id for m in db_session.query(OutreachMessage).all()] == [construction.id]

@@ -16,13 +16,14 @@ from datetime import date
 import hmac
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.core.config import get_settings
+from backend.core.config import Settings, get_settings
 from backend.db import get_db
+from backend.dependencies import require_roles
 from backend.models import Event, Registration, User
 from backend.services.notifications import send_templated_notification
 from backend.services.registration_automation import (
@@ -34,8 +35,6 @@ from backend.services.registration_automation import (
     mark_attendance_and_noshows,
     reschedule_event_workflow,
 )
-
-router = APIRouter(prefix="/webhooks/n8n", tags=["n8n-webhooks"])
 
 WORKFLOW_CATALOG = [
     {
@@ -105,13 +104,47 @@ WORKFLOW_CATALOG = [
 ]
 
 
+# Secrets that must never authenticate a webhook call: the built-in default
+# from config.py plus the well-known placeholders it rejects in production.
+_INSECURE_WEBHOOK_SECRETS = {
+    str(Settings.model_fields["n8n_webhook_secret"].default),
+    "dev-n8n-webhook-secret-100times",
+    "dev-webhook-secret-change-in-production",
+    "secret",
+    "changeme",
+}
+_MIN_WEBHOOK_SECRET_LENGTH = 16
+
+
+def require_webhooks_enabled(request: Request) -> None:
+    """Every /webhooks/n8n receiver is switched off unless N8N_WEBHOOKS_ENABLED=true.
+    The admin-only, read-only workflow catalog stays visible either way."""
+    if request.method == "GET" and request.url.path.rstrip("/").endswith("/webhooks/n8n/workflows"):
+        return
+    if not get_settings().n8n_webhooks_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+
+
+router = APIRouter(prefix="/webhooks/n8n", tags=["n8n-webhooks"], dependencies=[Depends(require_webhooks_enabled)])
+
+
 def verify_webhook_secret(
     x_webhook_secret: str | None = Header(default=None, alias="X-Webhook-Secret"),
     x_n8n_signature: str | None = Header(default=None, alias="X-N8N-Signature"),
 ) -> None:
-    expected = get_settings().n8n_webhook_secret
+    settings = get_settings()
+    if not settings.n8n_webhooks_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+    expected = settings.n8n_webhook_secret or ""
+    if expected in _INSECURE_WEBHOOK_SECRETS or len(expected) < _MIN_WEBHOOK_SECRET_LENGTH:
+        # Refuse to authenticate anyone with a built-in / placeholder secret.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="n8n webhooks are refused: N8N_WEBHOOK_SECRET is unset or a built-in default. Configure a strong secret.",
+        )
     provided = x_webhook_secret or x_n8n_signature
-    if not provided or not hmac.compare_digest(str(provided), str(expected)):
+    # Constant-time comparison on bytes (str compare_digest rejects non-ASCII input).
+    if not provided or not hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8")):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or missing X-Webhook-Secret / X-N8N-Signature header",
@@ -126,9 +159,29 @@ class WebhookPayload(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
 
+def _require_event(db: Session, payload: WebhookPayload) -> Event:
+    """The event a webhook names — never a stand-in "first event" when it is missing."""
+    if payload.event_id is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="eventId is required")
+    event = db.get(Event, payload.event_id)
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    return event
+
+
+def _require_user(db: Session, payload: WebhookPayload) -> User:
+    if payload.user_id is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="userId is required")
+    user = db.get(User, payload.user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return user
+
+
 @router.get("/workflows")
-def get_n8n_workflows() -> list[dict[str, Any]]:
-    return WORKFLOW_CATALOG
+def get_n8n_workflows(_: User = Depends(require_roles("ADMIN"))) -> list[dict[str, Any]]:
+    enabled = get_settings().n8n_webhooks_enabled
+    return [{**workflow, "webhooksEnabled": enabled} for workflow in WORKFLOW_CATALOG]
 
 
 @router.post("/registration")
@@ -137,10 +190,8 @@ def webhook_registration(
     _: None = Depends(verify_webhook_secret),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    event = db.get(Event, payload.event_id) if payload.event_id else db.scalar(select(Event).limit(1))
-    user = db.get(User, payload.user_id) if payload.user_id else db.scalar(select(User).limit(1))
-    if not event or not user:
-        raise HTTPException(status_code=404, detail="Event or User not found")
+    event = _require_event(db, payload)
+    user = _require_user(db, payload)
 
     def _run():
         res = automate_registration(
@@ -172,9 +223,7 @@ def webhook_event_published(
     _: None = Depends(verify_webhook_secret),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    event = db.get(Event, payload.event_id) if payload.event_id else db.scalar(select(Event).limit(1))
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    event = _require_event(db, payload)
 
     def _run():
         org = event.organizer
@@ -208,9 +257,7 @@ def webhook_event_cancelled(
     _: None = Depends(verify_webhook_secret),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    event = db.get(Event, payload.event_id) if payload.event_id else db.scalar(select(Event).limit(1))
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    event = _require_event(db, payload)
 
     def _run():
         return cancel_event_workflow(db, event, reason=payload.data.get("reason", "Cancelled via n8n workflow"))
@@ -236,12 +283,19 @@ def webhook_event_rescheduled(
     _: None = Depends(verify_webhook_secret),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    event = db.get(Event, payload.event_id) if payload.event_id else db.scalar(select(Event).limit(1))
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    event = _require_event(db, payload)
 
     new_date_str = payload.data.get("newStartDate")
-    new_date = date.fromisoformat(new_date_str) if new_date_str else event.start_date
+    if new_date_str:
+        try:
+            new_date = date.fromisoformat(str(new_date_str))
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="data.newStartDate must be an ISO date (YYYY-MM-DD)",
+            ) from exc
+    else:
+        new_date = event.start_date
 
     def _run():
         return reschedule_event_workflow(
@@ -274,9 +328,7 @@ def webhook_attendee_followup(
     _: None = Depends(verify_webhook_secret),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    event = db.get(Event, payload.event_id) if payload.event_id else db.scalar(select(Event).limit(1))
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    event = _require_event(db, payload)
 
     def _run():
         regs = db.scalars(select(Registration).where(Registration.event_id == event.id, Registration.status != "cancelled")).all()
@@ -312,12 +364,14 @@ def webhook_organizer_followup(
     _: None = Depends(verify_webhook_secret),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    event = db.get(Event, payload.event_id) if payload.event_id else db.scalar(select(Event).limit(1))
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    event = _require_event(db, payload)
+    if not event.organizer_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="This event has no organizer to follow up with")
 
     def _run():
         followup = initiate_or_advance_organizer_followup(db, event=event, reason="POST_EVENT")
+        if followup is None:
+            raise ValueError("Event organizer not found")
         return {
             "followupId": followup.id,
             "status": followup.status,
@@ -346,11 +400,14 @@ def webhook_attendance(
     _: None = Depends(verify_webhook_secret),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    event = db.get(Event, payload.event_id) if payload.event_id else db.scalar(select(Event).limit(1))
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    event = _require_event(db, payload)
 
     attended_ids = payload.data.get("attendedRegistrationIds", [])
+    if not isinstance(attended_ids, list) or not all(isinstance(i, int) and not isinstance(i, bool) for i in attended_ids):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="data.attendedRegistrationIds must be a list of registration ids",
+        )
 
     def _run():
         return mark_attendance_and_noshows(db, event, attended_registration_ids=attended_ids)

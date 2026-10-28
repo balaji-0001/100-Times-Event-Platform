@@ -14,7 +14,7 @@ from typing import Any
 
 import requests
 
-from backend.services.discovery_agent.adapters.base import BaseSourceAdapter
+from backend.services.discovery_agent.adapters.base import BaseSourceAdapter, SourceError
 from backend.services.discovery_agent.ticketmaster import (
     COUNTRY_CODE_MAP,
     TICKETMASTER_DISCOVERY_URL,
@@ -23,7 +23,6 @@ from backend.services.discovery_agent.ticketmaster import (
     test_ticketmaster_connection,
 )
 from backend.services.discovery_agent.types import DiscoveryConfig, ExtractedEventCandidate
-from backend.services.social_agent.web_fetch import fetch
 
 logger = logging.getLogger("discovery_agent.adapters.api")
 
@@ -84,7 +83,7 @@ class TicketmasterAdapter(BaseSourceAdapter):
         """Queries Ticketmaster API using platform helper."""
         api_key = self._get_api_key(config)
         if not api_key:
-            return []
+            raise SourceError("not_configured", "Ticketmaster API key not configured")
 
         candidates = fetch_ticketmaster_events(
             api_key=api_key,
@@ -161,13 +160,16 @@ class TicketmasterAdapter(BaseSourceAdapter):
 
 
 class CredentialAwarePlatformAdapter(BaseSourceAdapter):
-    """Adapter for official platform APIs that require authentication credentials.
-    
-    Covers Eventbrite API, Meetup API, Pretalx, Pretix, Cvent, Bizzabo, Swoogo, Whova.
-    Gracefully handles absence of keys and reports 'Awaiting Credentials' status.
-    """
+    """Catalogue entry for an official platform API (Eventbrite, Meetup,
+    Sessionize, Pretalx, Pretix, Cvent, Bizzabo, Swoogo) that this app has
+    NO discovery client for yet. It never pretends to work: discovery raises
+    `SourceError("not_implemented")`, probes report `not_implemented`, and a
+    run lists it as skipped with that reason — with or without a key.
+    (Eventbrite and Meetup listings are still read through their public
+    pages by the Consumer Aggregators channel.)"""
 
     access_method = "official_api"
+    implemented = False
 
     def __init__(
         self,
@@ -191,69 +193,29 @@ class CredentialAwarePlatformAdapter(BaseSourceAdapter):
         env_var = f"{self.source_id.upper()}_KEY"
         return os.getenv(env_var) or self.config.get("api_key")
 
+    def not_implemented_reason(self) -> str:
+        return (
+            f"No discovery client for the {self.name} API is implemented in this app "
+            f"(it would need {self.auth_requirements}; docs: {self.api_docs_url or self.website_url})."
+        )
+
     def check_health(self) -> dict[str, Any]:
-        """Probes public API documentation or endpoint reachability."""
-        start = time.time()
-        cred = self._get_credential()
-        if not cred:
-            return {
-                "status": "awaiting_credentials",
-                "latency_ms": 0.0,
-                "error": f"Requires {self.auth_requirements}. Configure key in source settings.",
-                "details": {
-                    "docs_url": self.api_docs_url,
-                    "has_credentials": False,
-                },
-            }
-        try:
-            self._respect_rate_limit()
-            res = fetch(self.website_url)
-            latency = (time.time() - start) * 1000
-            is_ok = bool(res and isinstance(res, str))
-            return {
-                "status": "healthy" if is_ok else "degraded",
-                "latency_ms": round(latency, 1),
-                "error": None if is_ok else "Degraded connectivity or empty response",
-                "details": {"has_credentials": True},
-            }
-        except Exception as e:
-            latency = (time.time() - start) * 1000
-            return {
-                "status": "unreachable",
-                "latency_ms": round(latency, 1),
-                "error": str(e),
-                "details": {"has_credentials": True},
-            }
+        return {
+            "status": "not_implemented",
+            "latency_ms": 0.0,
+            "error": self.not_implemented_reason(),
+            "details": {"docs_url": self.api_docs_url, "has_credentials": bool(self._get_credential())},
+        }
 
     def discover(
         self,
         config: DiscoveryConfig,
         limit: int = 25,
     ) -> list[ExtractedEventCandidate]:
-        cred = self._get_credential()
-        if not cred:
-            logger.info("Skipping %s discovery: awaiting credentials", self.source_id)
-            return []
-        return []
+        raise SourceError("not_implemented", self.not_implemented_reason())
 
     def test_extraction(
         self,
         sample_query_or_url: str | None = None,
     ) -> dict[str, Any]:
-        cred = self._get_credential()
-        if not cred:
-            return {
-                "success": False,
-                "events_found": 0,
-                "sample_events": [],
-                "duration_ms": 0.0,
-                "error": f"Awaiting credentials: {self.auth_requirements}. See documentation at {self.api_docs_url}",
-            }
-        return {
-            "success": True,
-            "events_found": 0,
-            "sample_events": [],
-            "duration_ms": 50.0,
-            "error": None,
-        }
-
+        return {"success": False, "events_found": 0, "sample_events": [], "duration_ms": 0.0, "error": self.not_implemented_reason()}

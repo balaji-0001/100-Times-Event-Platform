@@ -1,6 +1,8 @@
 import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
@@ -41,6 +43,22 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 def _hash_token(raw_token: str) -> str:
     return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+
+# One message for both "no such account" and "wrong password", so the login
+# endpoint does not reveal which emails have accounts.
+INVALID_LOGIN_MESSAGE = "Incorrect email or password"
+
+
+@lru_cache(maxsize=1)
+def _dummy_password_hash() -> str:
+    return hash_password(secrets.token_urlsafe(24))
+
+
+def _frontend_link(path: str, token: str) -> str:
+    """Absolute link into the web app for emails (PUBLIC_APP_URL setting)."""
+    base = (get_settings().public_app_url or "").strip().rstrip("/")
+    return f"{base}{path}?{urlencode({'token': token})}"
 
 
 def session_for(user: User) -> SessionOut:
@@ -108,7 +126,7 @@ def register(payload: UserInput, response: Response, db: Session = Depends(get_d
         )
 
         # Verification email notification
-        verification_link = f"http://localhost:5174/verify-email?token={raw_verification_token}"
+        verification_link = _frontend_link("/verify-email", raw_verification_token)
         send_templated_notification(
             db,
             template_key="email_verification",
@@ -142,15 +160,12 @@ def login(payload: LoginInput, response: Response, db: Session = Depends(get_db)
     email_clean = payload.email.strip().lower()
     user = db.scalar(select(User).where(User.email == email_clean))
     if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No account details found. Please create a new account.",
-        )
+        # Spend the same hashing work as a real check so response timing does
+        # not reveal whether the account exists either.
+        verify_password(payload.password, _dummy_password_hash())
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=INVALID_LOGIN_MESSAGE)
     if not verify_password(payload.password, user.password_hash):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect password. Please verify your credentials or reset your password.",
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=INVALID_LOGIN_MESSAGE)
     session = session_for(user)
     _set_auth_cookie(response, session.token)
     return session
@@ -192,7 +207,7 @@ def send_verification_email(user: User = Depends(get_current_user), db: Session 
     db.add(record)
     db.commit()
 
-    verification_link = f"http://localhost:5174/verify-email?token={raw_token}"
+    verification_link = _frontend_link("/verify-email", raw_token)
     send_templated_notification(
         db,
         template_key="email_verification",
@@ -262,7 +277,7 @@ def forgot_password(payload: ForgotPasswordInput, db: Session = Depends(get_db))
     db.add(record)
     db.commit()
 
-    reset_link = f"http://localhost:5174/reset-password?token={raw_token}"
+    reset_link = _frontend_link("/reset-password", raw_token)
     send_templated_notification(
         db,
         template_key="password_reset",

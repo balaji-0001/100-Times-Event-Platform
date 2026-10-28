@@ -22,6 +22,10 @@ class BraveSearchProvider(BaseSearchProvider):
 
     provider_id = "brave_search"
     provider_name = "Brave Search API"
+    display_name = "Brave"
+    cost_rank = 20
+    setup_env = ("BRAVE_SEARCH_API_KEY",)
+    docs_url = "https://brave.com/search/api/"
 
     def __init__(self) -> None:
         self.settings = get_settings()

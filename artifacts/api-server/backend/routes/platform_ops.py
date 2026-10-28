@@ -16,6 +16,7 @@ from backend.models import (
     AttendeeIntent,
     AuditLog,
     AutomationRun,
+    DiscoveredOrganizer,
     Event,
     EventLocation,
     EventReminder,
@@ -68,9 +69,9 @@ class OrganizerOnboardingInput(BaseModel):
     contact_email: EmailStr = Field(alias="contactEmail")
     contact_phone: str | None = Field(default=None, alias="contactPhone")
     website: str | None = None
-    city: str | None = "Bengaluru"
-    state: str | None = "Karnataka"
-    country: str | None = "India"
+    city: str | None = None
+    state: str | None = None
+    country: str | None = None
     bio: str | None = None
     social_links: dict[str, str] = Field(default_factory=dict, alias="socialLinks")
     discovered_organizer_id: int | None = Field(default=None, alias="discoveredOrganizerId")
@@ -88,24 +89,24 @@ class RichEventInput(BaseModel):
     description: str = Field(min_length=10, max_length=10000)
     organizer_name: str | None = Field(default=None, alias="organizerName")
     organization_name: str | None = Field(default=None, alias="organizationName")
-    category: str = "Pharmaceuticals"
+    category: str | None = None
     event_type: str = Field(default="Conference", alias="eventType")
     start_date: date = Field(alias="startDate")
     end_date: date | None = Field(default=None, alias="endDate")
-    start_time: str = Field(default="09:30", alias="startTime")
-    end_time: str | None = Field(default="17:30", alias="endTime")
+    start_time: str = Field(min_length=1, alias="startTime")
+    end_time: str | None = Field(default=None, alias="endTime")
     timezone: str = "Asia/Kolkata"
     venue_name: str | None = Field(default=None, alias="venueName")
     full_address: str | None = Field(default=None, alias="fullAddress")
-    city: str = "Bengaluru"
-    state: str | None = "Karnataka"
-    country: str = "India"
+    city: str = ""
+    state: str | None = None
+    country: str | None = None
     format: Literal["in-person", "online", "hybrid", "offline"] = "in-person"
     online_meeting_url: str | None = Field(default=None, alias="onlineMeetingUrl")
     registration_url: str | None = Field(default=None, alias="registrationUrl")
     is_free: bool = Field(default=True, alias="isFree")
     price: Decimal = Field(default=Decimal("0.00"), ge=0)
-    capacity: int | None = Field(default=250, ge=1)
+    capacity: int | None = Field(default=None, ge=1)
     ticket_info: dict[str, Any] = Field(default_factory=dict, alias="ticketInfo")
     speaker_info: list[dict[str, Any]] = Field(default_factory=list, alias="speakerInfo")
     image: str | None = None
@@ -130,7 +131,7 @@ class TrustAdminDecisionInput(BaseModel):
 class RescheduleInput(BaseModel):
     start_date: date = Field(alias="startDate")
     end_date: date | None = Field(default=None, alias="endDate")
-    start_time: str = Field(default="09:30", alias="startTime")
+    start_time: str | None = Field(default=None, alias="startTime")
     timezone: str | None = None
 
 
@@ -162,18 +163,36 @@ class AttendeeFeedbackInput(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def unique_organizer_slug(db: Session, name: str | None, fallback: str) -> str:
+    """A slug no other organizer row uses (organizers.slug is UNIQUE)."""
+    base_slug = slugify(name or "") or fallback
+    slug = base_slug
+    idx = 1
+    while db.scalar(select(Organizer.id).where(Organizer.slug == slug)):
+        slug = f"{base_slug}-{idx}"
+        idx += 1
+    return slug
+
+
+def owned_organizer(db: Session, user: User) -> Organizer | None:
+    """The organizer row this user owns. Ownership is ONLY `Organizer.user_id`;
+    a user id is never compared with an organizer id (they are different
+    tables, so equal numbers say nothing about ownership)."""
+    return db.scalar(select(Organizer).where(Organizer.user_id == user.id).order_by(Organizer.id).limit(1))
+
+
+def owned_organizer_ids(user: User):
+    """Subquery of every organizer id owned by `user` (via Organizer.user_id)."""
+    return select(Organizer.id).where(Organizer.user_id == user.id)
+
+
 def _ensure_organizer_and_profile(db: Session, user: User) -> tuple[Organizer, OrganizerProfile]:
-    organizer = db.scalar(select(Organizer).where((Organizer.user_id == user.id) | (Organizer.id == user.id)))
+    organizer = owned_organizer(db, user)
     if not organizer:
-        base_slug = slugify(user.company or user.name) or f"organizer-{user.id}"
-        slug = base_slug
-        idx = 1
-        while db.scalar(select(Organizer.id).where(Organizer.slug == slug)):
-            slug = f"{base_slug}-{idx}"
-            idx += 1
         organizer = Organizer(
+            # id is assigned by the database — never derived from the user id.
             name=user.company or user.name,
-            slug=slug,
+            slug=unique_organizer_slug(db, user.company or user.name, f"organizer-u{user.id}"),
             description=user.bio or f"Event organizer on 100 TIMES ({user.name})",
             logo=(user.name[:2] if user.name else "OR").upper(),
             email=user.email,
@@ -181,12 +200,18 @@ def _ensure_organizer_and_profile(db: Session, user: User) -> tuple[Organizer, O
             company_name=user.company or user.name,
             contact_name=user.name,
             lifecycle_stage="SIGNED_UP",
-            verified=True,
+            # Nothing has been verified yet; an admin/verification step sets this.
+            verified=False,
         )
         db.add(organizer)
         db.flush()
 
     profile = db.scalar(select(OrganizerProfile).where(OrganizerProfile.user_id == user.id))
+    if profile and profile.organizer_id != organizer.id:
+        # A profile must point at the organizer this user owns (older code could
+        # link it to another organizer whose id happened to equal the user id).
+        profile.organizer_id = organizer.id
+        db.flush()
     if not profile:
         profile = OrganizerProfile(
             user_id=user.id,
@@ -194,10 +219,12 @@ def _ensure_organizer_and_profile(db: Session, user: User) -> tuple[Organizer, O
             organization_name=organizer.company_name or user.company or user.name,
             contact_name=user.name,
             contact_email=user.email,
-            city="Bengaluru",
-            country=user.country or "India",
-            email_verified=True,
-            identity_verified=True,
+            city=None,
+            country=user.country,
+            # Reflect the account's real email verification; identity is never
+            # verified automatically.
+            email_verified=bool(user.email_verified),
+            identity_verified=False,
             lifecycle_stage=organizer.lifecycle_stage or "SIGNED_UP",
             lifecycle_history=[
                 {
@@ -229,15 +256,15 @@ def _serialize_rich_event(db: Session, event: Event, user_id: int | None = None)
         "description": event.description,
         "lifecycleState": event.lifecycle_state or ("PUBLISHED" if event.status == "published" else "DRAFT"),
         "timezone": event.timezone or "Asia/Kolkata",
-        "endTime": event.end_time or "17:30",
+        "endTime": event.end_time or "",
         "fullAddress": event.full_address or "",
         "cityName": event.city_name or card.location,
         "stateName": event.state_name or "",
-        "countryName": event.country_name or "India",
+        "countryName": event.country_name or "",
         "onlineMeetingUrl": event.online_meeting_url or "",
         "registrationUrl": event.registration_url or "",
         "isFree": bool(event.is_free),
-        "capacity": event.capacity or 250,
+        "capacity": event.capacity,
         "ticketInfo": event.ticket_info or {},
         "speakerInfo": event.speaker_info or [],
         "contactInfo": event.contact_info or {},
@@ -297,9 +324,9 @@ def get_organizer_profile(
         "contactEmail": profile.contact_email or organizer.email or user.email,
         "contactPhone": profile.contact_phone or organizer.phone or "",
         "website": profile.website or organizer.website or "",
-        "city": profile.city or "Bengaluru",
-        "state": profile.state or "Karnataka",
-        "country": profile.country or user.country or "India",
+        "city": profile.city or "",
+        "state": profile.state or "",
+        "country": profile.country or user.country or "",
         "bio": profile.bio or organizer.description or "",
         "socialLinks": profile.social_links or organizer.social_links or {},
         "emailVerified": profile.email_verified,
@@ -317,6 +344,23 @@ def complete_organizer_onboarding(
 ) -> dict[str, Any]:
     organizer, profile = _ensure_organizer_and_profile(db, user)
 
+    # A client-sent discoveredOrganizerId is only linked when that discovered
+    # organizer really exists and no other organizer/profile has claimed it.
+    claimed_discovered_id: int | None = None
+    if payload.discovered_organizer_id is not None:
+        discovered_id = payload.discovered_organizer_id
+        if not db.get(DiscoveredOrganizer, discovered_id):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="discoveredOrganizerId does not match any discovered organizer")
+        claimed_by_other_organizer = db.scalar(
+            select(Organizer.id).where(Organizer.discovered_organizer_id == discovered_id, Organizer.id != organizer.id).limit(1)
+        )
+        claimed_by_other_profile = db.scalar(
+            select(OrganizerProfile.id).where(OrganizerProfile.discovered_organizer_id == discovered_id, OrganizerProfile.user_id != user.id).limit(1)
+        )
+        if claimed_by_other_organizer or claimed_by_other_profile:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This discovered organizer is already linked to another organizer account")
+        claimed_discovered_id = discovered_id
+
     # Create or update Organization row
     org_slug = slugify(payload.organization_name) or f"org-{organizer.id}"
     org_row = db.scalar(select(Organization).where(Organization.slug == org_slug))
@@ -327,8 +371,9 @@ def complete_organizer_onboarding(
             website=payload.website,
             city=payload.city,
             state=payload.state,
-            country=payload.country or "India",
-            verified=True,
+            country=payload.country,
+            # Self-declared during onboarding — not verified by anyone yet.
+            verified=False,
         )
         db.add(org_row)
         db.flush()
@@ -341,9 +386,9 @@ def complete_organizer_onboarding(
     organizer.website = payload.website
     organizer.description = payload.bio or f"{payload.organization_name} on 100 TIMES"
     organizer.social_links = payload.social_links
-    organizer.verified = True
-    if payload.discovered_organizer_id:
-        organizer.discovered_organizer_id = payload.discovered_organizer_id
+    # organizer.verified is left as-is: submitting a form is not verification.
+    if claimed_discovered_id is not None:
+        organizer.discovered_organizer_id = claimed_discovered_id
 
     profile.organization_id = org_row.id
     profile.organization_name = payload.organization_name.strip()
@@ -353,13 +398,14 @@ def complete_organizer_onboarding(
     profile.website = payload.website
     profile.city = payload.city
     profile.state = payload.state
-    profile.country = payload.country or "India"
+    profile.country = payload.country
     profile.bio = payload.bio
     profile.social_links = payload.social_links
-    profile.email_verified = True
-    profile.identity_verified = True
-    if payload.discovered_organizer_id:
-        profile.discovered_organizer_id = payload.discovered_organizer_id
+    # The contact email counts as verified only when it is the account email the
+    # user already verified; identity verification is never automatic.
+    profile.email_verified = bool(user.email_verified) and payload.contact_email.lower() == (user.email or "").lower()
+    if claimed_discovered_id is not None:
+        profile.discovered_organizer_id = claimed_discovered_id
 
     user.company = payload.organization_name.strip()
     current_roles = set(user.roles_list or [])
@@ -408,7 +454,7 @@ def list_organizer_events_full(
     rows = db.scalars(
         select(Event)
         .options(selectinload(Event.category), selectinload(Event.organizer), selectinload(Event.venue).selectinload(Venue.city))
-        .where((Event.organizer_id == organizer.id) | (Event.organizer_id == user.id))
+        .where(Event.organizer_id.in_(owned_organizer_ids(user)))
         .order_by(desc(Event.created_at))
     ).all()
     return [_serialize_rich_event(db, ev, user.id) for ev in rows]
@@ -431,7 +477,7 @@ def create_rich_organizer_event(
         title=payload.title.strip(),
         description=payload.description.strip(),
         event_type=payload.event_type.strip(),
-        category_name=payload.category.strip(),
+        category_name=(payload.category or "").strip(),
         location=payload.city.strip(),
         start_date=payload.start_date,
         end_date=payload.end_date or payload.start_date,
@@ -503,17 +549,19 @@ def create_rich_organizer_event(
 
 
 def _assert_event_owner(db: Session, event: Event, user: User) -> tuple[Organizer, OrganizerProfile]:
-    organizer, profile = _ensure_organizer_and_profile(db, user)
-    if user.role != "ADMIN":
-        is_owner = (
-            event.organizer_id == organizer.id
-            or (event.organizer is not None and getattr(event.organizer, "user_id", None) == user.id)
+    # Owner = the event's organizer row is owned by this user (Organizer.user_id).
+    # Checked BEFORE anything is created or any role is changed for the caller.
+    event_organizer = db.get(Organizer, event.organizer_id) if event.organizer_id else None
+    is_owner = event_organizer is not None and event_organizer.user_id == user.id
+    if not is_owner and user.role != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to modify or manage this event.",
         )
-        if not is_owner:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You do not have permission to modify or manage this event.",
-            )
+    organizer, profile = _ensure_organizer_and_profile(db, user)
+    if is_owner and event_organizer is not None:
+        # The event may belong to another organizer row this same user owns.
+        organizer = event_organizer
     return organizer, profile
 
 
@@ -664,6 +712,8 @@ def submit_organizer_followup(
         raise HTTPException(status_code=404, detail="Event not found")
     _assert_event_owner(db, event, user)
     followup = initiate_or_advance_organizer_followup(db, event=event, reason="POST_EVENT")
+    if followup is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This event has no organizer to record a follow-up for")
     record_organizer_followup_response(
         db,
         followup,

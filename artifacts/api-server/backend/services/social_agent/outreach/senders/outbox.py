@@ -1,11 +1,19 @@
 """Global Outbox recorder for dispatched and logged emails across the platform."""
 
+import re
+import uuid
 from collections import deque
 from datetime import datetime, timezone
-import uuid
 
 _OUTBOX_LIMIT = 200
 _OUTBOX: deque[dict] = deque(maxlen=_OUTBOX_LIMIT)
+# One-time secrets in links (password reset, e-mail verification) must not be
+# readable by whoever opens the admin Outbox inspector.
+_SECRET_PARAM_RE = re.compile(r"([?&](?:token|code|key|secret)=)[^&\s\"'<>]+", re.IGNORECASE)
+
+
+def _redact(text: str | None) -> str | None:
+    return _SECRET_PARAM_RE.sub(lambda m: m.group(1) + "[redacted]", text) if text else text
 
 
 def record_outbox(
@@ -23,8 +31,8 @@ def record_outbox(
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "recipient": recipient,
         "subject": subject,
-        "body": body,
-        "html": html,
+        "body": _redact(body),
+        "html": _redact(html),
         "provider": provider,
         "status": status,
         "messageId": message_id,

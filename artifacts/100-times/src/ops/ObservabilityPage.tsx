@@ -16,14 +16,19 @@ import {
   ShieldCheck,
   Zap,
 } from 'lucide-react';
-import { Badge, Kicker, LoadingState, StatCard } from './ui';
+import { Badge, ErrorState, Kicker, LoadingState, StatCard } from './ui';
+
+const errMsg = (e: unknown) => (e instanceof Error ? e.message : 'Request failed');
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const ms = (v: number | null | undefined) => (isNum(v) ? `${v}ms` : '—');
+const healthTone = (h: string) => (h === 'HEALTHY' ? 'good' : h === 'UNKNOWN' ? 'neutral' : 'warn');
 
 interface OverviewMetrics {
   totalExecutions: number;
   successCount: number;
   failureCount: number;
-  successRate: number;
-  avgLatencyMs: number;
+  successRate: number | null;
+  avgLatencyMs: number | null;
   totalTokens: number;
   estimatedCostUsd: number;
   guardrailBlocks: number;
@@ -38,7 +43,7 @@ interface AgentTelemetry {
   totalRuns: number;
   successCount: number;
   failureCount: number;
-  avgDurationMs: number;
+  avgDurationMs: number | null;
   lastExecution: string | null;
   recentError: string | null;
 }
@@ -48,12 +53,12 @@ interface WorkflowTrace {
   workflowId: string;
   agentName: string;
   status: string;
-  durationMs: number;
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-  estimatedCost: number;
-  modelName: string;
+  durationMs: number | null;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  totalTokens: number | null;
+  estimatedCost: number | null;
+  modelName: string | null;
   errorMessage: string | null;
   createdAt: string;
 }
@@ -165,9 +170,13 @@ export function ObservabilityPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <Badge tone={overview?.systemHealth === 'HEALTHY' ? 'good' : 'warn'}>
-            ● System: {overview?.systemHealth ?? 'HEALTHY'}
-          </Badge>
+          {overviewQuery.isError ? (
+            <Badge tone="danger">● System: UNKNOWN (telemetry unavailable)</Badge>
+          ) : overview?.systemHealth ? (
+            <Badge tone={healthTone(overview.systemHealth)}>● System: {overview.systemHealth}</Badge>
+          ) : (
+            <Badge tone="neutral">● System: UNKNOWN</Badge>
+          )}
           <button
             onClick={() => {
               overviewQuery.refetch();
@@ -217,20 +226,23 @@ export function ObservabilityPage() {
       {/* Tab: Overview */}
       {activeTab === 'overview' && (
         <div className="space-y-6">
+          {overviewQuery.isError && (
+            <ErrorState title="Could not load telemetry overview." error={overviewQuery.error} retry={() => overviewQuery.refetch()} />
+          )}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-            <StatCard label="Total Workflows" value={overview?.totalExecutions ?? 0} sub={`${overview?.successCount ?? 0} succeeded`} />
+            <StatCard label="Total Workflows" value={overview ? overview.totalExecutions : '—'} sub={overview ? `${overview.successCount} succeeded` : undefined} />
             <StatCard
               label="Success Rate"
-              value={`${overview?.successRate ?? 100}%`}
-              tone={overview && overview.successRate >= 95 ? 'good' : 'warn'}
-              sub={`${overview?.failureCount ?? 0} failures recorded`}
+              value={isNum(overview?.successRate) ? `${overview.successRate}%` : '—'}
+              tone={isNum(overview?.successRate) ? (overview.successRate >= 95 ? 'good' : 'warn') : undefined}
+              sub={overview ? `${overview.failureCount} failures recorded` : undefined}
             />
-            <StatCard label="Avg Duration" value={`${overview?.avgLatencyMs ?? 0}ms`} sub="Agent task execution" />
-            <StatCard label="Total AI Tokens" value={(overview?.totalTokens ?? 0).toLocaleString()} sub="Across all models" />
-            <StatCard label="Estimated Cost" value={`$${(overview?.estimatedCostUsd ?? 0).toFixed(4)}`} sub="USD cumulative" />
+            <StatCard label="Avg Duration" value={ms(overview?.avgLatencyMs)} sub="Agent task execution" />
+            <StatCard label="Total AI Tokens" value={isNum(overview?.totalTokens) ? overview.totalTokens.toLocaleString() : '—'} sub="Across all models" />
+            <StatCard label="Estimated Cost" value={isNum(overview?.estimatedCostUsd) ? `$${overview.estimatedCostUsd.toFixed(4)}` : '—'} sub="USD cumulative" />
             <StatCard
               label="Guardrail Blocks"
-              value={overview?.guardrailBlocks ?? 0}
+              value={overview ? overview.guardrailBlocks : '—'}
               tone={overview && overview.guardrailBlocks > 0 ? 'warn' : undefined}
               sub="Attacks & bad inputs"
             />
@@ -293,8 +305,14 @@ export function ObservabilityPage() {
       )}
 
       {/* Tab: Agent Monitor */}
-      {activeTab === 'agents' && (
+      {activeTab === 'agents' && agentsQuery.isError && (
+        <ErrorState title="Could not load agent telemetry." error={agentsQuery.error} retry={() => agentsQuery.refetch()} />
+      )}
+      {activeTab === 'agents' && !agentsQuery.isError && (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {agents.length === 0 && (
+            <p className="text-sm text-muted-foreground">No agent telemetry recorded yet.</p>
+          )}
           {agents.map((agent) => (
             <div key={agent.id} className="rounded-2xl border border-foreground/10 bg-card p-5 space-y-4">
               <div className="flex items-start justify-between">
@@ -321,12 +339,12 @@ export function ObservabilityPage() {
                 </div>
                 <div>
                   <span className="text-muted-foreground">Avg Latency</span>
-                  <p className="font-semibold text-foreground text-sm mt-0.5">{agent.avgDurationMs}ms</p>
+                  <p className="font-semibold text-foreground text-sm mt-0.5">{ms(agent.avgDurationMs)}</p>
                 </div>
                 <div>
                   <span className="text-muted-foreground">Last Executed</span>
                   <p className="font-semibold text-foreground text-sm mt-0.5">
-                    {agent.lastExecution ? new Date(agent.lastExecution).toLocaleTimeString() : 'Just now'}
+                    {agent.lastExecution ? new Date(agent.lastExecution).toLocaleString() : 'Never'}
                   </p>
                 </div>
               </div>
@@ -394,7 +412,13 @@ export function ObservabilityPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-foreground/5">
-                {traces.length === 0 ? (
+                {tracesQuery.isError ? (
+                  <tr>
+                    <td colSpan={8} className="p-8 text-center text-red-600 dark:text-red-300">
+                      Could not load workflow traces: {errMsg(tracesQuery.error)}
+                    </td>
+                  </tr>
+                ) : traces.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="p-8 text-center text-muted-foreground">
                       No matching workflow traces found.
@@ -408,10 +432,10 @@ export function ObservabilityPage() {
                       <td className="p-3">
                         <Badge tone={tr.status === 'SUCCESS' ? 'good' : 'warn'}>{tr.status}</Badge>
                       </td>
-                      <td className="p-3">{tr.durationMs}ms</td>
-                      <td className="p-3">{tr.totalTokens.toLocaleString()}</td>
-                      <td className="p-3">${tr.estimatedCost.toFixed(5)}</td>
-                      <td className="p-3 font-mono text-[11px] text-muted-foreground">{tr.modelName}</td>
+                      <td className="p-3">{ms(tr.durationMs)}</td>
+                      <td className="p-3">{isNum(tr.totalTokens) ? tr.totalTokens.toLocaleString() : '—'}</td>
+                      <td className="p-3">{isNum(tr.estimatedCost) ? `$${tr.estimatedCost.toFixed(5)}` : '—'}</td>
+                      <td className="p-3 font-mono text-[11px] text-muted-foreground">{tr.modelName ?? "—"}</td>
                       <td className="p-3 text-muted-foreground">{new Date(tr.createdAt).toLocaleTimeString()}</td>
                     </tr>
                   ))
@@ -425,7 +449,9 @@ export function ObservabilityPage() {
       {/* Tab: Error Center */}
       {activeTab === 'errors' && (
         <div className="space-y-4">
-          {errors.length === 0 ? (
+          {errorsQuery.isError ? (
+            <ErrorState title="Could not load the error feed." error={errorsQuery.error} retry={() => errorsQuery.refetch()} />
+          ) : errors.length === 0 ? (
             <div className="rounded-2xl border border-foreground/10 bg-card p-12 text-center text-muted-foreground">
               <CheckCircle2 size={32} className="mx-auto text-emerald-500 mb-2" />
               <p className="font-semibold text-foreground">Zero Active Failures</p>
@@ -452,6 +478,12 @@ export function ObservabilityPage() {
       {/* Tab: AI Usage & Cost */}
       {activeTab === 'ai-usage' && (
         <div className="space-y-6">
+          {aiUsageQuery.isError && (
+            <ErrorState title="Could not load AI usage." error={aiUsageQuery.error} retry={() => aiUsageQuery.refetch()} />
+          )}
+          {!aiUsageQuery.isError && aiUsage && Object.keys(aiUsage.models ?? {}).length === 0 && (
+            <p className="text-sm text-muted-foreground">No AI model usage recorded yet.</p>
+          )}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {Object.entries(aiUsage?.models ?? {}).map(([modelName, data]) => (
               <div key={modelName} className="rounded-2xl border border-foreground/10 bg-card p-5 space-y-3">
@@ -507,10 +539,16 @@ export function ObservabilityPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-foreground/5">
-                {guardrails.length === 0 ? (
+                {guardrailsQuery.isError ? (
+                  <tr>
+                    <td colSpan={5} className="p-8 text-center text-red-600 dark:text-red-300">
+                      Could not load guardrail logs: {errMsg(guardrailsQuery.error)}
+                    </td>
+                  </tr>
+                ) : guardrails.length === 0 ? (
                   <tr>
                     <td colSpan={5} className="p-8 text-center text-muted-foreground">
-                      No security violations detected. Guardrails operating cleanly.
+                      No guardrail events recorded.
                     </td>
                   </tr>
                 ) : (

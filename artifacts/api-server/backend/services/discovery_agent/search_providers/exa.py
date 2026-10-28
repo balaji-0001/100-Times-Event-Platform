@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from typing import Any
 
 import httpx
@@ -22,9 +23,18 @@ class ExaSearchProvider(BaseSearchProvider):
 
     provider_id = "exa_search"
     provider_name = "Exa AI Search API"
+    display_name = "Exa"
+    cost_rank = 10  # ~$0.007/search (measured) — the cheapest paid top-up
+    setup_env = ("EXA_API_KEY",)
+    docs_url = "https://docs.exa.ai/reference/search"
 
     def __init__(self) -> None:
         self.settings = get_settings()
+        self._local = threading.local()
+
+    def consume_cost(self) -> float | None:
+        cost, self._local.cost = getattr(self._local, "cost", None), None
+        return cost
 
     def is_configured(self) -> bool:
         return bool(
@@ -48,11 +58,13 @@ class ExaSearchProvider(BaseSearchProvider):
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
+        # "fast" returns the same results as "auto"/"neural" at the same price
+        # ($0.007/search, measured) in about half the time. Only URLs/titles are
+        # requested — page contents are billed extra and read by the pipeline anyway.
         payload: dict[str, Any] = {
             "query": query,
             "numResults": min(max(max_results, 1), 20),
-            "type": "neural",
-            "useAutoprompt": True,
+            "type": "fast",
         }
 
         r = httpx.post(EXA_ENDPOINT, headers=headers, json=payload, timeout=12.0)
@@ -60,6 +72,9 @@ class ExaSearchProvider(BaseSearchProvider):
             raise RuntimeError(f"Exa Search API HTTP {r.status_code}: {r.text[:200]}")
 
         data = r.json()
+        # Exa reports the billed amount per request; recorded per run.
+        total = (data.get("costDollars") or {}).get("total")
+        self._local.cost = float(total) if isinstance(total, (int, float)) else None
         results_data = data.get("results", [])
         results: list[SearchProviderResult] = []
         for item in results_data:

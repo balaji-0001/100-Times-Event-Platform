@@ -1,7 +1,7 @@
 """Discord connector — discovery/read side only (see `publishers/discord.py`
 for the real publish integration).
 
-Mock mode (no DISCORD_BOT_TOKEN): returns curated sample signals.
+Not connected (no DISCORD_BOT_TOKEN): returns no signals.
 
 Live mode (DISCORD_BOT_TOKEN set): uses the real Discord Bot REST API —
 `GET /users/@me/guilds` to list servers the bot has been added to, then
@@ -71,7 +71,7 @@ class DiscordConnector(PlatformConnector):
 
     def discover_signals(self) -> list[Signal]:
         if not self.is_live:
-            return self._mock_signals()
+            return []  # not connected (DISCORD_BOT_TOKEN unset): no discussions — never sample data in the real tables
 
         guilds = self._get("/users/@me/guilds") or []
         signals: list[Signal] = []
@@ -117,25 +117,3 @@ class DiscordConnector(PlatformConnector):
                     )
 
         return signals
-
-    def _mock_signals(self) -> list[Signal]:
-        return [
-            Signal(
-                platform="discord",
-                community_name="Bengaluru Builders Discord",
-                title="Are there any AI hackathons happening in Bengaluru this month?",
-                content="Our study group wants to join hackathons or workshops focused on machine learning and LLM systems around Bengaluru. Does anyone know any upcoming ones with good mentors?",
-                author="blr_study_grp",
-                url="https://discord.com/channels/bengaluru-builders/events-discovery",
-                external_id="discord_mock_blr_hackathon_1",
-            ),
-            Signal(
-                platform="discord",
-                community_name="NCR Tech Discord",
-                title="Where can I find startup networking events in New Delhi?",
-                content="New to Delhi and want startup networking events for founders and early engineers. Also open to any developer events or hackathons nearby.",
-                author="delhi_newcomer",
-                url="https://discord.com/channels/ncr-tech/general",
-                external_id="discord_mock_delhi_networking_1",
-            ),
-        ]

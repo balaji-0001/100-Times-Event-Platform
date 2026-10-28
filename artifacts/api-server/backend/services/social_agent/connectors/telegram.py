@@ -1,7 +1,7 @@
 """Telegram connector — discovery/read side only (see `publishers/telegram.py`
 for the real publish integration).
 
-Mock mode (no TELEGRAM_BOT_TOKEN): returns curated sample signals.
+Not connected (no TELEGRAM_BOT_TOKEN): returns no signals.
 
 Live mode (TELEGRAM_BOT_TOKEN set): long-polls `getUpdates` for real
 messages in chats/groups the bot has been added to (the group owner must
@@ -116,60 +116,5 @@ class TelegramConnector(PlatformConnector):
 
     def discover_signals(self) -> list[Signal]:
         if not self.is_live:
-            return self._mock_signals()
+            return []  # not connected (TELEGRAM_BOT_TOKEN unset): no discussions — never sample data in the real tables
         return self._updates_to_signals(self._fetch_pending_updates())
-
-    def _mock_signals(self) -> list[Signal]:
-        """Curated sample data used only when TELEGRAM_BOT_TOKEN isn't
-        configured. Deliberately spans unrelated topics (tech, business,
-        sports, arts/hobbies) — not just one domain — so the generic
-        query-relevance search in `pipeline/platform_search.py` can be
-        demonstrated to surface *different* candidates for *different*
-        discussions without any topic-specific code."""
-        return [
-            Signal(
-                platform="telegram",
-                community_name="Hyderabad Tech Community",
-                title="Any good data science workshops or hackathons in Hyderabad this weekend?",
-                content="Looking for events this weekend around data science, analytics, or machine learning in Hyderabad. Also curious about hackathons for beginners.",
-                author="hyd_data_fan",
-                url="https://t.me/hyderabad_tech_community",
-                external_id="telegram_mock_hyd_tech_1",
-            ),
-            Signal(
-                platform="telegram",
-                community_name="Mumbai Founders Telegram",
-                title="Business events or founder meetups happening in Mumbai?",
-                content="Recently moved to Mumbai, looking to connect with founders and investors. Any business events, pitch nights, or venture meetups worth attending?",
-                author="mumbai_founder_23",
-                url="https://t.me/mumbai_founders",
-                external_id="telegram_mock_mumbai_founders_1",
-            ),
-            Signal(
-                platform="telegram",
-                community_name="Hyderabad Cycling Club",
-                title="Weekend group ride + charity cycling event this Saturday",
-                content="Our club is hosting a 40km charity cycling ride around Hussain Sagar this Saturday morning, open to all skill levels. Free to join, helmets mandatory. DM to register.",
-                author="hyd_cycling_admin",
-                url="https://t.me/hyderabad_cycling_club",
-                external_id="telegram_mock_hyd_cycling_1",
-            ),
-            Signal(
-                platform="telegram",
-                community_name="India Photography Collective",
-                title="Street photography workshop in Bangalore next weekend",
-                content="Running a hands-on street photography workshop covering composition and low-light shooting in Bangalore next weekend. Beginners welcome, cameras provided.",
-                author="shutter_bangalore",
-                url="https://t.me/india_photography_collective",
-                external_id="telegram_mock_photo_workshop_1",
-            ),
-            Signal(
-                platform="telegram",
-                community_name="Delhi Music Scene",
-                title="Independent music festival lineup announced for Delhi",
-                content="Excited to share the lineup for our indie/electronic music festival happening in Delhi next month — two stages, local and touring artists, tickets on sale now.",
-                author="delhi_music_collective",
-                url="https://t.me/delhi_music_scene",
-                external_id="telegram_mock_music_fest_1",
-            ),
-        ]

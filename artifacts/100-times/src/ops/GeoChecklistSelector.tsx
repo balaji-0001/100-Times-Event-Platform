@@ -1,11 +1,24 @@
 import { useMemo, useState } from 'react';
-import { Check, Globe, MapPin, Plus, Search, X } from 'lucide-react';
+import { Globe, MapPin, Plus, Search, X } from 'lucide-react';
 import {
   ALL_WORLD_COUNTRIES,
+  COUNTRY_HIERARCHY,
   getReferenceCitiesForCountriesAndStates,
   getReferenceStatesForCountries,
 } from '@/lib/countries';
 import { inputClass } from './ui';
+
+/** Drop the states/cities that belong only to removed countries (custom cities are kept). */
+function pruneForCountries(remaining: string[], removed: string[], states: string[], cities: string[]) {
+  const keptStates = new Set(remaining.flatMap((c) => Object.keys(COUNTRY_HIERARCHY[c] ?? {})));
+  const keptCities = new Set(remaining.flatMap((c) => Object.values(COUNTRY_HIERARCHY[c] ?? {}).flat()));
+  const removedStates = new Set(removed.flatMap((c) => Object.keys(COUNTRY_HIERARCHY[c] ?? {})));
+  const removedCities = new Set(removed.flatMap((c) => Object.values(COUNTRY_HIERARCHY[c] ?? {}).flat()));
+  return {
+    states: states.filter((s) => !removedStates.has(s) || keptStates.has(s)),
+    cities: cities.filter((c) => !removedCities.has(c) || keptCities.has(c)),
+  };
+}
 
 export interface GeoChecklistSelectorProps {
   /** Optional single country (for backwards compatibility) */
@@ -19,6 +32,9 @@ export interface GeoChecklistSelectorProps {
   selectedCities: string[];
   onCitiesChange: (cities: string[]) => void;
   disabled?: boolean;
+  /** Whether "no country ticked" means a worldwide search (true, the default — Automatic settings).
+   *  The run wizard passes false: there, Worldwide is its own explicit choice. */
+  emptyMeansWorldwide?: boolean;
 }
 
 const POPULAR_COUNTRIES = [
@@ -46,6 +62,7 @@ export function GeoChecklistSelector({
   selectedCities,
   onCitiesChange,
   disabled = false,
+  emptyMeansWorldwide = true,
 }: GeoChecklistSelectorProps) {
   const [countrySearch, setCountrySearch] = useState('');
   const [stateSearch, setStateSearch] = useState('');
@@ -73,7 +90,13 @@ export function GeoChecklistSelector({
   const toggleCountry = (c: string) => {
     if (disabled) return;
     if (activeCountries.includes(c)) {
-      updateCountries(activeCountries.filter((item) => item !== c));
+      const remaining = activeCountries.filter((item) => item !== c);
+      updateCountries(remaining);
+      // A removed country takes its states and cities with it — otherwise they
+      // stayed selected and were still searched (without their country).
+      const { states, cities } = pruneForCountries(remaining, [c], selectedStates, selectedCities);
+      if (states.length !== selectedStates.length) onStatesChange(states);
+      if (cities.length !== selectedCities.length) onCitiesChange(cities);
     } else {
       updateCountries([...activeCountries, c]);
     }
@@ -121,7 +144,13 @@ export function GeoChecklistSelector({
   const toggleState = (s: string) => {
     if (disabled) return;
     if (selectedStates.includes(s)) {
-      onStatesChange(selectedStates.filter((item) => item !== s));
+      const remainingStates = selectedStates.filter((item) => item !== s);
+      onStatesChange(remainingStates);
+      // ...and a removed state takes its cities with it (unless another selected state has them).
+      const stillCovered = new Set(getReferenceCitiesForCountriesAndStates(activeCountries, remainingStates).map((x) => x.city));
+      const ofState = new Set(activeCountries.flatMap((country) => COUNTRY_HIERARCHY[country]?.[s] ?? []));
+      const cities = selectedCities.filter((city) => !ofState.has(city) || (remainingStates.length > 0 && stillCovered.has(city)));
+      if (cities.length !== selectedCities.length) onCitiesChange(cities);
     } else {
       onStatesChange([...selectedStates, s]);
     }
@@ -200,7 +229,9 @@ export function GeoChecklistSelector({
             </span>
             <span className="block text-[10px] text-muted-foreground mt-0.5">
               {activeCountries.length === 0
-                ? 'Worldwide mode (All Countries active) · Select one or more countries to filter'
+                ? emptyMeansWorldwide
+                  ? 'Worldwide mode (All Countries active) · Select one or more countries to filter'
+                  : 'No country selected yet · tick one or more countries'
                 : `${activeCountries.length} of ${ALL_WORLD_COUNTRIES.length} countries selected`}
             </span>
           </div>
@@ -213,7 +244,7 @@ export function GeoChecklistSelector({
                 className="text-accent hover:underline font-medium"
                 disabled={disabled}
               >
-                Reset to Worldwide
+                {emptyMeansWorldwide ? 'Reset to Worldwide' : 'Clear countries'}
               </button>
             ) : (
               <button
@@ -344,7 +375,9 @@ export function GeoChecklistSelector({
             <span className="block text-[10px] text-muted-foreground">
               {activeCountries.length > 0
                 ? `${selectedStates.length} of ${availableStateNames.length} selected`
-                : 'Worldwide mode — all states/regions worldwide eligible'}
+                : emptyMeansWorldwide
+                  ? 'Worldwide mode — all states/regions worldwide eligible'
+                  : 'Select a country first'}
             </span>
           </div>
           {availableStatesData.length > 0 && (
@@ -429,7 +462,9 @@ export function GeoChecklistSelector({
           )
         ) : (
           <div className="py-2 text-center text-[11px] text-muted-foreground">
-            Worldwide mode active — select one or more countries above to filter by specific states/regions.
+            {emptyMeansWorldwide
+              ? 'Worldwide mode active — select one or more countries above to filter by specific states/regions.'
+              : 'Select one or more countries above to choose states or regions.'}
           </div>
         )}
       </div>
@@ -451,7 +486,9 @@ export function GeoChecklistSelector({
             <span className="block text-[10px] text-muted-foreground">
               {activeCountries.length > 0
                 ? `${selectedCities.length} selected`
-                : 'Worldwide mode active · Add custom cities or select countries above'}
+                : emptyMeansWorldwide
+                  ? 'Worldwide mode active · Add custom cities or select countries above'
+                  : 'Select countries above to list their cities'}
             </span>
           </div>
           {filteredCities.length > 0 && (
@@ -522,7 +559,9 @@ export function GeoChecklistSelector({
           <div className="py-2 text-center text-[11px] text-muted-foreground">
             {activeCountries.length > 0
               ? 'No standard cities listed for this filter. Add custom cities below.'
-              : 'Worldwide mode active. Select countries above to view standard cities, or add custom cities below.'}
+              : emptyMeansWorldwide
+                ? 'Worldwide mode active. Select countries above to view standard cities, or add custom cities below.'
+                : 'Select countries above to view standard cities, or add custom cities below.'}
           </div>
         )}
 

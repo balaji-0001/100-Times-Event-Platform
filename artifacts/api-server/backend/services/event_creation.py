@@ -19,29 +19,23 @@ from backend.routes.events import slugify
 DEFAULT_EVENT_IMAGE = "https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?auto=format&fit=crop&w=1200&q=82"
 
 
-def resolve_category(db: Session, category_name: str) -> Category:
-    name = (category_name or "Pharmaceuticals").strip() or "Pharmaceuticals"
-    category = db.scalar(select(Category).where((Category.slug == slugify(name)) | (Category.name.ilike(name))))
-    if not category:
-        category = db.scalar(select(Category).where((Category.slug == "pharmaceuticals") | (Category.name == "Pharmaceuticals")))
-    if not category:
-        category = db.scalar(select(Category).order_by(Category.id))
-    if not category:
-        category = Category(name="Pharmaceuticals", slug="pharmaceuticals", description="Pharmaceutical companies, drug manufacturing, research, and industry developments.", icon="pill")
-        db.add(category)
-        db.flush()
-    return category
+def resolve_category(db: Session, category_name: str | None) -> Category | None:
+    """The existing category with this name, or None ("Uncategorized") — never
+    another sector picked as a stand-in."""
+    name = (category_name or "").strip()
+    if not name:
+        return None
+    return db.scalar(select(Category).where((Category.slug == slugify(name)) | (Category.name.ilike(name))))
 
 
 def resolve_venue(db: Session, location: str | None) -> Venue | None:
-    city_name = (location or "").strip() or "Bengaluru"
+    """A venue in the event's own city, or None. Never another city's venue:
+    an event shown at the wrong place is worse than one with no venue yet."""
+    city_name = (location or "").strip()
+    if not city_name:
+        return None
     city = db.scalar(select(City).where(City.name.ilike(f"%{city_name}%")))
-    if not city:
-        city = db.scalar(select(City).limit(1))
-    venue = db.scalar(select(Venue).where(Venue.city_id == city.id)) if city else None
-    if not venue:
-        venue = db.scalar(select(Venue).limit(1))
-    return venue
+    return db.scalar(select(Venue).where(Venue.city_id == city.id)) if city else None
 
 
 def unique_slug(db: Session, title: str) -> str:
@@ -105,7 +99,7 @@ def create_event(
         price=price,
         status=status,
         format=format,
-        category_id=category.id,
+        category_id=category.id if category else None,
         organizer_id=organizer.id,
         venue_id=venue.id if venue else None,
         image=image,

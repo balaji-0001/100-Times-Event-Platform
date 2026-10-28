@@ -37,7 +37,7 @@ from backend.services.attendee_agent.auto_toggle import (
     is_attendee_notifications_auto_enabled,
     set_attendee_notifications_auto_enabled,
 )
-from backend.services.attendee_agent.catalog import DISCOVERED, PLATFORM, CatalogEvent, get_event, get_events, load_catalog
+from backend.services.attendee_agent.catalog import DISCOVERED, PLATFORM, CatalogEvent, get_event_for_viewer, get_events, load_catalog
 from backend.services.attendee_agent.matching import EVENT_TYPE_ALIASES, TOPIC_SYNONYMS, WEIGHTS, Preferences, rank, score_event
 from backend.services.attendee_agent.notifier import run_attendee_notifications
 from backend.services.attendee_agent.serialize import event_out
@@ -173,8 +173,12 @@ def _prefs_out(row: AttendeePreference | None) -> dict[str, Any]:
     }
 
 
-def _load(db: Session, kind: str, event_id: int) -> CatalogEvent:
-    item = get_event(db, kind, event_id)
+def _load(db: Session, kind: str, event_id: int, user: User) -> CatalogEvent:
+    """One event by id, but only if this user may see it: non-admins never get
+    draft/unpublished platform events or rejected discovered events (or their
+    organizer contacts) unless they own / already saved / registered for it.
+    Not visible -> the same 404 as a missing event."""
+    item = get_event_for_viewer(db, kind, event_id, user_id=user.id, is_admin=(user.role or "").upper() == "ADMIN")
     if item is None:
         raise HTTPException(status_code=404, detail="Event not found")
     return item
@@ -331,7 +335,7 @@ def recommendations(
 
 @router.get("/events/{kind}/{event_id}")
 def event_detail(kind: EventKind, event_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict[str, Any]:
-    item = _load(db, kind, event_id)
+    item = _load(db, kind, event_id, user)
     tracking.record_view(db, user.id, item)
     db.commit()
     prefs = _prefs(db, user)
@@ -341,7 +345,7 @@ def event_detail(kind: EventKind, event_id: int, db: Session = Depends(get_db), 
 
 @router.post("/events/{kind}/{event_id}/save")
 def save_event(kind: EventKind, event_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict[str, Any]:
-    item = _load(db, kind, event_id)
+    item = _load(db, kind, event_id, user)
     if not item.eligible:
         raise HTTPException(status_code=400, detail=f"This event can't be saved: {item.ineligible_reason}")
     tracking.set_saved(db, user.id, item, True)
@@ -351,7 +355,7 @@ def save_event(kind: EventKind, event_id: int, db: Session = Depends(get_db), us
 
 @router.delete("/events/{kind}/{event_id}/save")
 def unsave_event(kind: EventKind, event_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict[str, Any]:
-    item = _load(db, kind, event_id)
+    item = _load(db, kind, event_id, user)
     tracking.set_saved(db, user.id, item, False)
     db.commit()
     return tracking.states_for(db, user.id, [(kind, event_id)])[(kind, event_id)]
@@ -361,7 +365,7 @@ def unsave_event(kind: EventKind, event_id: int, db: Session = Depends(get_db), 
 def registration_opened(kind: EventKind, event_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict[str, Any]:
     """Records that the attendee opened the official registration page.
     This does NOT mark them registered."""
-    item = _load(db, kind, event_id)
+    item = _load(db, kind, event_id, user)
     tracking.mark_registration_opened(db, user.id, item)
     db.commit()
     target = item.registration_url or (f"/events/{item.internal_slug}/register" if item.internal_slug else None)
@@ -376,7 +380,7 @@ def set_registration(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> dict[str, Any]:
-    item = _load(db, kind, event_id)
+    item = _load(db, kind, event_id, user)
     if kind == PLATFORM:
         raise HTTPException(
             status_code=400,

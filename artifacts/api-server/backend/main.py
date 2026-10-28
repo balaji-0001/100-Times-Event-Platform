@@ -6,6 +6,7 @@ _parent_dir = str(Path(__file__).resolve().parent.parent)
 if _parent_dir not in sys.path:
     sys.path.insert(0, _parent_dir)
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -28,6 +29,7 @@ from backend.routes import (
     discovery_sources,
     event_promotions,
     events,
+    media,
     networking,
     observability,
     outreach,
@@ -37,6 +39,32 @@ from backend.routes import (
     workflow,
 )
 from backend.services.social_agent.scheduler import start_background_scheduler, stop_background_scheduler
+
+
+def _close_runs_interrupted_by_restart() -> None:
+    """Agent runs execute in this process's threads, so a run still marked
+    "running" at startup was cut off by the previous shutdown. Left as is it
+    blocks every new manual run ("already executing"). Mark it failed, keeping
+    the progress it saved."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import update
+
+    from backend.db import SessionLocal
+    from backend.models import AgentRun
+
+    try:
+        with SessionLocal() as db:
+            result = db.execute(
+                update(AgentRun)
+                .where(AgentRun.status == "running")
+                .values(status="failed", error="Interrupted by a server restart", completed_at=datetime.now(timezone.utc))
+            )
+            db.commit()
+            if result.rowcount:
+                logger.warning("Marked %d agent run(s) interrupted by the last restart as failed", result.rowcount)
+    except Exception:
+        logger.exception("Could not close agent runs interrupted by the last restart")
 
 
 @asynccontextmanager
@@ -53,6 +81,7 @@ async def lifespan(_: FastAPI):
 
         seed()
 
+    _close_runs_interrupted_by_restart()
     scheduler_tasks = start_background_scheduler()
 
     print("\n" + "=" * 60)
@@ -87,6 +116,7 @@ _FAVICON_PNG = _STATIC_DIR / "favicon.png"
 _FAVICON_SVG = _STATIC_DIR / "favicon.svg"
 
 settings = get_settings()
+logger = logging.getLogger("backend.main")
 app = FastAPI(
     title=settings.app_name,
     description="Production API for the 100 TIMES event discovery, networking, and management platform.",
@@ -213,6 +243,7 @@ def health() -> dict[str, str]:
 app.include_router(auth.router, prefix="/api")
 app.include_router(dashboard.router, prefix="/api")
 app.include_router(events.router, prefix="/api")
+app.include_router(media.router, prefix="/api")
 app.include_router(directories.router, prefix="/api")
 app.include_router(networking.router, prefix="/api")
 app.include_router(ai.router, prefix="/api")

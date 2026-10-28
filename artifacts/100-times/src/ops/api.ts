@@ -4,6 +4,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { customFetch } from '@workspace/api-client-react';
+import type { DiscoveryLocation } from '@/lib/countries';
 
 // ---------------------------------------------------------------------------
 // Types (camelCase, exactly as serialized by the API)
@@ -16,6 +17,11 @@ export interface Me {
   role: 'USER' | 'ORGANIZER' | 'ADMIN';
   roles?: string[];
   emailVerified?: boolean;
+  // Profile fields returned by GET /api/auth/me (UserOut).
+  country?: string | null;
+  company?: string | null;
+  jobTitle?: string | null;
+  bio?: string | null;
 }
 
 export interface EventSource {
@@ -51,7 +57,7 @@ export interface DiscoveredEvent {
   organizerId?: number | null;
   organizerStatus: 'PENDING' | 'FOUND' | 'NOT_FOUND';
   verificationStatus: 'UNVERIFIED' | 'VERIFIED' | 'NEEDS_REVIEW' | 'REJECTED';
-  discoveryStatus: 'NEW' | 'DUPLICATE' | 'PROMOTED';
+  discoveryStatus: 'NEW' | 'DUPLICATE' | 'PROMOTED' | 'REJECTED';
   discoveredBy: 'social_pipeline' | 'web_discovery_agent';
   verificationNotes: string[];
   discoveredAt?: string | null;
@@ -131,7 +137,8 @@ export interface AgentRun {
   startedAt: string;
   completedAt?: string | null;
   configSnapshot?: Record<string, unknown> | null;
-  summary: Record<string, number>;
+  // Mostly counters; also `stop_reason`, `target_shortfall` and a `timings` object (see RunSummary).
+  summary: Record<string, any>;
   error?: string | null;
 }
 
@@ -140,6 +147,10 @@ export interface DiscoveryAutoStatus {
   intervalMinutes: number;
   country?: string | null;
   countries?: string[];
+  /** Structured country -> state -> city selection (see buildDiscoveryLocations). */
+  locations?: DiscoveryLocation[];
+  /** State -> cities lists for countries where a whole state is ticked (see buildRegionCities). */
+  regionCities?: Record<string, Record<string, string[]>>;
   cities?: string[];
   states?: string[];
   categories?: string[];
@@ -151,6 +162,8 @@ export interface DiscoveryAutoStatus {
   // Event rejection rules
   rejectNoOrganizer?: boolean;
   requireOrganizerEmail?: boolean;
+  /** Store events a run rejects (with the reason) so they can be reviewed and restored. */
+  keepRejectedEvents?: boolean;
   requireOrganizerPhone?: boolean;
   requireOrganizerWebsite?: boolean;
   rejectPastEvents?: boolean;
@@ -165,9 +178,20 @@ export interface DiscoveryAutoStatus {
   blacklistedKeywords?: string[];
   excludedDomains?: string[];
   listingUrls?: string[];
-  ticketmasterApiKey?: string | null;
+  /** Whether a Ticketmaster key is saved (and its last 4 characters) — the key itself never reaches the browser. */
+  ticketmasterApiKeySet?: boolean;
+  ticketmasterApiKeyHint?: string | null;
   ticketmasterEnabled?: boolean;
+  /** Web-search providers runs may call; null/undefined = every configured provider. */
+  searchProviders?: string[] | null;
 }
+
+/** PATCH /api/discovery/auto body: a new key to save ("" removes it), or omit to keep it. */
+export type DiscoveryAutoUpdate = Partial<DiscoveryAutoStatus> & {
+  enabled?: boolean;
+  ticketmasterApiKey?: string | null;
+  resetSearchProviders?: boolean;
+};
 
 export interface OutreachAutoStatus {
   enabled: boolean;
@@ -196,6 +220,7 @@ export interface DiscoveryStats {
   contactsTotal: number;
   organizersWithEmailTotal: number;
   needsReviewTotal: number;
+  rejectedTotal?: number;
   newEventsTotal: number;
   onlineTotal: number;
   offlineTotal: number;
@@ -319,6 +344,7 @@ export const keys = {
   organizers: ['ops', 'discovered-organizers'] as const,
   outreach: ['ops', 'outreach-messages'] as const,
   outreachStats: ['ops', 'outreach-stats'] as const,
+  outreachBacklog: ['ops', 'outreach-backlog'] as const,
   discoveryRuns: ['ops', 'runs', 'discovery'] as const,
   outreachRuns: ['ops', 'runs', 'outreach'] as const,
   discoveryAuto: ['ops', 'discovery-auto'] as const,
@@ -410,11 +436,14 @@ export function useOutreachStats() {
   });
 }
 
-export function useDiscoveryRunEvents(runId: number | null) {
+// `live` = the run is still executing: events are stored the moment they're
+// verified, so poll to show them as they arrive.
+export function useDiscoveryRunEvents(runId: number | null, live = false) {
   return useQuery({
     queryKey: ['discoveryRunEvents', runId],
     queryFn: () => customFetch<DiscoveredEvent[]>(`/api/discovery/runs/${runId}/events`),
     enabled: Boolean(runId),
+    refetchInterval: live ? 3000 : false,
   });
 }
 
@@ -503,6 +532,126 @@ export function useEditOutreachMessage() {
   });
 }
 
+// --- Discovery provider registry (GET /api/discovery/catalog) ---------------
+
+export type SourceHealthStatus = 'ok' | 'no_events' | 'failed' | 'untested' | 'not_implemented' | 'not_configured';
+
+export interface CatalogProvider {
+  id: string;
+  name: string;
+  full_name: string;
+  tier: 'free' | 'paid' | 'last_resort';
+  cost_rank: number;
+  configured: boolean;
+  unavailable_reason: string | null;
+  setup_env: string[];
+  docs_url: string | null;
+  cooling_down_seconds: number;
+  cooldown_reason: string | null;
+  last_call: { status: string | null; error: string | null; results: number | null; at: string | null };
+}
+
+export interface CatalogSource {
+  id: string;
+  name: string;
+  url: string;
+  events_page: string | null;
+  category: string;
+  channel: 'directories' | 'aggregators' | 'apis';
+  access_method: string;
+  countries: string[];
+  implemented: boolean;
+  configured: boolean;
+  enabled_by_admin: boolean;
+  default_selected: boolean;
+  health: { status: SourceHealthStatus; detail: string | null; checked_at: string | null; last_success_at: string | null };
+}
+
+export interface DiscoveryCatalog {
+  channels: { id: 'web' | 'directories' | 'aggregators' | 'apis'; token: string | null; name: string; description: string }[];
+  providers: CatalogProvider[];
+  web_options: { id: string; name: string; description: string }[];
+  sources: CatalogSource[];
+  default_sources: string[];
+  default_listing_urls: string[];
+  strategy: string;
+  paid_search_budget_per_run: number;
+}
+
+export function useDiscoveryCatalog() {
+  return useQuery({
+    queryKey: ['discoveryCatalog'],
+    queryFn: () => customFetch<DiscoveryCatalog>('/api/discovery/catalog'),
+    refetchInterval: 60_000,
+  });
+}
+
+export interface CatalogCheckResult {
+  sources: { id: string; ok: boolean; events: number; error: string | null; note?: string | null }[];
+  skipped: { id: string; reason: string }[];
+  providers: { id: string; status: string; error?: string; results?: number; cost_usd?: number | null }[];
+}
+
+/** Live probe of sources (and, only when listed, providers — paid ones are billed for the probe). */
+export function useCheckDiscoveryCatalog() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { sourceIds?: string[]; providerIds?: string[] }) =>
+      customFetch<CatalogCheckResult>('/api/discovery/catalog/check', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['discoveryCatalog'] });
+      qc.invalidateQueries({ queryKey: ['discoverySearchProviders'] });
+    },
+  });
+}
+
+/** One row of a run's per-source execution report (RunSummary.sources). */
+export interface RunSourceRow {
+  id: string;
+  name: string;
+  channel: string;
+  kind: 'search_provider' | 'adapter' | 'aggregator' | 'custom_website' | 'api';
+  configured: boolean;
+  available: boolean;
+  status: 'pending' | 'skipped' | 'succeeded' | 'failed';
+  reason: string | null;
+  jobs: number;
+  jobs_ok: number;
+  jobs_failed: number;
+  candidates: number;
+  off_sector: number;
+  duplicates: number;
+  rejected: number;
+  verified: number;
+  needs_review: number;
+  duration_ms: number;
+  errors: string[];
+  calls: number;
+  results: number;
+  zero_result_calls: number;
+  rate_limited: number;
+  cost_usd: number | null;
+  skipped_reasons: Record<string, number>;
+  purposes: Record<string, number>;
+}
+
+export interface RunSourceReport {
+  counts: {
+    selected: number;
+    configured: number;
+    available: number;
+    executed: number;
+    successful: number;
+    returned_candidates: number;
+    sources_with_candidates: number;
+    succeeded_zero_results: number;
+    failed: number;
+    skipped: number;
+    verified: number;
+  };
+  sources: RunSourceRow[];
+}
+
 export function useTestTicketmaster() {
   return useMutation({
     mutationFn: (body?: { apiKey?: string }) =>
@@ -519,13 +668,7 @@ export function useTestTicketmaster() {
 export function useSetDiscoveryAuto() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (
-      payload:
-        | boolean
-        | (Partial<DiscoveryAutoStatus> & {
-            enabled?: boolean;
-          })
-    ) => {
+    mutationFn: (payload: boolean | DiscoveryAutoUpdate) => {
       const body = typeof payload === 'boolean' ? { enabled: payload } : payload;
       return customFetch<DiscoveryAutoStatus>('/api/discovery/auto', {
         method: 'PATCH',
@@ -565,7 +708,10 @@ export function useSetOutreachAuto() {
         body: JSON.stringify(body),
       });
     },
-    onSuccess: (data) => qc.setQueryData(keys.outreachAuto, data),
+    onSuccess: (data) => {
+      qc.setQueryData(keys.outreachAuto, data);
+      qc.invalidateQueries({ queryKey: keys.outreachBacklog }); // sectors/places decide what's waiting
+    },
   });
 }
 
@@ -591,6 +737,8 @@ export interface DiscoveryRunPayload {
   categories?: string[];
   country?: string | null;
   countries?: string[];
+  locations?: DiscoveryLocation[];
+  regionCities?: Record<string, Record<string, string[]>>;
   sources?: string[];
   eventsPerRun?: number;
   targetValidEvents?: number;
@@ -602,6 +750,8 @@ export interface DiscoveryRunPayload {
   fallbackToOtherSector?: boolean;
   rejectNoOrganizer?: boolean;
   requireOrganizerEmail?: boolean;
+  /** Store events a run rejects (with the reason) so they can be reviewed and restored. */
+  keepRejectedEvents?: boolean;
   requireOrganizerPhone?: boolean;
   requireOrganizerWebsite?: boolean;
   rejectPastEvents?: boolean;
@@ -615,8 +765,11 @@ export interface DiscoveryRunPayload {
   blacklistedKeywords?: string[];
   excludedDomains?: string[];
   listingUrls?: string[];
+  /** Only to try a new key; when omitted the saved key is used server-side. */
   ticketmasterApiKey?: string | null;
   ticketmasterEnabled?: boolean;
+  /** Web-search providers this run may call; omit for every configured provider. */
+  searchProviders?: string[];
 }
 
 export function useRunDiscovery() {
@@ -638,6 +791,21 @@ export function useStopDiscoveryRun() {
       ),
     onSuccess: () =>
       invalidate(keys.discoveryActiveRun, keys.discoveryRuns, keys.events, keys.discoveryStats),
+  });
+}
+
+export type EventReviewAction = 'restore' | 'approve' | 'reject';
+
+/** An admin's decision on one discovered event: restore (rejected -> Needs review), approve (-> Verified) or reject. */
+export function useReviewDiscoveredEvent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, action, note }: { id: number; action: EventReviewAction; note?: string }) =>
+      customFetch<DiscoveredEvent>(`/api/discovery/events/${id}/review`, { method: 'POST', body: JSON.stringify({ action, note }) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: keys.events });
+      qc.invalidateQueries({ queryKey: keys.discoveryStats });
+    },
   });
 }
 
@@ -663,8 +831,41 @@ export function useRunOutreachBatch() {
   const invalidate = useInvalidate();
   return useMutation({
     mutationFn: (body: { maxCandidates?: number } = {}) =>
-      customFetch<Record<string, unknown>>('/api/acquisition/outreach/batch-run', { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: () => invalidate(keys.outreach, keys.outreachStats, keys.outreachRuns),
+      customFetch<OutreachBatchResult>('/api/acquisition/outreach/batch-run', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => invalidate(keys.outreach, keys.outreachStats, keys.outreachRuns, keys.outreachBacklog),
+  });
+}
+
+export interface OutreachBatchResult {
+  runId: number | null;
+  status: string;
+  drafted: number;
+  candidates_considered: number;
+  skipped_duplicate: number;
+  skipped_suppressed: number;
+  skipped_past_event?: number;
+}
+
+/** Discovered events that have an organizer e-mail but no outreach draft yet, and why. */
+export interface OutreachBacklog {
+  waiting: number;
+  ready: number;
+  past_event: number;
+  outside_sectors: number;
+  outside_locations: number;
+  suppressed: number;
+  sectors: string[];
+  countries: string[];
+  states: string[];
+  cities: string[];
+  autoEnabled: boolean;
+}
+
+export function useOutreachBacklog() {
+  return useQuery({
+    queryKey: keys.outreachBacklog,
+    queryFn: () => customFetch<OutreachBacklog>('/api/acquisition/outreach/backlog'),
+    refetchInterval: 60_000,
   });
 }
 
@@ -759,246 +960,6 @@ export function contactStatus(messages: OutreachMessage[]): 'Not contacted' | 'P
   if (messages.some((m) => Boolean(m.sentAt))) return 'Contacted';
   if (messages.some((m) => PRE_SEND_STATUSES.includes(m.status))) return 'Pending approval';
   return 'Not contacted';
-}
-
-// ---------------------------------------------------------------------------
-// Community Discovery (Agent 5) + Community Promotion (Agent 4 extension)
-// ---------------------------------------------------------------------------
-
-export interface CommunitySource {
-  id: number;
-  sourceUrl: string;
-  sourceType: string;
-  fetchedAt: string;
-}
-
-/** DISCOVERED | NEEDS_REVIEW | APPROVED | REJECTED | CONNECTION_REQUIRED | CONNECTED | PERMISSION_MISSING | PROMOTION_RESTRICTED */
-export type CommunityApprovalStatus = 'DISCOVERED' | 'NEEDS_REVIEW' | 'APPROVED' | 'REJECTED' | 'CONNECTION_REQUIRED' | 'CONNECTED' | 'PERMISSION_MISSING' | 'PROMOTION_RESTRICTED';
-
-export interface DiscoveredCommunity {
-  id: number;
-  platform: 'telegram' | 'discord';
-  name: string;
-  canonicalUrl: string;
-  inviteUrl: string | null;
-  description: string | null;
-  category: string | null;
-  subcategory: string | null;
-  topics: string[];
-  language: string | null;
-  city: string | null;
-  state: string | null;
-  country: string | null;
-  memberCount: number | null;
-  rulesText: string | null;
-  promotionAllowed: boolean | null;
-  automationAllowed: boolean;
-  riskLevel: string;
-  confidenceScore: number;
-  discoveryStatus: string;
-  verificationNotes: string[];
-  approvalStatus: CommunityApprovalStatus;
-  rejectionReason: string | null;
-  connectionStatus: string;
-  communityId: number | null;
-  discoveredAt: string;
-  lastCheckedAt: string | null;
-  sources: CommunitySource[];
-}
-
-export interface CommunityDiscoveryStats {
-  communitiesTotal: number;
-  needsReviewTotal: number;
-  approvedTotal: number;
-  connectedTotal: number;
-  telegramTotal: number;
-  discordTotal: number;
-}
-
-export type CommunityAction = 'approve' | 'reject' | 'mark_connection_required' | 'mark_connected' | 'mark_permission_missing' | 'mark_promotion_restricted';
-
-export interface PromotedEventSummary {
-  id: number;
-  title: string;
-  slug: string;
-}
-
-export interface TargetCommunitySummary {
-  id: number;
-  name: string;
-  platform: string;
-  connected: boolean;
-}
-
-/** A drafted event<->community promotion post (Agent 4 extension). Reuses the
- * existing acquisition-opportunity pipeline under the hood — `sourceKind`
- * distinguishes this from the original discussion-reply flow, which this
- * console doesn't surface (kept out of the UI since the 2026 redesign). */
-export interface CommunityPromotionOpportunity {
-  id: number;
-  sourceKind: 'discussion_reply' | 'community_promotion';
-  promotedEvent: PromotedEventSummary | null;
-  targetCommunity: TargetCommunitySummary | null;
-  matchExplanation: string | null;
-  relevanceScore: number;
-  generatedResponse: string;
-  contentPayload: { subject?: string } | null;
-  contentGeneratedBy: 'ai' | 'deterministic_fallback' | null;
-  approvalStatus: 'pending' | 'approved' | 'rejected' | 'scheduled' | 'ready_for_manual_publishing' | 'published';
-  referralUrl: string;
-  clicksCount: number;
-  registrationsCount: number;
-  scheduledAt: string | null;
-  publishedAt: string | null;
-  publishedUrl: string | null;
-  reviewedAt: string | null;
-  createdAt: string;
-}
-
-const COMMUNITY_LIST_LIMIT = 5000;
-
-const communityKeys = {
-  communities: ['ops', 'discovered-communities'] as const,
-  communityStats: ['ops', 'community-discovery-stats'] as const,
-  communityAuto: ['ops', 'community-discovery-auto'] as const,
-  communityRuns: ['ops', 'runs', 'community-discovery'] as const,
-  promotionOpportunities: ['ops', 'community-promotion-opportunities'] as const,
-  promotionAuto: ['ops', 'community-promotion-auto'] as const,
-  promotionRuns: ['ops', 'runs', 'community-promotion'] as const,
-};
-
-export function useDiscoveredCommunities() {
-  return useQuery({
-    queryKey: communityKeys.communities,
-    queryFn: () => customFetch<DiscoveredCommunity[]>(`/api/community-discovery/communities?limit=${COMMUNITY_LIST_LIMIT}`),
-  });
-}
-
-export function useCommunityDiscoveryStats() {
-  return useQuery({
-    queryKey: communityKeys.communityStats,
-    queryFn: () => customFetch<CommunityDiscoveryStats>('/api/community-discovery/stats'),
-    refetchInterval: 60_000, // the background scan (when on) finds communities with no tab open to invalidate off of
-  });
-}
-
-export function useCommunityDiscoveryAutoStatus() {
-  return useQuery({
-    queryKey: communityKeys.communityAuto,
-    queryFn: () => customFetch<DiscoveryAutoStatus>('/api/community-discovery/auto'),
-  });
-}
-
-export function useSetCommunityDiscoveryAuto() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (enabled: boolean) =>
-      customFetch<DiscoveryAutoStatus>('/api/community-discovery/auto', { method: 'PATCH', body: JSON.stringify({ enabled }) }),
-    onSuccess: (data) => qc.setQueryData(communityKeys.communityAuto, data),
-  });
-}
-
-export function useCommunityDiscoveryRuns() {
-  return useQuery({
-    queryKey: communityKeys.communityRuns,
-    queryFn: () => customFetch<AgentRun[]>('/api/community-discovery/runs?limit=100'),
-  });
-}
-
-export function useRunCommunityDiscovery() {
-  const invalidate = useInvalidate();
-  return useMutation({
-    mutationFn: (body: { cities?: string[]; states?: string[]; categories?: string[]; country?: string; countries?: string[]; searchDepth?: number; sourcesPerQuery?: number; dateFrom?: string; dateTo?: string } = {}) =>
-      customFetch<Record<string, unknown>>('/api/community-discovery/run', { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: () => invalidate(communityKeys.communities, communityKeys.communityStats, communityKeys.communityRuns),
-  });
-}
-
-export function useCommunityAction() {
-  const invalidate = useInvalidate();
-  return useMutation({
-    mutationFn: ({ id, action, reason }: { id: number; action: CommunityAction; reason?: string }) =>
-      customFetch<DiscoveredCommunity>(`/api/community-discovery/communities/${id}/action`, {
-        method: 'POST', body: JSON.stringify(reason ? { action, reason } : { action }),
-      }),
-    onSuccess: () => invalidate(communityKeys.communities, communityKeys.communityStats),
-  });
-}
-
-export function usePromotionOpportunities() {
-  return useQuery({
-    queryKey: communityKeys.promotionOpportunities,
-    queryFn: () => customFetch<CommunityPromotionOpportunity[]>('/api/acquisition/opportunities?limit=100'),
-    select: (rows) => rows.filter((r) => r.sourceKind === 'community_promotion'),
-  });
-}
-
-export function useCommunityPromotionAutoStatus() {
-  return useQuery({
-    queryKey: communityKeys.promotionAuto,
-    queryFn: () => customFetch<DiscoveryAutoStatus>('/api/community-promotion/auto'),
-  });
-}
-
-export function useSetCommunityPromotionAuto() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (enabled: boolean) =>
-      customFetch<DiscoveryAutoStatus>('/api/community-promotion/auto', { method: 'PATCH', body: JSON.stringify({ enabled }) }),
-    onSuccess: (data) => qc.setQueryData(communityKeys.promotionAuto, data),
-  });
-}
-
-export function useCommunityPromotionRuns() {
-  return useQuery({
-    queryKey: communityKeys.promotionRuns,
-    queryFn: () => customFetch<AgentRun[]>('/api/community-promotion/runs?limit=100'),
-  });
-}
-
-export function useRunCommunityPromotion() {
-  const invalidate = useInvalidate();
-  return useMutation({
-    mutationFn: (body: { maxCandidates?: number } = {}) =>
-      customFetch<Record<string, unknown>>('/api/community-promotion/run', { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: () => invalidate(communityKeys.promotionOpportunities, communityKeys.promotionRuns),
-  });
-}
-
-export type PromotionOpportunityAction = 'approve' | 'reject' | 'ignore' | 'approve_and_publish';
-
-export function usePromotionOpportunityAction() {
-  const invalidate = useInvalidate();
-  return useMutation({
-    mutationFn: ({ id, action }: { id: number; action: PromotionOpportunityAction }) =>
-      customFetch<CommunityPromotionOpportunity>(`/api/acquisition/opportunities/${id}/action`, { method: 'POST', body: JSON.stringify({ action }) }),
-    onSuccess: () => invalidate(communityKeys.promotionOpportunities),
-  });
-}
-
-export function usePublishPromotionOpportunity() {
-  const invalidate = useInvalidate();
-  return useMutation({
-    mutationFn: (id: number) => customFetch<CommunityPromotionOpportunity>(`/api/acquisition/opportunities/${id}/publish`, { method: 'POST' }),
-    onSuccess: () => invalidate(communityKeys.promotionOpportunities),
-  });
-}
-
-/** Matches `routes/acquisition.py`'s `CommunityUpdateInput` — used to set a
- * community's `platformRef` once a human has actually connected the bot and
- * looked up its real chat/channel id, and/or confirming the separate,
- * explicit "promotion allowed" policy decision once a human has actually
- * read the community's rules. Neither is ever set by the agent itself. */
-export function useUpdateCommunityPolicy() {
-  const invalidate = useInvalidate();
-  return useMutation({
-    mutationFn: ({ communityId, platformRef, promotionAllowed }: { communityId: number; platformRef?: string; promotionAllowed?: boolean }) =>
-      customFetch<unknown>(`/api/acquisition/communities/${communityId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ ...(platformRef !== undefined && { platformRef }), ...(promotionAllowed !== undefined && { promotionAllowed }) }),
-      }),
-    onSuccess: () => invalidate(communityKeys.communities, communityKeys.promotionOpportunities),
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1333,3 +1294,112 @@ export function useSyncDiscoverySources() {
   });
 }
 
+
+// --- Run wizard / run reports -------------------------------------------------------
+
+/** One discovery run with its live or final summary (GET /api/discovery/runs/:id). */
+export function useDiscoveryRun(runId: number | null, live = false) {
+  return useQuery({
+    queryKey: ['ops', 'discovery-run', runId],
+    queryFn: () => customFetch<AgentRun>(`/api/discovery/runs/${runId}`),
+    enabled: Boolean(runId),
+    refetchInterval: live ? 3000 : false,
+  });
+}
+
+export interface RecommendedNotice {
+  level: 'info' | 'warning';
+  message: string;
+  action: string;
+}
+
+/** Settings the system picks itself from real availability (GET /api/discovery/recommended-config). */
+export interface RecommendedConfig {
+  sources: string[];
+  searchProviders: string[] | null; // null = every usable provider, free first (automatic)
+  usableProviders: Array<{ id: string; name: string; tier: string }>;
+  channels: {
+    web: { available: boolean; providers: string[] };
+    directories: { available: boolean; sources: number };
+    aggregators: { available: boolean; sources: number };
+  };
+  targetValidEvents: number;
+  dateFrom: string;
+  dateTo: string;
+  upcomingWindowDays: number;
+  requireOrganizerEmail: boolean;
+  rejectPastEvents: boolean;
+  keepRejectedEvents: boolean;
+  maxRunMinutes: number;
+  paidSearchBudget: number | null;
+  notices: RecommendedNotice[];
+  blocker: string | null;
+  listingUrls: string[];
+  ticketmaster: { available: boolean };
+}
+
+export function useRecommendedConfig() {
+  return useQuery({
+    queryKey: ['ops', 'discovery-recommended-config'],
+    queryFn: () => customFetch<RecommendedConfig>('/api/discovery/recommended-config'),
+    staleTime: 30_000,
+  });
+}
+
+// --- Navigation & configuration (agent B) ---
+
+/** How a discovery run was started, from its stored config snapshot (`is_manual`); null when the run predates that flag. */
+export type DiscoveryRunTrigger = 'manual' | 'automatic';
+
+export function discoveryRunTrigger(run: Pick<AgentRun, 'configSnapshot'>): DiscoveryRunTrigger | null {
+  const flag = run.configSnapshot?.is_manual;
+  if (flag === true) return 'manual';
+  if (flag === false) return 'automatic';
+  return null;
+}
+
+/** A run's stored counter, or null when the summary doesn't carry it (render "—", never 0). */
+export function runCount(run: Pick<AgentRun, 'summary'>, key: string): number | null {
+  const v = run.summary?.[key];
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+/** eventId -> ids of the loaded runs whose summary.event_ids lists it (oldest first). Only covers the runs passed in. */
+export function runsByEventId(runs: AgentRun[] | undefined): Map<number, number[]> {
+  const index = new Map<number, number[]>();
+  for (const run of [...(runs ?? [])].sort((a, b) => a.id - b.id)) {
+    const ids = run.summary?.event_ids;
+    if (!Array.isArray(ids)) continue;
+    for (const id of ids) {
+      if (typeof id !== 'number') continue;
+      const list = index.get(id);
+      if (list) { if (!list.includes(run.id)) list.push(run.id); } else index.set(id, [run.id]);
+    }
+  }
+  return index;
+}
+
+/** Query keys the run-scoped event lists use (useDiscoveryRunEvents / useDiscoveryRun), for invalidation after a review. */
+export const runScopedKeys = {
+  runEvents: ['discoveryRunEvents'] as const,
+  run: ['ops', 'discovery-run'] as const,
+  catalog: ['discoveryCatalog'] as const,
+};
+
+// --- Run wizard (agent A) ---
+
+/** The HTTP status of a failed API call, when the error carries one (ApiError does). */
+export function apiErrorStatus(error: unknown): number | null {
+  const status = (error as { status?: unknown } | null)?.status;
+  return typeof status === 'number' ? status : null;
+}
+
+/** One run for its report page: shares useDiscoveryRun's cache entry, but a missing run (404) is reported at once instead of retried. */
+export function useDiscoveryRunReport(runId: number | null) {
+  return useQuery({
+    queryKey: ['ops', 'discovery-run', runId],
+    queryFn: () => customFetch<AgentRun>(`/api/discovery/runs/${runId}`),
+    enabled: Boolean(runId),
+    retry: (failures, error) => apiErrorStatus(error) !== 404 && failures < 2,
+  });
+}

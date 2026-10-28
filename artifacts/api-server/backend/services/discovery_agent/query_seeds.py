@@ -1,8 +1,9 @@
-"""Search query generation — turns a `DiscoveryConfig` into a broad,
-reproducible list of web-search queries spanning Indian cities, states,
-event categories and the source types the spec calls out (event-listing
-sites, conference/exhibition sites, college pages, trade associations,
-government pages, ...), rather than relying on a single search.
+"""Search query generation — turns a `DiscoveryConfig` into a reproducible
+list of web-search queries built from exactly what the admin selected:
+countries, states, cities (each resolved to its own country via
+`geo_scope`), sectors, date range and enabled sources. Every selected
+sector x country pair is queried first, so a run never leaves part of the
+selection unsearched because the budget was spent on the first country.
 
 Deterministic (no randomness) so the same config always produces the same
 query list — important for `AgentRun.config_snapshot` reproducibility and
@@ -188,7 +189,12 @@ SECTOR_PUBLICATIONS: dict[str, tuple[str, ...]] = {
     "Manufacturing": ("Manufacturing Informs",),
 }
 
-_YEAR_HINT = "2026"
+def _year_hint() -> str:
+    """Year to put in queries when no date range is set: the current year, or
+    next year from October on, when most upcoming editions are already
+    listed under next year's dates."""
+    today = datetime.now()
+    return str(today.year + 1 if today.month >= 10 else today.year)
 
 
 def _date_hint_for_config(config: DiscoveryConfig) -> str:
@@ -216,203 +222,185 @@ def _date_hint_for_config(config: DiscoveryConfig) -> str:
             return f"until {d.strftime('%B %Y')}"
         except Exception:
             pass
-    return _YEAR_HINT
+    return _year_hint()
 
 
-def build_search_queries(config: DiscoveryConfig) -> list[str]:
-    """Interleaves city-level, state-level, country-level, social-level, source-level and
-    publication-level queries across categories so the queries cover breadth
-    worldwide across geography, user-selected sources and target sectors."""
-    cities = config.cities or []
-    states = config.states or []
-    categories = config.categories or ["events"]
-    countries = getattr(config, "countries", None) or []
-    single_country = getattr(config, "country", None)
-    is_worldwide = not single_country or single_country.lower() in ("all", "all countries", "worldwide")
+def _place(country: str | None) -> str:
+    return f" in {country}" if country else " worldwide"
 
+
+def _city_label(city: str, country: str | None) -> str:
+    return f"{city}, {country}" if country and country.lower() != city.lower() else city
+
+
+def _plan(config: DiscoveryConfig) -> list[list[str]]:
+    """Every query the selection calls for, grouped in priority buckets.
+
+    Bucket 0 is COVERAGE: one query per selected (sector x country), ordered
+    diagonally so the first N queries already span N different countries and
+    sectors — no selected country or sector is left unsearched because the
+    budget ran out on the first one. Then cities (round-robin across their
+    countries, sectors rotating), states, source/publication angles, the
+    social/platform sources the admin enabled, and finally alternate sector
+    terms."""
+    from backend.services.discovery_agent import geo_scope
+
+    geo = geo_scope.resolve(config)
+    categories = list(config.categories or []) or ["events"]
+    places: list[str | None] = list(geo.countries) or [None]
     enabled_sources = set(getattr(config, "sources", None) or [
         "web", "google_search", "bing_search", "linkedin", "facebook", "instagram", "twitter", "telegram", "reddit", "event_platforms"
     ])
-
     time_hint = _date_hint_for_config(config)
+    term = lambda category, i=0: (SECTOR_SYNONYMS.get(category) or (category,))[i % len(SECTOR_SYNONYMS.get(category) or (category,))]  # noqa: E731
+    qualifier = lambda i: _EVENT_TYPE_QUALIFIERS[i % len(_EVENT_TYPE_QUALIFIERS)]  # noqa: E731
 
     buckets: list[list[str]] = []
-
-    # 1. General Web & Search Engine queries (City, State, Country, Industry sources, Sector Publications)
-    has_web_or_engine = bool(
-        enabled_sources.intersection({
-            "web",
-            "google_search",
-            "bing_search",
-            "search_research_tool",
-            "all",
-            "all_sources",
-            "all_operational",
-        })
-    )
+    has_web_or_engine = bool(enabled_sources & {"web", "google_search", "bing_search", "search_research_tool", "all", "all_sources", "all_operational"})
     if has_web_or_engine:
-        city_queries: list[str] = []
-        for city in cities:
-            for category in categories:
-                synonyms = SECTOR_SYNONYMS.get(category, (category,))
-                cat_term = synonyms[len(city_queries) % len(synonyms)]
-                qualifier = _EVENT_TYPE_QUALIFIERS[len(city_queries) % len(_EVENT_TYPE_QUALIFIERS)]
-                c_label = f" {single_country}" if not is_worldwide and single_country.lower() != city.lower() else ""
-                city_queries.append(f"{cat_term} {qualifier} in {city}{c_label} {time_hint}")
-        if city_queries:
-            buckets.append(city_queries)
+        coverage = []
+        for d in range(len(places)):
+            for i, category in enumerate(categories):
+                country = places[(i + d) % len(places)]
+                coverage.append(f"upcoming {term(category)} {qualifier(len(coverage))}{_place(country)} {time_hint}")
+        buckets.append(coverage)
 
-        state_queries: list[str] = []
-        for state in states:
-            for category in categories:
-                synonyms = SECTOR_SYNONYMS.get(category, (category,))
-                cat_term = synonyms[len(state_queries) % len(synonyms)]
-                qualifier = _EVENT_TYPE_QUALIFIERS[len(state_queries) % len(_EVENT_TYPE_QUALIFIERS)]
-                s_label = f" {single_country}" if not is_worldwide and single_country.lower() not in state.lower() else ""
-                state_queries.append(f"upcoming {cat_term} {qualifier} {state}{s_label} {time_hint}")
-        if state_queries:
-            buckets.append(state_queries)
+        cities = geo.fair_cities()
+        city_queries = []
+        for rnd in range(len(categories)):
+            for i, (city, country) in enumerate(cities):
+                category = categories[(i + rnd) % len(categories)]
+                city_queries.append(f"{term(category)} {qualifier(len(city_queries))} in {_city_label(city, country)} {time_hint}")
+        buckets.append(city_queries)
 
-        country_queries: list[str] = []
-        target_countries = countries if is_worldwide and countries else ([single_country] if single_country and not is_worldwide else ["Worldwide"])
-        for c in target_countries[:8]:
-            for category in categories:
-                synonyms = SECTOR_SYNONYMS.get(category, (category,))
-                for cat_term in synonyms[:2]:
-                    qualifier = _EVENT_TYPE_QUALIFIERS[len(country_queries) % len(_EVENT_TYPE_QUALIFIERS)]
-                    loc_str = f" in {c}" if c != "Worldwide" else ""
-                    country_queries.append(f"upcoming {cat_term} {qualifier}{loc_str} {time_hint} official website")
-        if country_queries:
-            buckets.append(country_queries)
+        state_queries = []
+        for i, (state, country) in enumerate(geo.fair_states()):
+            category = categories[i % len(categories)]
+            state_queries.append(f"upcoming {term(category)} {qualifier(i)} {_city_label(state, country)} {time_hint}")
+        buckets.append(state_queries)
 
-        source_queries: list[str] = []
-        for category in categories:
-            synonyms = SECTOR_SYNONYMS.get(category, (category,))
-            cat_term = synonyms[0]
-            for qualifier in _SOURCE_QUALIFIERS:
-                region_str = f" {single_country}" if not is_worldwide else " worldwide"
-                source_queries.append(f"{qualifier} {cat_term}{region_str} {time_hint}")
-        if source_queries:
-            buckets.append(source_queries)
+        source_queries = []
+        for i, category in enumerate(categories):
+            for j, source_q in enumerate(_SOURCE_QUALIFIERS):
+                country = places[(i + j) % len(places)]
+                source_queries.append(f"{source_q} {term(category)}{_place(country)} {time_hint}")
+        buckets.append(source_queries)
 
-        publication_queries: list[str] = []
-        for category in categories:
+        publication_queries = []
+        for i, category in enumerate(categories):
             for pub in SECTOR_PUBLICATIONS.get(category, ()):
-                target_str = f" {single_country}" if not is_worldwide else " international"
-                publication_queries.append(f'"{pub}" {category}{target_str} {time_hint}')
-        if publication_queries:
-            buckets.append(publication_queries)
+                country = places[i % len(places)]
+                publication_queries.append(f'"{pub}" {category}{_place(country) if country else " international"} {time_hint}')
+        buckets.append(publication_queries)
 
-    social_targets = cities[:4] if cities else ([single_country] if not is_worldwide and single_country else [""])
+    # Social & platform sources, anchored on the selected places.
+    social_targets = [_city_label(c, k) for c, k in geo.fair_cities(4)] or [c for c in places if c] or [""]
 
-    # 2. LinkedIn queries
-    if "linkedin" in enabled_sources or "linkedin_search" in enabled_sources:
-        linkedin_queries: list[str] = []
+    def site_bucket(templates: tuple[str, ...]) -> list[str]:
+        out = []
         for loc in social_targets:
-            loc_str = f" {loc}" if loc else (" in India" if not is_worldwide else "")
+            loc_str = f" {loc}" if loc else ""
             for category in categories:
-                linkedin_queries.append(f"site:linkedin.com/events {category}{loc_str} {time_hint}")
-                linkedin_queries.append(f"site:linkedin.com/posts {category} (conference OR expo OR summit){loc_str} {time_hint}")
-        if linkedin_queries:
-            buckets.append(linkedin_queries)
+                out.extend(t.format(category=category, loc=loc_str, time=time_hint) for t in templates)
+        return out
 
-    # 3. Facebook queries
+    if enabled_sources & {"linkedin", "linkedin_search"}:
+        buckets.append(site_bucket(("site:linkedin.com/events {category}{loc} {time}", "site:linkedin.com/posts {category} (conference OR expo OR summit){loc} {time}")))
     if "facebook" in enabled_sources:
-        fb_queries: list[str] = []
-        for loc in social_targets:
-            loc_str = f" {loc}" if loc else (" in India" if not is_worldwide else "")
-            for category in categories:
-                fb_queries.append(f"site:facebook.com/events {category}{loc_str} {time_hint}")
-        if fb_queries:
-            buckets.append(fb_queries)
-
-    # 4. Twitter / X queries
+        buckets.append(site_bucket(("site:facebook.com/events {category}{loc} {time}",)))
     if "twitter" in enabled_sources:
-        tw_queries: list[str] = []
-        for loc in social_targets:
-            loc_str = f" {loc}" if loc else (" in India" if not is_worldwide else "")
-            for category in categories:
-                tw_queries.append(f"site:x.com {category} (conference OR summit OR expo){loc_str} {time_hint}")
-                tw_queries.append(f"site:twitter.com {category} (conference OR expo OR summit){loc_str} {time_hint}")
-        if tw_queries:
-            buckets.append(tw_queries)
-
-    # 5. Instagram queries
+        buckets.append(site_bucket(("site:x.com {category} (conference OR summit OR expo){loc} {time}", "site:twitter.com {category} (conference OR expo OR summit){loc} {time}")))
     if "instagram" in enabled_sources:
-        ig_queries: list[str] = []
-        for loc in social_targets:
-            loc_str = f" {loc}" if loc else (" in India" if not is_worldwide else "")
-            for category in categories:
-                ig_queries.append(f'site:instagram.com {category} (conference OR summit OR expo OR "register now" OR "event in"){loc_str} {time_hint}')
-        if ig_queries:
-            buckets.append(ig_queries)
-
-    # 6. Telegram queries
+        buckets.append(site_bucket(('site:instagram.com {category} (conference OR summit OR expo OR "register now" OR "event in"){loc} {time}',)))
     if "telegram" in enabled_sources:
-        tg_queries: list[str] = []
-        for loc in social_targets:
-            loc_str = f" {loc}" if loc else (" in India" if not is_worldwide else "")
-            for category in categories:
-                tg_queries.append(f'site:t.me {category} (conference OR summit OR expo OR meetup OR "event"){loc_str} {time_hint}')
-        if tg_queries:
-            buckets.append(tg_queries)
-
-    # 7. Reddit queries
+        buckets.append(site_bucket(('site:t.me {category} (conference OR summit OR expo OR meetup OR "event"){loc} {time}',)))
     if "reddit" in enabled_sources:
-        reddit_queries: list[str] = []
-        for loc in social_targets:
-            loc_str = f" {loc}" if loc else (" in India" if not is_worldwide else "")
-            for category in categories:
-                reddit_queries.append(f'site:reddit.com {category} (conference OR summit OR expo OR meetup OR "annual event"){loc_str} {time_hint}')
-        if reddit_queries:
-            buckets.append(reddit_queries)
+        buckets.append(site_bucket(('site:reddit.com {category} (conference OR summit OR expo OR meetup OR "annual event"){loc} {time}',)))
+    if enabled_sources & {"event_platforms", "consumer_aggregators"}:
+        buckets.append(site_bucket(("site:eventbrite.com/e {category}{loc} {time}", "site:meetup.com {category}{loc} {time}", "site:lu.ma {category}{loc} {time}")))
 
-    # 8. Event Platforms / Aggregators (Eventbrite, Meetup, Luma)
-    if "event_platforms" in enabled_sources or "consumer_aggregators" in enabled_sources:
-        platform_queries: list[str] = []
-        for loc in social_targets:
-            loc_str = f" {loc}" if loc else (" in India" if not is_worldwide else "")
-            for category in categories:
-                platform_queries.append(f"site:eventbrite.com/e {category}{loc_str} {time_hint}")
-                platform_queries.append(f"site:meetup.com {category}{loc_str} {time_hint}")
-                platform_queries.append(f"site:lu.ma {category}{loc_str} {time_hint}")
-        if platform_queries:
-            buckets.append(platform_queries)
+    if has_web_or_engine:
+        # Alternate sector terms last: they broaden recall once every selection is covered.
+        synonyms = []
+        for i, category in enumerate(categories):
+            for k in range(1, min(3, len(SECTOR_SYNONYMS.get(category) or (category,)))):
+                for j, country in enumerate(places):
+                    synonyms.append(f"{term(category, k)} {qualifier(i + j + k)}{_place(country)} {time_hint} official website")
+        buckets.append(synonyms)
+    return buckets
 
-    interleaved: list[str] = []
-    index = 0
-    while len(interleaved) < config.search_depth and any(buckets):
-        bucket = buckets[index % len(buckets)]
-        if bucket:
-            interleaved.append(bucket.pop(0))
-        index += 1
-        if not any(buckets):
-            break
 
-    return interleaved[: config.search_depth]
+def _interleave(buckets: list[list[str]]) -> list[str]:
+    """Coverage bucket first in full, then the rest round-robin; no repeats."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for q in buckets[0] if buckets else []:
+        if q not in seen:
+            seen.add(q)
+            out.append(q)
+    queues = [list(b) for b in buckets[1:] if b]
+    while queues:
+        for q in queues:
+            item = q.pop(0)
+            if item not in seen:
+                seen.add(item)
+                out.append(item)
+        queues = [q for q in queues if q]
+    return out
+
+
+_COVERAGE_CAP = 60
+
+
+def _first_wave_size(config: DiscoveryConfig, coverage: int) -> int:
+    """`search_depth`, raised just enough that every selected (sector x
+    country) pair is searched at least once (up to _COVERAGE_CAP)."""
+    return max(int(config.search_depth or 0), min(coverage, _COVERAGE_CAP))
+
+
+def build_search_queries(config: DiscoveryConfig) -> list[str]:
+    """First wave of queries for a run: every selected sector x country first,
+    then cities, states, sources and social/platform angles (see `_plan`)."""
+    buckets = _plan(config)
+    ordered = _interleave(buckets)
+    return ordered[: _first_wave_size(config, len(buckets[0]) if buckets else 0)]
 
 
 def build_expanded_queries(config: DiscoveryConfig) -> list[str]:
-    """Supplemental multi-source search queries across major city hubs and event portals,
-    ensuring continuous discovery until the target valid event count is fulfilled."""
+    """Second wave, used only when the first falls short: the rest of the
+    selection's plan, then listing-site queries for more cities in the
+    requested countries (never cities outside them)."""
+    from backend.services.discovery_agent import geo_scope
+    from backend.services.discovery_agent.country_utils import cities_for_country
+
+    buckets = _plan(config)
+    first = set(build_search_queries(config))
+    rest = [q for q in _interleave(buckets) if q not in first]
+
+    geo = geo_scope.resolve(config)
     categories = config.categories or ["conference", "summit", "expo", "exhibition"]
     time_hint = _date_hint_for_config(config)
-    supplemental_cities = [
+    india_cities = [
         "Mumbai", "Bengaluru", "Delhi", "Hyderabad", "Pune", "Chennai",
         "Kolkata", "Ahmedabad", "Gurgaon", "Noida", "Jaipur", "Goa",
-        "Chandigarh", "Kochi", "Indore", "Lucknow", "Bhopal", "Coimbatore"
+        "Chandigarh", "Kochi", "Indore", "Lucknow", "Bhopal", "Coimbatore",
     ]
-    selected_cities = config.cities or []
-    additional_cities = [c for c in supplemental_cities if c not in selected_cities] or supplemental_cities[:8]
+    selected = set(geo.all_cities)
+    extra: dict[str, list[str]] = {}
+    for country in geo.countries:
+        pool = india_cities if country == "India" else cities_for_country(country)
+        extra[country] = [c for c in dict.fromkeys(pool) if c not in selected]
+    if not geo.countries:
+        extra[""] = [c for c in ["London", "New York", "Singapore", "Dubai", "Berlin", "Mumbai", "Bengaluru", "Tokyo", "Paris", "Sydney"] if c not in selected]
+    more_cities = geo_scope._round_robin(extra, None)  # fair across the requested countries
 
-    queries: list[str] = []
-    for city in additional_cities:
+    site_queries: list[str] = []
+    for city, country in more_cities:
+        label = _city_label(city, country)
         for cat in categories[:6]:
-            queries.append(f"site:allevents.in/{city.lower()} {cat}")
-            queries.append(f"site:eventbrite.com {cat} {city} {time_hint}")
-            queries.append(f"site:10times.com/{city.lower()} {cat}")
-            queries.append(f"site:meetup.com {cat} {city}")
-            queries.append(f"upcoming {cat} in {city} {time_hint} registration")
-            queries.append(f"{cat} conference expo {city} {time_hint}")
-
-    return queries
+            site_queries.append(f"site:allevents.in/{city.lower()} {cat}")
+            site_queries.append(f"site:eventbrite.com {cat} {label} {time_hint}")
+            site_queries.append(f"site:meetup.com {cat} {label}")
+            site_queries.append(f"upcoming {cat} in {label} {time_hint} registration")
+            site_queries.append(f"{cat} conference expo {label} {time_hint}")
+    return rest + [q for q in site_queries if q not in first]

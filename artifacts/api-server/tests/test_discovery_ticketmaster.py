@@ -57,3 +57,18 @@ def test_ticketmaster_connection_with_empty_key():
     res = check_tm_connection("")
     assert res["success"] is False
     assert "missing" in res["message"].lower()
+
+
+def test_connection_error_never_echoes_the_api_key(monkeypatch):
+    import requests
+
+    from backend.services.discovery_agent import ticketmaster
+
+    def boom(url, params=None, **kwargs):
+        raise requests.exceptions.ConnectionError(f"HTTPSConnectionPool: Max retries exceeded with url: /discovery/v2/events.json?apikey={params['apikey']}")
+
+    monkeypatch.setattr(ticketmaster.requests, "get", boom)
+    result = check_tm_connection("SECRET-KEY-1234567890")
+
+    assert result["success"] is False
+    assert "SECRET-KEY" not in result["message"]

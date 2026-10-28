@@ -27,6 +27,28 @@ def test_real_titles(name, category, event_type):
     assert categorize(name) == (category, event_type)
 
 
+@pytest.mark.parametrize("name, category", [
+    # A generic "technology" must not outrank the sector the event is about.
+    ("Offshore Technology Conference (OTC) 2027", "Oil and Gas"),
+    ("SPE Hydraulic Fracturing Technology Conference & Exhibition", "Oil and Gas"),
+    ("Construction Technology Summit 2027", "Construction"),
+    ("Building Technology Expo", "Construction"),
+    ("Healthcare Technology Conference", "Healthcare"),
+    ("Oil & Gas Trade Shows in India", "Oil and Gas"),
+    ("India Energy Week 2027", "Energy and Power Generation"),
+    ("GREEN ENERGY INDIA EXPO 2026", "Energy and Power Generation"),
+    ("2027 IEEE South Asia Power Electronics Conference", "Energy and Power Generation"),
+    ("Pub Crawls in Dubai: Nightlife Tours", "Other"),
+    ("AI & Cloud Summit", "Technology"),
+    # Off-sector consumer events found by city listing pages.
+    ("Music Performance by ADIGA", "Other"),
+    ("Georgia Country Trip", "Other"),
+    ("SoMAD Halloween Carnival 2026", "Other"),
+])
+def test_sector_beats_generic_technology(name, category):
+    assert categorize(name)[0] == category
+
+
 def test_description_decides_when_the_name_has_no_keywords():
     assert categorize("Sobo Evenings", "An evening of sustainable packaging machinery networking")[0] == "Packaging"
 

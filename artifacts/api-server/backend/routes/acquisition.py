@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -23,7 +23,6 @@ from backend.schemas import (
     AcquisitionOpportunityOut,
     CommunityOut,
     CommunityUpdateInput,
-    ConversionSimulationRequest,
     DiscoveryDiscussionRequest,
     DiscussionOut,
     InstagramContentRequest,
@@ -197,6 +196,27 @@ def get_opportunity(opportunity_id: int, db: Session = Depends(get_db)) -> Acqui
     return serialize_opportunity(_load_opportunity(db, opportunity_id))
 
 
+def _publish_opportunity(op: AcquisitionOpportunity):
+    """Publishes one opportunity where it belongs: a post in the target
+    community for a community promotion, otherwise a reply in its discussion."""
+    if op.source_kind == "community_promotion":
+        from backend.services.social_agent.types import PublishResult
+
+        if not op.target_community:
+            raise HTTPException(status_code=400, detail="This draft has no target community.")
+        if not op.target_community.platform_ref:
+            return PublishResult(
+                success=False, platform=op.target_community.platform, published_url=None,
+                message="This community has not been connected yet — set its platform_ref (PATCH /communities/{id}) once the bot is actually a member, then publish.",
+            )
+        publisher = get_publisher(op.target_community.platform)
+        return _run_publish_flow(publisher, op.generated_response, op.target_community.platform_ref, as_reply=False)
+    if op.discussion is None:
+        raise HTTPException(status_code=400, detail="This draft has no discussion to reply to.")
+    publisher = get_publisher(op.discussion.platform)
+    return _run_publish_flow(publisher, op.generated_response, op.discussion.external_id)
+
+
 def _maybe_create_event_from_opportunity(db: Session, op: AcquisitionOpportunity, now: datetime) -> None:
     """Case B of the discovery agent: a human just approved a *new* event
     candidate (no existing 100.com match was found at discovery time). This
@@ -212,7 +232,15 @@ def _maybe_create_event_from_opportunity(db: Session, op: AcquisitionOpportunity
         return
 
     extracted = payload.get("extractedEvent") or {}
-    guessed_date = date.fromisoformat(payload["guessedStartDate"]) if payload.get("guessedStartDate") else date.today() + timedelta(days=14)
+    if not payload.get("guessedStartDate"):
+        # No date was found in the discussion: publishing would invent one.
+        db.add(AgentAction(
+            opportunity_id=op.id, action_type="event_not_created",
+            result="No event date was found in the discussion, so no event was created. Add the event manually with its real date.",
+            created_at=now,
+        ))
+        return
+    guessed_date = date.fromisoformat(payload["guessedStartDate"])
     price = extracted.get("price")
     price_decimal = Decimal("0.00") if extracted.get("is_free") else (Decimal(str(price)) if price is not None else Decimal("0.00"))
 
@@ -286,9 +314,7 @@ def update_opportunity_action(
         ))
         _maybe_create_event_from_opportunity(db, op, now)
 
-        platform = op.discussion.platform if op.discussion else "reddit"
-        publisher = get_publisher(platform)
-        result = _run_publish_flow(publisher, op.generated_response, op.discussion.external_id)
+        result = _publish_opportunity(op)
         action_type = _finalize_publish_result(op, result, now)
         db.add(AgentAction(opportunity_id=op.id, action_type=action_type, result=result.message, created_at=now))
         db.commit()
@@ -570,23 +596,7 @@ def prepare_manual_publish(
     elif op.approval_status not in ("approved", "ready_for_manual_publishing"):
         raise HTTPException(status_code=400, detail="Opportunity must be approved or scheduled-and-due before publishing")
 
-    if op.source_kind == "community_promotion":
-        from backend.services.social_agent.types import PublishResult
-
-        if not op.target_community:
-            raise HTTPException(status_code=400, detail="This draft has no target community.")
-        if not op.target_community.platform_ref:
-            result = PublishResult(
-                success=False, platform=op.target_community.platform, published_url=None,
-                message="This community has not been connected yet — set its platform_ref (PATCH /communities/{id}) once the bot is actually a member, then publish.",
-            )
-        else:
-            publisher = get_publisher(op.target_community.platform)
-            result = _run_publish_flow(publisher, op.generated_response, op.target_community.platform_ref, as_reply=False)
-    else:
-        platform = op.discussion.platform if op.discussion else "reddit"
-        publisher = get_publisher(platform)
-        result = _run_publish_flow(publisher, op.generated_response, op.discussion.external_id)
+    result = _publish_opportunity(op)
     action_type = _finalize_publish_result(op, result, now)
 
     db.add(
@@ -805,77 +815,6 @@ def track_referral_interaction(
         "opportunityId": op.id,
         "eventType": payload.event_type,
         "message": f"Referral {payload.event_type} tracked successfully.",
-    }
-
-
-@router.post("/simulate-conversion")
-def simulate_conversion(
-    payload: ConversionSimulationRequest,
-    db: Session = Depends(get_db),
-) -> dict[str, Any]:
-    """Dev/testing tool only — logs synthetic click/registration rows to verify
-    the analytics feedback loop without waiting on real traffic. The
-    production attribution path is the `/r/{opportunity_id}` redirect route
-    (backend/routes/redirect.py), which records real ClickEvent rows."""
-    op = db.scalar(
-        select(AcquisitionOpportunity)
-        .options(
-            selectinload(AcquisitionOpportunity.discussion).selectinload(Discussion.community),
-            selectinload(AcquisitionOpportunity.referral_events),
-        )
-        .where(AcquisitionOpportunity.id == payload.opportunity_id)
-    )
-    if not op:
-        raise HTTPException(status_code=404, detail="Opportunity not found")
-
-    primary_event_id = op.matching_events[0].get("id") if (op.matching_events and len(op.matching_events) > 0) else None
-    now = datetime.now(timezone.utc)
-
-    for i in range(payload.clicks):
-        db.add(
-            AcquisitionReferralEvent(
-                opportunity_id=op.id,
-                event_id=primary_event_id,
-                event_type="click",
-                visitor_id=f"sim_visitor_{op.id}_{i+1}",
-                created_at=now,
-            )
-        )
-
-    for j in range(payload.registrations):
-        db.add(
-            AcquisitionReferralEvent(
-                opportunity_id=op.id,
-                event_id=primary_event_id,
-                event_type="registration",
-                visitor_id=f"sim_attendee_{op.id}_{j+1}",
-                created_at=now,
-            )
-        )
-
-    db.add(
-        AgentAction(
-            opportunity_id=op.id,
-            action_type="conversion_loop_tested",
-            result=f"Feedback loop test: Logged {payload.clicks} click(s) and {payload.registrations} verified attendee registration(s).",
-            created_at=now,
-        )
-    )
-
-    if op.discussion and op.discussion.community:
-        comm = op.discussion.community
-        bonus = (payload.registrations * 3) + 1
-        comm.quality_score = min(99, comm.quality_score + bonus)
-
-    db.commit()
-    db.refresh(op)
-
-    return {
-        "status": "success",
-        "clicksRecorded": payload.clicks,
-        "registrationsRecorded": payload.registrations,
-        "opportunity": serialize_opportunity(op),
-        "message": f"Successfully simulated {payload.clicks} clicks and {payload.registrations} attendee registrations for Opportunity #{op.id}.",
     }
 
 

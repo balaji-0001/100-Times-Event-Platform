@@ -1,0 +1,50 @@
+# SearXNG for the 100 TIMES Discovery Agent — a self-hosted, keyless
+# meta-search engine. Only the backend talks to it, through its JSON API.
+#
+# Engines: a lean set of independent whole-web engines, so one of them
+# rate-limiting us (as DuckDuckGo does from this machine) still leaves the
+# others answering. Dictionary/translation/wiki engines are dropped — they
+# add latency and no event pages.
+use_default_settings:
+  engines:
+    keep_only:
+      - google
+      - bing
+      - brave
+      - yahoo
+      - startpage
+      - mojeek
+      - qwant
+      - duckduckgo
+
+server:
+  # Overridden by the SEARXNG_SECRET env var set in docker-compose.yml.
+  secret_key: "change-me"
+  # The bot limiter protects public instances; this one is private to the backend.
+  limiter: false
+  image_proxy: false
+  public_instance: false
+
+search:
+  safe_search: 0
+  formats:
+    - html
+    - json
+
+outgoing:
+  request_timeout: 4.0
+  max_request_timeout: 8.0
+
+engines:
+  - name: google
+    disabled: false
+  - name: bing
+    disabled: false
+  - name: yahoo
+    disabled: false
+  - name: startpage
+    disabled: false
+  - name: mojeek
+    disabled: false
+  - name: qwant
+    disabled: false

@@ -1,4 +1,4 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { DeleteAccountModal } from '../components/AccountSecurityPages';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -6,6 +6,7 @@ import {
   useGetNotifications,
   useGetOrganizerAnalytics,
   useGetOrganizerDashboard,
+  useListCategories,
 } from '@workspace/api-client-react';
 import {
   Bell,
@@ -29,7 +30,8 @@ import {
   Users,
   XCircle,
 } from 'lucide-react';
-import { Link } from 'wouter';
+import { Link, useLocation } from 'wouter';
+import { EventPictureField } from './EventPictureField';
 
 const ORGANIZER_LIFECYCLE_STAGES = [
   'DISCOVERY',
@@ -89,8 +91,9 @@ interface RichEventRecord {
   onlineMeetingUrl: string;
   registrationUrl: string;
   isFree: boolean;
-  price: number;
-  capacity: number;
+  /** Decimal from the API — may arrive as a string like "1500.00". */
+  price: number | string | null;
+  capacity: number | null;
   attendeeCount: number;
   status: string;
   lifecycleState: string;
@@ -119,6 +122,18 @@ interface RichEventRecord {
       no_major_risk_detected?: boolean;
     };
   } | null;
+}
+
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const errText = (e: unknown) => (e instanceof Error ? e.message : (e as { message?: string })?.message || 'Request failed');
+
+/** Price from the API (number or decimal string) → display text. Never invents a value. */
+function fmtPrice(isFree: boolean, price: number | string | null | undefined) {
+  if (isFree) return 'Free Entry';
+  const n = Number(price);
+  if (price == null || price === '' || !Number.isFinite(n)) return 'Price not set';
+  if (n === 0) return 'Free Entry';
+  return `₹${n.toLocaleString('en-IN')}`;
 }
 
 export function OrganizerStudioPage({ initialTab = 'overview' }: { initialTab?: string }) {
@@ -226,7 +241,7 @@ export function OrganizerStudioPage({ initialTab = 'overview' }: { initialTab?: 
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <p className="font-mono-face text-xs uppercase tracking-[.18em] text-accent">
-            Organizer Studio · {profile?.organizationName || 'Verified Partner'}
+            Organizer Studio{profile?.organizationName ? ` · ${profile.organizationName}` : ''}
           </p>
           <h1 className="mt-2 font-display text-4xl font-extrabold tracking-tight sm:text-5xl">
             Make a room people remember.
@@ -243,6 +258,13 @@ export function OrganizerStudioPage({ initialTab = 'overview' }: { initialTab?: 
           <Plus size={17} /> Create Event
         </button>
       </div>
+
+      {(submitTrustMutation.isError || cancelMutation.isError) && (
+        <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-xs text-rose-400">
+          {submitTrustMutation.isError && <p>Could not submit to Trust Agent: {errText(submitTrustMutation.error)}</p>}
+          {cancelMutation.isError && <p>Could not cancel the event: {errText(cancelMutation.error)}</p>}
+        </div>
+      )}
 
       {/* Organizer Lifecycle Progress Bar */}
       <div className="rounded-2xl border border-foreground/10 bg-card p-4">
@@ -308,12 +330,12 @@ export function OrganizerStudioPage({ initialTab = 'overview' }: { initialTab?: 
             </div>
             <div className="rounded-2xl border border-foreground/10 bg-card p-5">
               <Users size={18} className="text-accent" />
-              <p className="mt-4 font-display text-3xl font-bold">{dash.data?.registrations ?? 0}</p>
+              <p className="mt-4 font-display text-3xl font-bold">{isNum(dash.data?.registrations) ? dash.data.registrations : '—'}</p>
               <p className="text-xs text-muted-foreground">Total Registrations</p>
             </div>
             <div className="rounded-2xl border border-foreground/10 bg-card p-5">
               <TrendingUp size={18} className="text-accent" />
-              <p className="mt-4 font-display text-3xl font-bold">{dash.data?.views ?? 0}</p>
+              <p className="mt-4 font-display text-3xl font-bold">{isNum(dash.data?.views) ? dash.data.views : '—'}</p>
               <p className="text-xs text-muted-foreground">Event Views</p>
             </div>
           </div>
@@ -405,7 +427,7 @@ export function OrganizerStudioPage({ initialTab = 'overview' }: { initialTab?: 
                 <div>
                   <p className="font-display text-base font-bold">{ev.title}</p>
                   <p className="text-xs text-muted-foreground">
-                    {ev.startDate} · {ev.timezone} · Capacity: {ev.attendeeCount} / {ev.capacity}
+                    {ev.startDate} · {ev.timezone} · Capacity: {ev.attendeeCount} / {isNum(ev.capacity) ? ev.capacity : '—'}
                   </p>
                 </div>
                 <span className="rounded-full bg-accent/15 px-3 py-1 font-mono-face text-xs font-bold text-accent">
@@ -427,33 +449,56 @@ export function OrganizerStudioPage({ initialTab = 'overview' }: { initialTab?: 
             </div>
             <LineChart className="text-accent" />
           </div>
+          {(dash.isError || analytics.isError) && (
+            <p className="text-xs text-rose-400">
+              Could not load {dash.isError ? 'dashboard metrics' : 'analytics'}: {errText(dash.isError ? dash.error : analytics.error)}
+            </p>
+          )}
           <div className="grid gap-4 sm:grid-cols-4">
             <div className="rounded-xl border border-foreground/10 bg-background p-4">
               <p className="text-xs text-muted-foreground">Conversion Rate</p>
-              <p className="mt-1 font-display text-2xl font-bold">{dash.data?.conversionRate ?? 4.8}%</p>
+              <p className="mt-1 font-display text-2xl font-bold">
+                {isNum(dash.data?.conversionRate) ? `${dash.data.conversionRate}%` : '—'}
+              </p>
+            </div>
+            <div className="rounded-xl border border-foreground/10 bg-background p-4">
+              <p className="text-xs text-muted-foreground">Event Views</p>
+              <p className="mt-1 font-display text-2xl font-bold">{isNum(dash.data?.views) ? dash.data.views : '—'}</p>
+            </div>
+            <div className="rounded-xl border border-foreground/10 bg-background p-4">
+              <p className="text-xs text-muted-foreground">Total Registrations</p>
+              <p className="mt-1 font-display text-2xl font-bold">
+                {isNum(dash.data?.registrations) ? dash.data.registrations : '—'}
+              </p>
             </div>
             <div className="rounded-xl border border-foreground/10 bg-background p-4">
               <p className="text-xs text-muted-foreground">Attendance Rate</p>
-              <p className="mt-1 font-display text-2xl font-bold">89.4%</p>
-            </div>
-            <div className="rounded-xl border border-foreground/10 bg-background p-4">
-              <p className="text-xs text-muted-foreground">Attendee Agent Matches</p>
-              <p className="mt-1 font-display text-2xl font-bold">Active</p>
-            </div>
-            <div className="rounded-xl border border-foreground/10 bg-background p-4">
-              <p className="text-xs text-muted-foreground">Repeat Organizer Score</p>
-              <p className="mt-1 font-display text-2xl font-bold">94 / 100</p>
+              <p className="mt-1 text-sm font-semibold text-muted-foreground">Not available yet</p>
             </div>
           </div>
-          <div className="flex h-44 items-end gap-2 border-b border-foreground/10 pt-6">
-            {(analytics.data?.views ?? [35, 50, 44, 68, 75, 84, 92]).map((v, i) => (
-              <div
-                key={i}
-                className="flex-1 rounded-t-md bg-accent/80 hover:bg-accent transition-all"
-                style={{ height: `${Math.max(15, Math.min(100, v))}%` }}
-              />
-            ))}
-          </div>
+          {(() => {
+            const series = (Array.isArray(analytics.data?.views) ? analytics.data.views : []).filter(isNum);
+            const max = Math.max(0, ...series);
+            if (!series.length || max === 0) {
+              return (
+                <div className="rounded-xl border border-dashed border-foreground/15 p-8 text-center text-xs text-muted-foreground">
+                  No view data recorded yet.
+                </div>
+              );
+            }
+            return (
+              <div className="flex h-44 items-end gap-2 border-b border-foreground/10 pt-6">
+                {series.map((v, i) => (
+                  <div
+                    key={i}
+                    title={`${v} views`}
+                    className="flex-1 rounded-t-md bg-accent/80 hover:bg-accent transition-all"
+                    style={{ height: `${Math.max(2, (v / max) * 100)}%` }}
+                  />
+                ))}
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -511,7 +556,7 @@ function EventStatusRow({
             </span>
             {event.trustScore != null && (
               <span className="rounded-full bg-muted px-2.5 py-0.5 font-mono-face text-[10px] font-semibold">
-                Trust Score: {event.trustScore}/100 ({event.trustConfidence || 'HIGH'})
+                Trust Score: {event.trustScore}/100{event.trustConfidence ? ` (${event.trustConfidence})` : ''}
               </span>
             )}
             <span className="font-mono-face text-xs text-muted-foreground">
@@ -522,8 +567,8 @@ function EventStatusRow({
             {event.title}
           </Link>
           <p className="text-xs text-muted-foreground">
-            {event.cityName || event.location} · {event.isFree ? 'Free Entry' : `₹${event.price}`} · {event.attendeeCount} /{' '}
-            {event.capacity} registered
+            {event.cityName || event.location || '—'} · {fmtPrice(event.isFree, event.price)} · {event.attendeeCount} /{' '}
+            {isNum(event.capacity) ? event.capacity : '—'} registered
           </p>
         </div>
 
@@ -558,7 +603,11 @@ function EventStatusRow({
           )}
           {state !== 'CANCELLED' && (
             <button
-              onClick={onCancel}
+              onClick={() => {
+                if (window.confirm(`Cancel "${event.title}"? Registered attendees will be affected and this cannot be undone.`)) {
+                  onCancel();
+                }
+              }}
               className="inline-flex items-center gap-1 rounded-full border border-rose-500/30 px-3 py-1.5 text-xs text-rose-400 hover:bg-rose-500/10"
             >
               Cancel
@@ -587,76 +636,94 @@ function MultiStepEventWizard({
   const [createdEvent, setCreatedEvent] = useState<RichEventRecord | null>(null);
   const [error, setError] = useState<string>('');
 
+  // Every field starts empty (or from the organizer's real profile) — nothing is pre-filled
+  // with sample content, and nothing the form doesn't show is sent with invented values.
   const [form, setForm] = useState({
     title: '',
     description: '',
-    organizerName: profile?.organizerName || 'Aarav Mehta',
-    organizationName: profile?.organizationName || 'Voxel Labs',
-    category: 'pharmaceuticals',
-    eventType: 'Conference',
-    startDate: '2026-11-15',
-    endDate: '2026-11-15',
-    startTime: '09:30',
-    endTime: '17:30',
+    organizerName: profile?.organizerName ?? '',
+    organizationName: profile?.organizationName ?? '',
+    category: '',
+    eventType: '',
+    startDate: '',
+    endDate: '',
+    startTime: '',
+    endTime: '',
     timezone: 'Asia/Kolkata',
-    venueName: 'Bangalore International Exhibition Centre',
-    fullAddress: '10th Mile, Tumkur Road, Bengaluru, Karnataka 562123',
-    city: 'Bengaluru',
-    state: 'Karnataka',
-    country: 'India',
+    fullAddress: '',
+    city: '',
+    state: '',
+    country: '',
     format: 'in-person' as 'in-person' | 'online' | 'hybrid',
-    onlineMeetingUrl: 'https://meet.100times.in/main-stage',
-    registrationUrl: 'https://100times.in/register',
-    isFree: false,
-    price: 999,
-    capacity: 300,
-    speakerName: 'Dr. Kavita Rao (Chief AI Scientist)',
-    image: 'https://images.unsplash.com/photo-1540575467063-178a50c2df87?auto=format&fit=crop&w=1200&q=80',
-    contactEmail: profile?.contactEmail || 'events@100times.in',
-    contactPhone: profile?.contactPhone || '+91 9876543210',
-    website: profile?.website || 'https://100times.in',
-    termsPolicy: 'Full refund up to 48 hours before the event start time.',
-    tagsText: 'AI, Systems, Engineering, Summit',
-    targetAudience: 'Founders, AI Engineers, Product Leaders, Researchers',
+    onlineMeetingUrl: '',
+    price: '',
+    capacity: '',
+    targetAudience: '',
+    image: '', // uploaded or ready-made picture URL; '' = none
   });
+
+  // The profile may load after the wizard mounts — fill organizer fields the user hasn't typed into.
+  useEffect(() => {
+    if (!profile) return;
+    setForm((f) => ({
+      ...f,
+      organizerName: f.organizerName || profile.organizerName || '',
+      organizationName: f.organizationName || profile.organizationName || '',
+    }));
+  }, [profile]);
+
+  const categoriesQuery = useListCategories();
+  const categories = categoriesQuery.data ?? [];
+
+  const buildPayload = (saveAsDraft: boolean) => {
+    const priceText = form.price.trim();
+    const priceNum = priceText === '' ? 0 : Number(priceText);
+    const isFree = !(priceNum > 0);
+    const capacityText = form.capacity.trim();
+    const contactInfo: Record<string, string> = {};
+    if (profile?.contactEmail) contactInfo.email = profile.contactEmail;
+    if (profile?.contactPhone) contactInfo.phone = profile.contactPhone;
+    return {
+      title: form.title.trim(),
+      description: form.description.trim(),
+      organizerName: form.organizerName.trim() || null,
+      organizationName: form.organizationName.trim() || null,
+      category: form.category,
+      eventType: form.eventType.trim(),
+      startDate: form.startDate,
+      endDate: form.endDate || form.startDate,
+      startTime: form.startTime,
+      // Explicit nulls so the API doesn't substitute its own defaults for fields left blank.
+      endTime: form.endTime || null,
+      timezone: form.timezone,
+      venueName: null,
+      fullAddress: form.fullAddress.trim() || null,
+      city: form.city.trim(),
+      state: form.state.trim() || null,
+      country: form.country.trim(),
+      format: form.format,
+      onlineMeetingUrl: form.format !== 'in-person' && form.onlineMeetingUrl.trim() ? form.onlineMeetingUrl.trim() : null,
+      registrationUrl: null,
+      isFree,
+      price: isFree ? 0 : priceNum,
+      capacity: capacityText === '' ? null : Number(capacityText),
+      ticketInfo: {},
+      speakerInfo: [],
+      contactInfo,
+      socialLinks: profile?.website ? { website: profile.website } : {},
+      termsPolicy: null,
+      tags: [],
+      targetAudience: form.targetAudience.trim() || null,
+      image: form.image || null,
+      saveAsDraft,
+    };
+  };
 
   const createMutation = useMutation({
     mutationFn: (saveAsDraft: boolean) =>
       customFetch<RichEventRecord>('/api/organizer/events/full', {
         method: 'POST',
-        body: JSON.stringify({
-          title: form.title.trim(),
-          description: form.description.trim(),
-          organizerName: form.organizerName,
-          organizationName: form.organizationName,
-          category: form.category,
-          eventType: form.eventType,
-          startDate: form.startDate,
-          endDate: form.endDate || form.startDate,
-          startTime: form.startTime,
-          endTime: form.endTime,
-          timezone: form.timezone,
-          venueName: form.venueName,
-          fullAddress: form.fullAddress,
-          city: form.city,
-          state: form.state,
-          country: form.country,
-          format: form.format,
-          onlineMeetingUrl: form.onlineMeetingUrl,
-          registrationUrl: form.registrationUrl,
-          isFree: form.isFree,
-          price: form.isFree ? 0 : Number(form.price) || 0,
-          capacity: Number(form.capacity) || 200,
-          ticketInfo: { tier: form.isFree ? 'Free' : 'Standard', refundable: true },
-          speakerInfo: form.speakerName ? [{ name: form.speakerName }] : [],
-          image: form.image,
-          contactInfo: { email: form.contactEmail, phone: form.contactPhone },
-          socialLinks: { website: form.website },
-          termsPolicy: form.termsPolicy,
-          tags: form.tagsText.split(',').map((t) => t.trim()).filter(Boolean),
-          targetAudience: form.targetAudience,
-          saveAsDraft,
-        }),
+        body: JSON.stringify(buildPayload(saveAsDraft)),
       }),
     onSuccess: (res) => {
       setCreatedEvent(res);
@@ -667,6 +734,19 @@ function MultiStepEventWizard({
       setError((err as { message?: string })?.message || 'Could not submit event. Please verify required fields.');
     },
   });
+
+  // "Save as Draft" bypasses native form validation, so check what the API requires.
+  const validateMinimum = () => {
+    if (form.title.trim().length < 3) return 'Add an event title (at least 3 characters).';
+    if (form.description.trim().length < 10) return 'Add a description (at least 10 characters).';
+    if (!form.category) return 'Choose a sector.';
+    if (!form.startDate) return 'Choose a start date.';
+    const price = form.price.trim();
+    if (price !== '' && !(Number(price) >= 0)) return 'Price must be a number (leave blank or 0 for a free event).';
+    const cap = form.capacity.trim();
+    if (cap !== '' && !(Number.isInteger(Number(cap)) && Number(cap) >= 1)) return 'Capacity must be a whole number of at least 1, or left blank.';
+    return '';
+  };
 
   const stepLabels = [
     '1. Basic Details',
@@ -679,8 +759,9 @@ function MultiStepEventWizard({
 
   const handleDirectSubmit = (e: FormEvent) => {
     e.preventDefault();
-    setError('');
-    createMutation.mutate(false);
+    const problem = validateMinimum();
+    setError(problem);
+    if (!problem) createMutation.mutate(false);
   };
 
   return (
@@ -757,6 +838,7 @@ function MultiStepEventWizard({
                 required
                 value={form.eventType}
                 onChange={(e) => setForm({ ...form, eventType: e.target.value })}
+                placeholder="e.g. Conference, Exhibition, Workshop"
                 className="mt-1.5 w-full rounded-xl border border-foreground/15 bg-background px-3.5 py-2.5 text-sm"
                 data-testid="input-event-type"
               />
@@ -764,25 +846,29 @@ function MultiStepEventWizard({
             <label className="block text-xs font-semibold text-muted-foreground">
               Sector *
               <select
+                required
                 value={form.category}
                 onChange={(e) => setForm({ ...form, category: e.target.value })}
                 className="mt-1.5 w-full rounded-xl border border-foreground/15 bg-background px-3.5 py-2.5 text-sm"
                 data-testid="select-event-category"
               >
-                <option value="pharmaceuticals">Pharmaceuticals</option>
-                <option value="healthcare">Healthcare</option>
-                <option value="energy-and-power-generation">Energy and Power Generation</option>
-                <option value="telecommunications">Telecommunications</option>
-                <option value="construction">Construction</option>
-                <option value="mining">Mining</option>
-                <option value="finance">Finance</option>
-                <option value="packaging">Packaging</option>
-                <option value="transport-and-logistics">Transport and Logistics</option>
-                <option value="oil-and-gas">Oil and Gas</option>
-                <option value="textiles">Textiles</option>
-                <option value="manufacturing">Manufacturing</option>
+                <option value="">
+                  {categoriesQuery.isLoading ? 'Loading sectors…' : categoriesQuery.isError ? 'Could not load sectors' : 'Select a sector'}
+                </option>
+                {categories.map((c) => (
+                  <option key={c.slug} value={c.slug}>{c.name}</option>
+                ))}
               </select>
             </label>
+
+            <div className="sm:col-span-2">
+              <EventPictureField
+                sectorSlug={form.category}
+                sectorName={categories.find((c) => c.slug === form.category)?.name}
+                value={form.image}
+                onChange={(image) => setForm((f) => ({ ...f, image }))}
+              />
+            </div>
 
             <label className="block text-xs font-semibold text-muted-foreground">
               Start Date *
@@ -819,6 +905,16 @@ function MultiStepEventWizard({
               />
             </label>
             <label className="block text-xs font-semibold text-muted-foreground">
+              End Time
+              <input
+                type="time"
+                value={form.endTime}
+                onChange={(e) => setForm({ ...form, endTime: e.target.value })}
+                className="mt-1.5 w-full rounded-xl border border-foreground/15 bg-background px-3.5 py-2.5 text-sm"
+                data-testid="input-event-end-time"
+              />
+            </label>
+            <label className="block text-xs font-semibold text-muted-foreground">
               Timezone (IANA) *
               <select
                 value={form.timezone}
@@ -844,7 +940,26 @@ function MultiStepEventWizard({
               />
             </label>
             <label className="block text-xs font-semibold text-muted-foreground">
-              Venue & Full Address *
+              State / Region
+              <input
+                value={form.state}
+                onChange={(e) => setForm({ ...form, state: e.target.value })}
+                className="mt-1.5 w-full rounded-xl border border-foreground/15 bg-background px-3.5 py-2.5 text-sm"
+                data-testid="input-event-state"
+              />
+            </label>
+            <label className="block text-xs font-semibold text-muted-foreground">
+              Country *
+              <input
+                required
+                value={form.country}
+                onChange={(e) => setForm({ ...form, country: e.target.value })}
+                className="mt-1.5 w-full rounded-xl border border-foreground/15 bg-background px-3.5 py-2.5 text-sm"
+                data-testid="input-event-country"
+              />
+            </label>
+            <label className="block text-xs font-semibold text-muted-foreground">
+              Venue & Full Address
               <input
                 value={form.fullAddress}
                 onChange={(e) => setForm({ ...form, fullAddress: e.target.value })}
@@ -865,12 +980,27 @@ function MultiStepEventWizard({
                 <option value="hybrid">Hybrid</option>
               </select>
             </label>
+            {form.format !== 'in-person' && (
+              <label className="block text-xs font-semibold text-muted-foreground">
+                Online Meeting URL
+                <input
+                  type="url"
+                  value={form.onlineMeetingUrl}
+                  onChange={(e) => setForm({ ...form, onlineMeetingUrl: e.target.value })}
+                  placeholder="https://"
+                  className="mt-1.5 w-full rounded-xl border border-foreground/15 bg-background px-3.5 py-2.5 text-sm"
+                  data-testid="input-event-meeting-url"
+                />
+              </label>
+            )}
             <label className="block text-xs font-semibold text-muted-foreground">
               Price (INR)
               <input
                 type="number"
+                min={0}
                 value={form.price}
-                onChange={(e) => setForm({ ...form, price: Number(e.target.value), isFree: Number(e.target.value) === 0 })}
+                onChange={(e) => setForm({ ...form, price: e.target.value })}
+                placeholder="Leave blank or 0 for a free event"
                 className="mt-1.5 w-full rounded-xl border border-foreground/15 bg-background px-3.5 py-2.5 text-sm"
                 data-testid="input-event-price"
               />
@@ -880,13 +1010,16 @@ function MultiStepEventWizard({
               Capacity
               <input
                 type="number"
+                min={1}
+                step={1}
                 value={form.capacity}
-                onChange={(e) => setForm({ ...form, capacity: Number(e.target.value) })}
+                onChange={(e) => setForm({ ...form, capacity: e.target.value })}
+                placeholder="Leave blank if unlimited / not set"
                 className="mt-1.5 w-full rounded-xl border border-foreground/15 bg-background px-3.5 py-2.5 text-sm"
               />
             </label>
             <label className="block text-xs font-semibold text-muted-foreground">
-              Target Audience & Tags
+              Target Audience
               <input
                 value={form.targetAudience}
                 onChange={(e) => setForm({ ...form, targetAudience: e.target.value })}
@@ -901,7 +1034,11 @@ function MultiStepEventWizard({
             <button
               type="button"
               disabled={createMutation.isPending}
-              onClick={() => createMutation.mutate(true)}
+              onClick={() => {
+                const problem = validateMinimum();
+                setError(problem);
+                if (!problem) createMutation.mutate(true);
+              }}
               className="rounded-full border border-foreground/20 px-5 py-3 text-xs font-bold hover:border-accent"
               data-testid="button-save-draft"
             >
@@ -1014,32 +1151,73 @@ function MultiStepEventWizard({
 
 function OrganizerProfileForm({ profile }: { profile?: OrganizerProfileData }) {
   const qc = useQueryClient();
+  const [, setLocation] = useLocation();
   const [saved, setSaved] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [form, setForm] = useState({
-    organizerName: profile?.organizerName || 'Aarav Mehta',
-    organizationName: profile?.organizationName || 'Voxel Labs',
-    contactEmail: profile?.contactEmail || 'aarav@100times.in',
-    contactPhone: profile?.contactPhone || '+91 9876543210',
-    website: profile?.website || 'https://100times.in',
-    city: profile?.city || 'Bengaluru',
-    state: profile?.state || 'Karnataka',
-    country: profile?.country || 'India',
-    bio: profile?.bio || 'Curating high-signal technical conferences and founder rooms across India.',
+  const [signingOut, setSigningOut] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const fromProfile = (pr?: OrganizerProfileData) => ({
+    organizerName: pr?.organizerName ?? '',
+    organizationName: pr?.organizationName ?? '',
+    contactEmail: pr?.contactEmail ?? '',
+    contactPhone: pr?.contactPhone ?? '',
+    website: pr?.website ?? '',
+    city: pr?.city ?? '',
+    state: pr?.state ?? '',
+    country: pr?.country ?? '',
+    bio: pr?.bio ?? '',
   });
+  const [form, setFormState] = useState(() => fromProfile(profile));
+  const setForm = (next: ReturnType<typeof fromProfile>) => {
+    setDirty(true);
+    setFormState(next);
+  };
+
+  // The profile usually arrives after first render — keep the form in sync with it until the user edits.
+  useEffect(() => {
+    if (profile && !dirty) setFormState(fromProfile(profile));
+  }, [profile, dirty]);
 
   const onboardingMutation = useMutation({
     mutationFn: () =>
       customFetch('/api/organizer/onboarding', {
         method: 'POST',
-        body: JSON.stringify(form),
+        // Only what this form edits. socialLinks is passed through unchanged from the saved
+        // profile because the onboarding endpoint would otherwise reset it to empty.
+        body: JSON.stringify({
+          organizerName: form.organizerName.trim(),
+          organizationName: form.organizationName.trim(),
+          contactEmail: form.contactEmail.trim(),
+          contactPhone: form.contactPhone.trim() || null,
+          website: form.website.trim() || null,
+          city: form.city.trim() || null,
+          state: form.state.trim() || null,
+          country: form.country.trim() || null,
+          bio: form.bio.trim() || null,
+          socialLinks: profile?.socialLinks ?? {},
+        }),
       }),
     onSuccess: () => {
       setSaved(true);
+      setDirty(false);
       qc.invalidateQueries({ queryKey: ['organizer-profile'] });
       window.setTimeout(() => setSaved(false), 2500);
     },
   });
+
+  const signOut = async () => {
+    setSigningOut(true);
+    try {
+      await customFetch('/api/auth/logout', { method: 'POST' });
+    } catch {
+      // Still clear the local session below even if the server call fails.
+    } finally {
+      localStorage.removeItem('100-times-auth-token');
+      window.dispatchEvent(new Event('auth-change'));
+      qc.clear();
+      setLocation('/login');
+    }
+  };
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -1111,7 +1289,35 @@ function OrganizerProfileForm({ profile }: { profile?: OrganizerProfileData }) {
             className="mt-1.5 w-full rounded-xl border border-foreground/15 bg-background px-3 py-2 text-xs"
           />
         </label>
+        <label className="block text-xs font-semibold text-muted-foreground">
+          State / Region
+          <input
+            value={form.state}
+            onChange={(e) => setForm({ ...form, state: e.target.value })}
+            className="mt-1.5 w-full rounded-xl border border-foreground/15 bg-background px-3 py-2 text-xs"
+          />
+        </label>
+        <label className="block text-xs font-semibold text-muted-foreground">
+          Country
+          <input
+            value={form.country}
+            onChange={(e) => setForm({ ...form, country: e.target.value })}
+            className="mt-1.5 w-full rounded-xl border border-foreground/15 bg-background px-3 py-2 text-xs"
+          />
+        </label>
+        <label className="block text-xs font-semibold text-muted-foreground sm:col-span-2">
+          About the organization
+          <textarea
+            value={form.bio}
+            onChange={(e) => setForm({ ...form, bio: e.target.value })}
+            className="mt-1.5 min-h-20 w-full rounded-xl border border-foreground/15 bg-background px-3 py-2 text-xs"
+          />
+        </label>
       </div>
+
+      {onboardingMutation.isError && (
+        <p className="text-xs text-rose-400">Could not save the profile: {errText(onboardingMutation.error)}</p>
+      )}
 
       <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
         <button
@@ -1123,14 +1329,11 @@ function OrganizerProfileForm({ profile }: { profile?: OrganizerProfileData }) {
         </button>
         <button
           type="button"
-          onClick={() => {
-            localStorage.removeItem('100-times-auth-token');
-            window.dispatchEvent(new Event('auth-change'));
-            window.location.href = '/login';
-          }}
-          className="rounded-full border border-destructive/30 px-4 py-2 text-xs font-semibold text-destructive hover:bg-destructive/10"
+          onClick={signOut}
+          disabled={signingOut}
+          className="rounded-full border border-destructive/30 px-4 py-2 text-xs font-semibold text-destructive hover:bg-destructive/10 disabled:opacity-50"
         >
-          Sign out of organizer account
+          {signingOut ? 'Signing out…' : 'Sign out of organizer account'}
         </button>
         <button
           type="button"

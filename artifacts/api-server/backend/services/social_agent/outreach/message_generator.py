@@ -28,7 +28,7 @@ class OutreachEmailAI(BaseModel):
 _SYSTEM_PROMPT = (
     "You write ONE short, professional, non-spammy outreach email inviting a real event "
     "organizer to list their event on 100Times, an event discovery platform where people find "
-    "events happening across India. The event can be about ANY subject — never assume a "
+    "events to attend (in any country). The event can be about ANY subject — never assume a "
     "category. Only reference facts given to you; never invent event details, attendance "
     "figures, guaranteed reach/results, or misleading claims. "
     "Structure: address the organizer by name if given, a brief line on why you're reaching out "
@@ -36,7 +36,8 @@ _SYSTEM_PROMPT = (
     "the event to a wider audience, a clear call to action with the given listing URL, and a "
     "closing note that they're welcome to list other upcoming events too. Plain and genuine — "
     "no exclamation-heavy enthusiasm, no fake urgency, no bullet lists, no guaranteed-attendee "
-    "or guaranteed-revenue claims. Call the `write_outreach_email` tool exactly once."
+    "or guaranteed-revenue claims. Sign off with the sender name given to you. "
+    "Call the `write_outreach_email` tool exactly once."
 )
 
 _FOLLOWUP_SYSTEM_PROMPT = (
@@ -65,26 +66,31 @@ def _event_context_lines(event: EventDetails) -> str:
     return "\n".join(lines)
 
 
-def _deterministic_initial(event: EventDetails, organizer: OrganizerContactInfo) -> OutreachEmailAI:
+def _signature(sender_name: str | None) -> str:
+    """The saved outreach sender name ("Outreach settings"), else the team name."""
+    return (sender_name or "").strip() or "100Times Team"
+
+
+def _deterministic_initial(event: EventDetails, organizer: OrganizerContactInfo, sender_name: str | None = None) -> OutreachEmailAI:
     organizer_name = organizer.name or "there"
     event_name = event.name or "your event"
-    location = event.city or event.venue or event.location or "your area"
+    location = event.city or event.venue or event.location
+    where = f" in {location}" if location else ""
     return OutreachEmailAI(
         subject=f"Help more people discover {event_name} on 100Times",
         body=(
             f"Hi {organizer_name},\n\n"
-            f"I came across {event_name} and noticed you're organizing it in {location}.\n\n"
-            f"We run 100Times, an event discovery platform where people can discover events "
-            f"happening across India.\n\n"
+            f"I came across {event_name}{where} and wanted to reach out.\n\n"
+            f"We run 100Times, an event discovery platform where people find events to attend.\n\n"
             f"We'd love to help you showcase {event_name} to a wider audience by listing it on "
             f"100Times. You can list your event here:\n{_platform_url()}\n\n"
             f"If you have upcoming events as well, we'd be happy to have them listed on the "
-            f"platform too.\n\nBest regards,\n100Times Team\n{_platform_url()}"
+            f"platform too.\n\nBest regards,\n{_signature(sender_name)}\n{_platform_url()}"
         ),
     )
 
 
-def _deterministic_followup(event: EventDetails, organizer: OrganizerContactInfo) -> OutreachEmailAI:
+def _deterministic_followup(event: EventDetails, organizer: OrganizerContactInfo, sender_name: str | None = None) -> OutreachEmailAI:
     event_name = event.name or "your event"
     return OutreachEmailAI(
         subject=f"Following up: {event_name} on 100Times",
@@ -92,12 +98,18 @@ def _deterministic_followup(event: EventDetails, organizer: OrganizerContactInfo
             f"Hi {organizer.name or 'there'},\n\n"
             f"Just following up on our earlier note about listing {event_name} on 100Times — "
             f"no worries at all if now isn't the right time. If you'd like to explore it, the "
-            f"link is still here:\n{_platform_url()}\n\nBest regards,\n100Times Team"
+            f"link is still here:\n{_platform_url()}\n\nBest regards,\n{_signature(sender_name)}"
         ),
     )
 
 
-def _try_ai(system_prompt: str, event: EventDetails, organizer: OrganizerContactInfo) -> OutreachEmailAI | None:
+def _try_ai(
+    system_prompt: str,
+    event: EventDetails,
+    organizer: OrganizerContactInfo,
+    sender_name: str | None = None,
+    template_style: str | None = None,
+) -> OutreachEmailAI | None:
     client = get_ai_client()
     if not client.is_configured:
         return None
@@ -105,6 +117,8 @@ def _try_ai(system_prompt: str, event: EventDetails, organizer: OrganizerContact
         f"Organizer name: {organizer.name or 'unknown'}\n"
         f"{_event_context_lines(event)}\n"
         f"100Times listing URL: {_platform_url()}\n"
+        f"Sender (sign off as): {_signature(sender_name)}\n"
+        + (f"Tone/style: {template_style}\n" if template_style else "")
     )
     try:
         raw = client.generate_structured(
@@ -119,15 +133,19 @@ def _try_ai(system_prompt: str, event: EventDetails, organizer: OrganizerContact
         return None
 
 
-def generate_outreach_message(event: EventDetails, organizer: OrganizerContactInfo) -> tuple[OutreachEmailAI, str]:
-    ai_result = _try_ai(_SYSTEM_PROMPT, event, organizer)
+def generate_outreach_message(
+    event: EventDetails, organizer: OrganizerContactInfo, *, sender_name: str | None = None, template_style: str | None = None
+) -> tuple[OutreachEmailAI, str]:
+    ai_result = _try_ai(_SYSTEM_PROMPT, event, organizer, sender_name, template_style)
     if ai_result is not None:
         return ai_result, "ai"
-    return _deterministic_initial(event, organizer), "deterministic_fallback"
+    return _deterministic_initial(event, organizer, sender_name), "deterministic_fallback"
 
 
-def generate_followup_message(event: EventDetails, organizer: OrganizerContactInfo) -> tuple[OutreachEmailAI, str]:
-    ai_result = _try_ai(_FOLLOWUP_SYSTEM_PROMPT, event, organizer)
+def generate_followup_message(
+    event: EventDetails, organizer: OrganizerContactInfo, *, sender_name: str | None = None, template_style: str | None = None
+) -> tuple[OutreachEmailAI, str]:
+    ai_result = _try_ai(_FOLLOWUP_SYSTEM_PROMPT, event, organizer, sender_name, template_style)
     if ai_result is not None:
         return ai_result, "ai"
-    return _deterministic_followup(event, organizer), "deterministic_fallback"
+    return _deterministic_followup(event, organizer, sender_name), "deterministic_fallback"

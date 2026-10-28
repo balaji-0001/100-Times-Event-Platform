@@ -14,6 +14,12 @@ from backend.services.discovery_agent.adapters.api_adapters import (
     TicketmasterAdapter,
 )
 from backend.services.discovery_agent.adapters.base import BaseSourceAdapter
+from backend.services.discovery_agent.adapters.dmg_events import DmgEventsAdapter
+from backend.services.discovery_agent.adapters.eventseye import EventsEyeAdapter
+from backend.services.discovery_agent.adapters.fair_calendars import CmtEventsAdapter, ExpolyaAdapter, KoelnmesseAdapter, MesseDuesseldorfAdapter
+from backend.services.discovery_agent.adapters.ieee_vtools import IeeeVToolsAdapter
+from backend.services.discovery_agent.adapters.informa import InformaMarketsAdapter
+from backend.services.discovery_agent.adapters.tradefairdates import TradeFairDatesAdapter
 from backend.services.discovery_agent.adapters.html_listing import HtmlListingAdapter
 from backend.services.discovery_agent.adapters.rss_ical import RssIcalAdapter
 from backend.services.discovery_agent.adapters.schema_org import SchemaOrgAdapter
@@ -22,6 +28,9 @@ from backend.services.discovery_agent.source_registry import ALL_CANDIDATE_SOURC
 from backend.services.discovery_agent.types import DiscoveryConfig, ExtractedEventCandidate
 
 logger = logging.getLogger("discovery_agent.adapters.manager")
+
+# Calendars with their own site-specific reader (see fair_calendars.py).
+_CALENDAR_ADAPTERS = {"expolya": ExpolyaAdapter, "messe_duesseldorf": MesseDuesseldorfAdapter, "koelnmesse": KoelnmesseAdapter, "cmt_events": CmtEventsAdapter}
 
 
 class SourceAdapterManager:
@@ -41,8 +50,21 @@ class SourceAdapterManager:
             method = src["access_method"]
             cfg = src.get("config", {})
 
+            # Site-specific readers first.
+            if sid == "eventseye":
+                self._adapters[sid] = EventsEyeAdapter(source_id=sid, name=name, website_url=url, category=cat, config=cfg)
+            elif sid == "tradefairdates":
+                self._adapters[sid] = TradeFairDatesAdapter(source_id=sid, name=name, website_url=url, category=cat, config=cfg)
+            elif sid == "dmg_events":
+                self._adapters[sid] = DmgEventsAdapter(source_id=sid, name=name, website_url=url, category=cat, config=cfg)
+            elif sid == "ieee_events":
+                self._adapters[sid] = IeeeVToolsAdapter(source_id=sid, name=name, website_url=url, category=cat, config=cfg)
+            elif sid == "informa_markets":
+                self._adapters[sid] = InformaMarketsAdapter(source_id=sid, name=name, website_url=url, category=cat, config=cfg)
+            elif sid in _CALENDAR_ADAPTERS:
+                self._adapters[sid] = _CALENDAR_ADAPTERS[sid](source_id=sid, name=name, website_url=url, category=cat, config=cfg)
             # Special case: Ticketmaster API
-            if sid == "ticketmaster_api":
+            elif sid == "ticketmaster_api":
                 self._adapters[sid] = TicketmasterAdapter(
                     source_id=sid, name=name, website_url=url, category=cat, config=cfg
                 )

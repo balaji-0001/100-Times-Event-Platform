@@ -5,6 +5,9 @@
 # Default usage (n8n + Postgres only, FastAPI keeps running natively):
 #   docker compose up -d
 #
+# Discovery web search only (SearXNG):
+#   docker compose up -d searxng
+#
 # Full stack including a containerized FastAPI (rarely needed — the native
 # `py -3 -m uvicorn` flow is the primary documented dev path):
 #   docker compose --profile full up -d
@@ -36,6 +39,19 @@ services:
       - POSTGRES_DB=hundredtimes
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
+  # Keyless whole-web search for the Discovery Agent (see infra/searxng/settings.yml).
+  # The backend reads it from SEARXNG_URL=http://127.0.0.1:8888 in api-server/.env.
+  searxng:
+    image: searxng/searxng:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8888:8080"
+    environment:
+      - SEARXNG_BASE_URL=http://127.0.0.1:8888/
+      - SEARXNG_SECRET=${SEARXNG_SECRET:-change-this-in-production}
+    volumes:
+      - ./infra/searxng/settings.yml:/etc/searxng/settings.yml:ro
 
   fastapi:
     build:

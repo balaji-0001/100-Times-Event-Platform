@@ -249,7 +249,7 @@ def test_outreach_marks_organizer_not_found(db_session, monkeypatch):
     assert db_session.query(OutreachMessage).count() == 0
 
 
-def test_outreach_drafts_and_requires_human_approval_before_sending(db_session, monkeypatch):
+def test_outreach_drafts_and_requires_human_approval_before_sending(db_session, monkeypatch, delivering_email_provider):
     """Per the architecture spec, outreach must never auto-send — it always
     stops at a drafted, awaiting-approval message. Sending only happens via
     an explicit `send_outreach_message` call (the dashboard's "Approve &
@@ -279,7 +279,7 @@ def test_outreach_drafts_and_requires_human_approval_before_sending(db_session, 
     assert message.sent_at is not None
 
 
-def test_outreach_prevents_duplicate_initial_send(db_session, monkeypatch):
+def test_outreach_prevents_duplicate_initial_send(db_session, monkeypatch, delivering_email_provider):
     from backend.services.social_agent.outreach import orchestrator
 
     contact = OrganizerContactInfo(found=True, name="Pune Riders Collective", email="hello@puneriders.test", website="https://example-events.test", source_url="https://example-events.test")
@@ -340,7 +340,7 @@ def test_outreach_respects_daily_cap_at_send_time(db_session, monkeypatch):
 
 # --- Follow-up sweep ---
 
-def test_followup_drafted_after_window_then_completed_after_second_window(db_session, monkeypatch):
+def test_followup_drafted_after_window_then_completed_after_second_window(db_session, monkeypatch, delivering_email_provider):
     """Stage 1 DRAFTS the follow-up and stops at FOLLOW_UP_DUE — it does not
     auto-send, per the 'never send automatically' rule (no follow-up
     carve-out). A human still approves+sends it like any other message."""
@@ -408,3 +408,44 @@ def test_followup_only_drafted_once(db_session, monkeypatch):
 
     summary = process_followups(db_session)
     assert summary["followUpsDrafted"] == 0  # already had a follow-up — MVP drafts only one
+
+
+def test_send_without_smtp_is_not_reported_as_delivered(db_session, monkeypatch):
+    """No SMTP configured -> the mock provider only logs to the Outbox; the
+    message must stay unsent (retryable), not be marked DELIVERED."""
+    from backend.services.social_agent.outreach import orchestrator as outreach_orchestrator
+    from backend.services.social_agent.outreach.senders import MockEmailProvider
+
+    monkeypatch.setattr(outreach_orchestrator, "get_email_provider", lambda: MockEmailProvider())
+    event = DiscoveredEvent(name="Fair 2099", discovered_by="web_discovery_agent")
+    organizer = DiscoveredOrganizer(name="Fair Org", email="org@fair.test")
+    db_session.add_all([event, organizer])
+    db_session.flush()
+    message = OutreachMessage(event_id=event.id, organizer_id=organizer.id, recipient="org@fair.test", subject="Hello", message="Body", status="APPROVED")
+    db_session.add(message)
+    db_session.flush()
+
+    outcome = send_outreach_message(db_session, message)
+
+    assert outcome == "APPROVED"
+    assert message.status == "APPROVED" and message.sent_at is None
+    assert "SMTP is not configured" in (message.failure_reason or "")
+
+
+def test_outreach_candidates_can_be_limited_to_sectors(db_session):
+    """The outreach settings' sector filter used a field the discovered-event
+    model doesn't have (event_category), so any sector choice crashed the batch."""
+    from backend.services.social_agent.outreach import eligibility
+    from backend.services.social_agent.outreach.types import OutreachRunConfig
+
+    for name, category in (("Build Expo 2099", "Construction"), ("Pharma Meet 2099", "Pharmaceuticals")):
+        organizer = DiscoveredOrganizer(name=f"{name} Org", email=f"info@{name.split()[0].lower()}.test")
+        db_session.add(organizer)
+        db_session.flush()
+        db_session.add(DiscoveredEvent(name=name, category=category, organizer_id=organizer.id, organizer_status="FOUND",
+                                       verification_status="VERIFIED", discovered_by="web_discovery_agent"))
+    db_session.flush()
+
+    eligible, _ = eligibility.find_eligible_candidates(db_session, OutreachRunConfig(max_candidates=10, categories=["construction"]))
+
+    assert [event.name for event, _ in eligible] == ["Build Expo 2099"]

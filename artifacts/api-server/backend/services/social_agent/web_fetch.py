@@ -58,8 +58,8 @@ _host_lock = threading.Lock()
 # Successful reads live for _PAGE_TTL_SECONDS. Permanent failures (404/410/
 # 451, non-HTML) are remembered for _FAILURE_TTL_SECONDS so they're never
 # retried; transient ones (timeouts, 5xx, 429) are not cached at all. 401/403
-# are NOT treated as permanent: they're usually bot walls that the headless
-# browser fallback can still get through.
+# are not cached either (a site may lift its block), but they are respected:
+# a page that refused us is never retried in the headless browser.
 _PAGE_TTL_SECONDS = 30 * 60
 _FAILURE_TTL_SECONDS = 6 * 60 * 60
 _CACHE_MAX_ENTRIES = 3000
@@ -72,6 +72,8 @@ _cache_stats = {"hits": 0, "misses": 0, "permanent_failure_skips": 0}
 # callers can report a real failure instead of "no events" (bounded, recent-first).
 _failure_reasons: dict[str, str] = {}
 _FAILURE_REASONS_MAX = 2000
+# Pages `fetch` already had to render in the browser (no point re-rendering them).
+_rendered_urls: set[str] = set()
 # Feeds (RSS / Atom / iCal) are read only by callers that ask for them.
 _FEED_TYPES = ("xml", "rss", "atom", "calendar")
 
@@ -81,8 +83,15 @@ def clear_cache() -> None:
         _page_cache.clear()
         _failed_urls.clear()
         _failure_reasons.clear()
+        _rendered_urls.clear()
         for key in _cache_stats:
             _cache_stats[key] = 0
+
+
+def was_rendered(url: str) -> bool:
+    """True when the cached copy of `url` already came from the browser."""
+    with _cache_lock:
+        return url in _rendered_urls
 
 
 def failure_reason(url: str) -> str | None:
@@ -182,12 +191,20 @@ def fetch(url: str, render_js: bool = False, allow_feed: bool = False) -> str | 
     if render_js:
         _wait_for_host(url)
     html = _http_get(url, allow_feed=True) if allow_feed else _http_get(url)
-    if render_js and not allow_feed and (html is None or is_thin_page(html)) and not is_known_permanent_failure(url):
+    refused = html is None and (failure_reason(url) or "").startswith(("HTTP 401", "HTTP 403", "HTTP 429"))
+    # A thin JavaScript shell or a network failure may render fine in the
+    # browser; a server that explicitly refused us (bot protection, rate
+    # limit) is respected, not retried in a browser to get around it.
+    if render_js and not allow_feed and not refused and (html is None or is_thin_page(html)) and not is_known_permanent_failure(url):
         from backend.services.social_agent import browser_fetch
 
         rendered = browser_fetch.render(url)
         if rendered:
             html = rendered
+            with _cache_lock:
+                if len(_rendered_urls) >= _CACHE_MAX_ENTRIES:
+                    _rendered_urls.clear()
+                _rendered_urls.add(url)
     if html is not None:
         _note_failure(url, None)
         _cache_put(url, render_js, html)
@@ -363,3 +380,184 @@ def extract_phone(html: str) -> str | None:
     +91-prefixed) — never invented, `None` when nothing matches."""
     match = re.search(r"(?:\+?91[\s-]?)?[6-9]\d{9}\b", html)
     return match.group(0).strip() if match else None
+
+
+# --- Organizer contact details (Event Discovery Agent, Stage 5) --------------
+# Everything below reads only what the page publishes — in its structured
+# data, its links and attributes, or its visible text — and validates it.
+
+_CF_EMAIL_HREF = "/cdn-cgi/l/email-protection#"
+# "info [at] fair.de", "info(at)fair(dot)de" — a common way to hide addresses
+# from scrapers. Only the bracketed forms: a bare " at " is ordinary English.
+_OBFUSCATED_EMAIL_RE = re.compile(
+    r"(?<![\w.%+-])([\w.%+-]{1,64})\s*[\[({]\s*at\s*[\])}]\s*([a-z0-9-]{1,63}(?:\s*(?:[\[({]\s*dot\s*[\])}]|\.)\s*[a-z0-9-]{1,63}){1,4})",
+    re.IGNORECASE,
+)
+_OBFUSCATED_DOT_RE = re.compile(r"\s*(?:[\[({]\s*dot\s*[\])}]|\.)\s*", re.IGNORECASE)
+_PHONE_LABEL_RE = re.compile(
+    r"\b(?:phone|telephone|tel|mobile|mob|cell|call(?:\s+us)?|ph|hotline|helpline|whatsapp|telefon|fon)\b\.?\s*(?:no\.?|number|nr\.?)?\s*[:.\-–]?\s*"
+    r"(\+?\(?\d[\d\s().\/-]{5,22}\d)",
+    re.IGNORECASE,
+)
+_INTL_PHONE_RE = re.compile(r"(?<![\w+])\+\d{1,3}[\s.-]?(?:\(\d{1,5}\)[\s.-]?)?\d{1,5}(?:[\s.\/-]?\d{2,5}){1,4}(?!\d)")
+# "… organised by X" anywhere; a bare "Organizer"/"Veranstalter" only as a
+# label (line start or followed by a colon), not "contact the organizer for …".
+_ORGANIZER_PHRASE_RE = re.compile(r"\b(?:organi[sz]ed|hosted|presented)\s+by\b\s*[:\-–]?\s*", re.IGNORECASE)
+_ORGANIZER_LABEL_RE = re.compile(r"\b(?:organi[sz]ers?|veranstalter|organisateur|organizador)\b\s*(:?)\s*", re.IGNORECASE)
+_ORGANIZER_HINT_RE = re.compile(r"organi[sz]|hosted\s+by|presented\s+by|veranstalter|organisateur|organizador", re.IGNORECASE)
+# Where a labelled name ends: a separator, a sentence end (not "Pvt. Ltd."), "in association with …".
+_NAME_STOP_RE = re.compile(
+    r"\s*(?:[|•;]|(?<!\bPvt)(?<!\bLtd)(?<!\bInc)(?<!\bCo)(?<!\bCorp)(?<!\bSt)(?<!\bDr)(?<!\bNo)\.\s+(?=[A-Z])|\s[-–]\s"
+    r"|\bin\s+(?:association|partnership|cooperation)\b|\bsupported\s+by\b|\bwith\s+support\b).*$",
+    re.DOTALL,
+)
+_NON_VISIBLE_TAGS = ("script", "style", "noscript", "template", "svg")
+
+
+def decode_cf_email(encoded: str | None) -> str | None:
+    """Cloudflare "email protection" serves each address as hex XOR-ed with
+    its first byte and decodes it in the browser; this is the same decoding."""
+    try:
+        key = int(encoded[:2], 16)
+        return "".join(chr(int(encoded[i:i + 2], 16) ^ key) for i in range(2, len(encoded), 2)) or None
+    except (TypeError, ValueError):
+        return None
+
+
+def visible_text(soup: BeautifulSoup) -> str:
+    """The page's human-readable text (no script/style contents)."""
+    parts = [s for s in soup.find_all(string=True) if s.parent is not None and s.parent.name not in _NON_VISIBLE_TAGS]
+    return " ".join(" ".join(parts).split())
+
+
+def _as_list(value) -> list:
+    return value if isinstance(value, list) else [value] if value is not None else []
+
+
+def _ld_contacts(node: dict) -> tuple[list[str], list[str]]:
+    """E-mails and phone numbers a schema.org node publishes, incl. its contactPoint(s)."""
+    emails, phones = [], []
+    for item in [node, *(_as_list(node.get("contactPoint")))]:
+        if not isinstance(item, dict):
+            continue
+        emails += [e.replace("mailto:", "").strip() for e in _as_list(item.get("email")) if isinstance(e, str)]
+        phones += [p.strip() for p in _as_list(item.get("telephone")) if isinstance(p, str)]
+    return emails, phones
+
+
+def json_ld_organizer_details(soup: BeautifulSoup, include_site_owner: bool = False) -> dict:
+    """The organizer an Event declares in schema.org data (an object, a list of
+    them, or just a name). With `include_site_owner`, also the Organization the
+    page describes — right on an organizer's own site, wrong on a ticketing
+    platform (that Organization is the platform)."""
+    found: dict = {"name": None, "website": None, "emails": [], "phones": []}
+    owners: list[dict] = []
+    for node in find_json_ld_nodes(soup):
+        for organizer in _as_list(node.get("organizer")):
+            if isinstance(organizer, str):
+                found["name"] = found["name"] or organizer.strip() or None
+            elif isinstance(organizer, dict):
+                found["name"] = found["name"] or (organizer.get("name") or "").strip() or None
+                url = next((u for u in _as_list(organizer.get("url")) if isinstance(u, str) and u.strip()), None)
+                found["website"] = found["website"] or url
+                emails, phones = _ld_contacts(organizer)
+                found["emails"] += emails
+                found["phones"] += phones
+        if include_site_owner and str(node.get("@type")) in ("Organization", "Corporation", "LocalBusiness", "NGO", "EducationalOrganization", "GovernmentOrganization"):
+            owners.append(node)
+    for node in owners:
+        emails, phones = _ld_contacts(node)
+        found["emails"] += emails
+        found["phones"] += phones
+        if not found["name"] and isinstance(node.get("name"), str) and (emails or phones):
+            found["name"] = node["name"].strip() or None
+    return found
+
+
+def find_emails(html: str, soup: BeautifulSoup, page_url: str | None = None, structured: list[str] | None = None) -> list[str]:
+    """Every valid public e-mail on the page, best first: declared in structured
+    data, then mailto links, Cloudflare-protected addresses, "[at]"-obfuscated
+    text, and finally any address in the markup. Within the page's own
+    (non-structured) addresses, ones on the page's own domain come first."""
+    from backend.services.discovery_agent.email_verifier import is_valid_organizer_email
+
+    raw: list[str] = []
+    for anchor in soup.find_all("a", href=True):
+        href = anchor["href"].strip()
+        if href.lower().startswith("mailto:"):
+            raw.append(href.split(":", 1)[1].split("?")[0])
+        elif _CF_EMAIL_HREF in href:
+            raw.append(decode_cf_email(href.split("#", 1)[1]) or "")
+    raw += [decode_cf_email(tag.get("data-cfemail")) or "" for tag in soup.select("[data-cfemail]")]
+    text = visible_text(soup)
+    for local, domain in _OBFUSCATED_EMAIL_RE.findall(text):
+        raw.append(local + "@" + _OBFUSCATED_DOT_RE.sub(".", domain))
+    raw += [m.group(0) for m in EMAIL_RE.finditer(html)]
+
+    def valid(values):
+        out = []
+        for value in values:
+            ok, norm, _ = is_valid_organizer_email(unescape(value or "").strip())
+            if ok and norm not in out:
+                out.append(norm)
+        return out
+
+    own = valid(raw)
+    site = (urlparse(page_url or "").netloc or "").lower().removeprefix("www.")
+    if site:
+        own.sort(key=lambda e: not (site.endswith(e.split("@", 1)[1]) or e.split("@", 1)[1].endswith(site)))
+    declared = valid(structured or [])
+    return declared + [e for e in own if e not in declared]
+
+
+def _clean_phone(value: str) -> str | None:
+    value = " ".join(unescape(value).replace(" ", " ").split()).strip(" .-/")
+    digits = re.sub(r"\D", "", value)
+    if not 7 <= len(digits) <= 15 or len(set(digits)) == 1:
+        return None
+    return value
+
+
+def find_phone(html: str, soup: BeautifulSoup, structured: list[str] | None = None, india_fallback: bool = True) -> str | None:
+    """The first public phone number: declared in structured data, a `tel:`
+    link, a labelled number ("Phone: …", "Tel.") or an international
+    "+CC …" number in the visible text — any country, not just India."""
+    from urllib.parse import unquote
+
+    for value in structured or []:
+        if (phone := _clean_phone(value)):
+            return phone
+    for anchor in soup.find_all("a", href=True):
+        if anchor["href"].lower().startswith("tel:") and (phone := _clean_phone(unquote(anchor["href"][4:]))):
+            return phone
+    text = visible_text(soup)
+    for pattern in (_PHONE_LABEL_RE, _INTL_PHONE_RE):
+        for match in pattern.finditer(text):
+            if (phone := _clean_phone(match.group(match.lastindex or 0))):
+                return phone
+    return extract_phone(text) if india_fallback else None
+
+
+def find_labelled_organizer(soup: BeautifulSoup) -> str | None:
+    """A name the page itself labels as the organizer ("Organised by: X",
+    "Veranstalter: X") — the label's own line or the element right after it."""
+    for node in soup.find_all(string=_ORGANIZER_HINT_RE):
+        if node.parent is None or node.parent.name in _NON_VISIBLE_TAGS:
+            continue
+        if node.find_parent(["a", "nav", "button", "select", "option", "title"]) is not None:
+            continue  # a menu entry "Organizers" labels a page, not a name
+        line = " ".join(node.parent.get_text(" ", strip=True).split())
+        match = _ORGANIZER_PHRASE_RE.search(line)
+        if match is None:
+            label = _ORGANIZER_LABEL_RE.search(line)
+            match = label if label is not None and (label.start() == 0 or label.group(1)) else None
+        if match is None:
+            continue
+        rest = line[match.end():]
+        if len(rest) < 2:
+            following = node.find_next(string=lambda s: bool(s and s.strip()) and s.parent is not None and s.parent.name not in _NON_VISIBLE_TAGS)
+            rest = " ".join(following.split()) if following else ""
+        name = _NAME_STOP_RE.sub("", rest).strip(" :,-–")
+        if 2 < len(name) <= 80 and "@" not in name and "http" not in name.lower() and not name.lower().startswith(("the organi", "us", "our ", "you")):
+            return name
+    return None

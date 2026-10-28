@@ -18,11 +18,13 @@ class MockEmailProvider(EmailProvider):
 
     def send_message(self, recipient: str, subject: str, body: str, html: str | None = None) -> SendResult:
         message_id = f"mock-{uuid.uuid4().hex[:12]}"
-        logger.info("MOCK email logged -> %s | subject=%r | id=%s", recipient, subject, message_id)
-        msg = "MOCK provider — logged to console & Outbox (SMTP not configured)."
-        record_outbox(recipient, subject, body, html, provider="mock", status="MOCK_LOGGED", message_id=message_id)
+        logger.info("MOCK email logged (NOT sent) -> %s | subject=%r | id=%s", recipient, subject, message_id)
+        msg = "Not sent: SMTP is not configured. The message was only logged to the Outbox."
+        record_outbox(recipient, subject, body, html, provider="mock", status="NOT_SENT", message_id=message_id)
+        # Nothing reached an inbox, so this is not a success: callers must not
+        # mark the message delivered (and block a real send later as a duplicate).
         return SendResult(
-            success=True,
-            message_id=message_id,
+            success=False,
+            message_id=None,
             message=msg,
         )

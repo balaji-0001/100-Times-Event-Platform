@@ -161,30 +161,79 @@ async def _run_attendee_notifications_tick() -> None:
         db.close()
 
 
-async def _loop(name: str, interval_minutes: int, tick) -> None:
-    interval_seconds = max(interval_minutes, 1) * 60
-    logger.info("Starting %s loop (every %d minute(s))", name, interval_minutes)
+def _saved_discovery_interval(default: int):
+    """Automatic discovery's interval from the saved Discovery configuration,
+    read at every cycle (falls back to DISCOVERY_SCAN_INTERVAL_MINUTES)."""
+    def interval() -> int:
+        from backend.services.discovery_agent.auto_toggle import get_discovery_auto_settings
+
+        try:
+            with SessionLocal() as db:
+                value = get_discovery_auto_settings(db).get("interval_minutes")
+            return int(value) if isinstance(value, (int, float)) and value > 0 else default
+        except Exception:
+            return default
+
+    return interval
+
+
+def _saved_outreach_interval(key: str, default: int):
+    """An interval read from the saved Outreach settings at every cycle, so a
+    change in the UI applies without a restart (falls back to `default`)."""
+    def interval() -> int:
+        from backend.services.social_agent.outreach.auto_toggle import get_outreach_auto_settings
+
+        try:
+            with SessionLocal() as db:
+                value = get_outreach_auto_settings(db).get(key)
+            return int(value) if isinstance(value, (int, float)) and value > 0 else default
+        except Exception:
+            return default
+
+    return interval
+
+
+async def _loop(name: str, interval_minutes, tick) -> None:
+    """`interval_minutes` is a number or a function returning the current one."""
+    current = interval_minutes() if callable(interval_minutes) else interval_minutes
+    logger.info("Starting %s loop (every %d minute(s))", name, current)
     while True:
-        await asyncio.sleep(interval_seconds)
-        await tick()
+        minutes = interval_minutes() if callable(interval_minutes) else interval_minutes
+        await asyncio.sleep(max(int(minutes), 1) * 60)
+        # The ticks call long, synchronous agent runs (web reads, DB writes);
+        # run them on a worker thread so the API's event loop keeps serving
+        # requests meanwhile.
+        await asyncio.to_thread(lambda: asyncio.run(tick()))
 
 
 def start_background_scheduler() -> list[asyncio.Task]:
     """Called once from `main.py`'s lifespan startup. Returns the created
     tasks so lifespan can cancel them cleanly on shutdown.
 
-    The event-discovery and both outreach loops always start — each tick is
+    The event-discovery, outreach, attendee-notification and community loops always start — each tick is
     a no-op unless its own live toggle is on, so starting them alone never
     spends API credits. The remaining two loops (attendee-scan,
     organizer-scan — unrelated to Agent 1/2) stay behind the legacy
     `ENABLE_BACKGROUND_SCHEDULER` env var, unchanged."""
     settings = get_settings()
     tasks = [
-        asyncio.create_task(_loop("event-discovery", settings.discovery_scan_interval_minutes, _run_discovery_scan_tick)),
-        asyncio.create_task(_loop("outreach-draft", settings.outreach_scan_interval_minutes, _run_outreach_draft_tick)),
-        asyncio.create_task(_loop("outreach-followup", settings.outreach_followup_interval_minutes, _run_followup_tick)),
+        asyncio.create_task(_loop("event-discovery", _saved_discovery_interval(settings.discovery_scan_interval_minutes), _run_discovery_scan_tick)),
+        asyncio.create_task(_loop(
+            "outreach-draft", _saved_outreach_interval("draft_interval_minutes", settings.outreach_scan_interval_minutes), _run_outreach_draft_tick
+        )),
+        asyncio.create_task(_loop(
+            "outreach-followup", _saved_outreach_interval("followup_interval_minutes", settings.outreach_followup_interval_minutes), _run_followup_tick
+        )),
         asyncio.create_task(
             _loop("attendee-notifications", settings.attendee_notifications_interval_minutes, _run_attendee_notifications_tick)
+        ),
+        # Without these two loops the community-discovery / community-promotion
+        # auto toggles had no effect. Each tick is a no-op while its toggle is off.
+        asyncio.create_task(
+            _loop("community-discovery", settings.community_discovery_scan_interval_minutes, _run_community_discovery_scan_tick)
+        ),
+        asyncio.create_task(
+            _loop("community-promotion", settings.community_promotion_scan_interval_minutes, _run_community_promotion_tick)
         ),
     ]
 

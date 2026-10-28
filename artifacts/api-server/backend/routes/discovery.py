@@ -187,6 +187,7 @@ def trigger_discovery_run(
             "runId": active_run.id,
             "status": "running",
             "message": f"Discovery run #{active_run.id} is already executing in the background.",
+            "alreadyRunning": True,  # no new run was started (runs never overlap)
             "isBackground": True,
             "config": redacted_config(active_run.config_snapshot or config),
             **(active_run.summary or {}),
@@ -254,6 +255,7 @@ def trigger_discovery_run(
             "runId": run.id,
             "status": "running",
             "message": f"Discovery run #{run.id} started in the background.",
+            "alreadyRunning": False,
             "isBackground": True,
             "config": redacted_config(config),
             **run.summary,
@@ -282,7 +284,7 @@ def _auto_status_out(db: Session) -> DiscoveryAutoStatusOut:
     tm_key = _saved_ticketmaster_key(db)
     return DiscoveryAutoStatusOut(
         enabled=is_discovery_auto_enabled(db),
-        interval_minutes=settings.discovery_scan_interval_minutes,
+        interval_minutes=auto_scope.get("interval_minutes") or settings.discovery_scan_interval_minutes,
         country=auto_scope.get("country"),
         countries=auto_scope.get("countries") or ([] if not auto_scope.get("country") else [auto_scope.get("country")]),
         locations=auto_scope.get("locations") or [],
@@ -293,8 +295,9 @@ def _auto_status_out(db: Session) -> DiscoveryAutoStatusOut:
         sources=auto_scope.get("sources") or DEFAULT_ALL_OPERATIONAL_SOURCES,
         search_depth=auto_scope.get("search_depth"),
         daily_limit=auto_scope.get("daily_limit"),
-        events_per_run=auto_scope.get("events_per_run", 50),
-        target_valid_events=auto_scope.get("target_valid_events", 25),
+        # Same fallbacks config_from_settings applies, so the page shows what a run really uses.
+        events_per_run=auto_scope.get("events_per_run") or 100,
+        target_valid_events=auto_scope.get("target_valid_events", 50),
         reject_no_organizer=auto_scope.get("reject_no_organizer", False),
         require_organizer_email=auto_scope.get("require_organizer_email", False),
         require_organizer_phone=auto_scope.get("require_organizer_phone", False),
@@ -343,6 +346,8 @@ def set_discovery_auto(payload: DiscoveryAutoToggleRequest, db: Session = Depend
         settings_updates["countries"] = payload.countries
         if payload.countries and not payload.country:
             settings_updates["country"] = payload.countries[0]
+    if payload.interval_minutes is not None:
+        settings_updates["interval_minutes"] = payload.interval_minutes
     if payload.locations is not None:
         settings_updates["locations"] = [loc.model_dump(exclude_none=True) for loc in payload.locations]
     if payload.region_cities is not None:
@@ -358,6 +363,8 @@ def set_discovery_auto(payload: DiscoveryAutoToggleRequest, db: Session = Depend
     if payload.listing_urls is not None:
         settings_updates["listing_urls"] = payload.listing_urls
     remove: list[str] = []
+    if payload.countries is not None and not payload.countries and not payload.country:
+        remove.append("country")  # all countries cleared: don't fall back to the old single country
     if payload.ticketmaster_api_key is not None:
         if payload.ticketmaster_api_key.strip():
             settings_updates["ticketmaster_api_key"] = payload.ticketmaster_api_key.strip()
@@ -416,6 +423,17 @@ def get_discovery_catalog(db: Session = Depends(get_db), _user: User = _admin) -
     from backend.services.discovery_agent.catalog import build_catalog
 
     return build_catalog(db, ticketmaster_key_set=bool(_saved_ticketmaster_key(db)))
+
+
+@router.get("/recommended-config")
+def get_recommended_config(db: Session = Depends(get_db), _user: User = _admin) -> dict[str, Any]:
+    """Settings the run wizard pre-selects: the sources and providers that are
+    actually usable now, the default upcoming-events window and goals, plus
+    plain-language notices about anything unavailable (and a blocker only when
+    nothing at all can run)."""
+    from backend.services.discovery_agent.catalog import build_catalog, recommended_config
+
+    return recommended_config(build_catalog(db, ticketmaster_key_set=bool(_saved_ticketmaster_key(db))))
 
 
 class _CatalogCheckRequest(BaseModel):

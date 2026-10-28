@@ -26,7 +26,6 @@ from backend.models import (
     AgentRun,
     AuditLog,
     AutomationRun,
-    DiscoveredEvent,
     Event,
     GuardrailLog,
     TrustDecision,
@@ -51,10 +50,17 @@ def readiness_check(db: Session = Depends(get_db)) -> dict[str, Any]:
         db.execute(select(1)).scalar()
         return {"status": "ready", "database": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
     except Exception as exc:
+        # Public endpoint: never echo the driver's error (host, user, schema names).
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Database connection failed: {exc}",
+            detail="Database connection failed",
         ) from exc
+
+
+def _run_duration_ms(run: AgentRun) -> int | None:
+    if run.started_at and run.completed_at:
+        return max(int((run.completed_at - run.started_at).total_seconds() * 1000), 0)
+    return None
 
 
 @router.get("/overview")
@@ -69,7 +75,8 @@ def observability_overview(
     total_executions = total_metrics + total_agent_runs + total_auto_runs
 
     metrics_success = int(db.scalar(select(func.count(AgentExecutionMetric.id)).where(AgentExecutionMetric.status == "SUCCESS")) or 0)
-    runs_success = int(db.scalar(select(func.count(AgentRun.id)).where(AgentRun.status.in_(["completed", "running", "stopped"]))) or 0)
+    # Only finished runs count; a run still in progress hasn't succeeded yet.
+    runs_success = int(db.scalar(select(func.count(AgentRun.id)).where(AgentRun.status.in_(["completed", "stopped"]))) or 0)
     auto_success = int(db.scalar(select(func.count(AutomationRun.id)).where(AutomationRun.status.in_(["SUCCESS", "completed"]))) or 0)
     total_success = metrics_success + runs_success + auto_success
 
@@ -78,28 +85,25 @@ def observability_overview(
     auto_failed = int(db.scalar(select(func.count(AutomationRun.id)).where(AutomationRun.status == "FAILED")) or 0)
     total_failed = metrics_failed + runs_failed + auto_failed
 
-    # Calculate real success rate (prevent 0% bug)
-    success_rate = round((total_success / max(total_executions, 1)) * 100, 1) if total_executions > 0 else 100.0
+    # Success rate over finished executions; None when nothing has finished yet.
+    finished = total_success + total_failed
+    success_rate = round((total_success / finished) * 100, 1) if finished else None
 
-    # Average latency in ms
+    # Average latency in ms (None when no execution recorded a duration)
     avg_duration = db.scalar(select(func.avg(AgentExecutionMetric.duration_ms)))
-    avg_latency_ms = round(float(avg_duration or 420), 1)
+    avg_latency_ms = round(float(avg_duration), 1) if avg_duration is not None else None
 
     # Token and cost tally
     total_prompt_tokens = int(db.scalar(select(func.sum(AgentExecutionMetric.prompt_tokens))) or 0)
     total_completion_tokens = int(db.scalar(select(func.sum(AgentExecutionMetric.completion_tokens))) or 0)
-    metric_tokens = total_prompt_tokens + total_completion_tokens
-    run_tokens = total_agent_runs * 1450
-    total_tokens = metric_tokens + run_tokens
-
-    metric_cost = float(db.scalar(select(func.sum(AgentExecutionMetric.estimated_cost))) or 0.0)
-    run_cost = round((run_tokens / 1_000_000) * 0.15, 4)
-    total_cost = round(metric_cost + run_cost, 4)
+    # Only tokens and cost the executions actually recorded — nothing estimated per run.
+    total_tokens = total_prompt_tokens + total_completion_tokens
+    total_cost = round(float(db.scalar(select(func.sum(AgentExecutionMetric.estimated_cost))) or 0.0), 4)
 
     # Guardrail decisions
     guardrail_blocks = int(db.scalar(select(func.count(GuardrailLog.id)).where(GuardrailLog.decision.in_(["BLOCKED", "FLAGGED"]))) or 0)
 
-    system_health = "HEALTHY" if total_failed == 0 or (total_failed / max(total_executions, 1)) < 0.05 else "DEGRADED"
+    system_health = "UNKNOWN" if not finished else ("HEALTHY" if total_failed / finished < 0.05 else "DEGRADED")
 
     return {
         "totalExecutions": total_executions,
@@ -145,13 +149,9 @@ def observability_agents(
         fails = metric_fails + run_fails
 
         # Calculate average duration
-        durations = [m.duration_ms for m in metrics if m.duration_ms > 0]
-        for r in runs:
-            if r.started_at and r.completed_at:
-                dur = int((r.completed_at - r.started_at).total_seconds() * 1000)
-                if 100 <= dur <= 120000:
-                    durations.append(dur)
-        avg_dur = int(sum(durations) / len(durations)) if durations else 280
+        durations = [m.duration_ms for m in metrics if m.duration_ms and m.duration_ms > 0]
+        durations += [_run_duration_ms(r) for r in runs if _run_duration_ms(r) is not None]
+        avg_dur = int(sum(durations) / len(durations)) if durations else None
 
         # Most recent execution timestamp
         last_metric_time = metrics[0].created_at if metrics else None
@@ -179,8 +179,8 @@ def observability_agents(
             "name": ag["name"],
             "category": ag["category"],
             "status": status_str,
-            "totalRuns": max(total_runs, 1),
-            "successCount": max(total_runs - fails, 1),
+            "totalRuns": total_runs,
+            "successCount": sum(1 for m in metrics if m.status == "SUCCESS") + sum(1 for r in runs if r.status in ("completed", "stopped")),
             "failureCount": fails,
             "avgDurationMs": avg_dur,
             "lastExecution": last_run_iso,
@@ -221,7 +221,7 @@ def observability_traces(
             "completionTokens": r.completion_tokens,
             "totalTokens": r.total_tokens,
             "estimatedCost": float(r.estimated_cost),
-            "modelName": r.model_name or "gemini-2.0-flash",
+            "modelName": r.model_name,
             "errorMessage": r.error_message,
             "createdAt": r.created_at.isoformat() if r.created_at else "",
         })
@@ -232,7 +232,9 @@ def observability_traces(
         query_r = query_r.where(AgentRun.agent_type.ilike(f"%{agent.strip()}%"))
     if status_filter and status_filter != "ALL":
         if status_filter.upper() == "SUCCESS":
-            query_r = query_r.where(AgentRun.status.in_(["completed", "running", "stopped"]))
+            query_r = query_r.where(AgentRun.status.in_(["completed", "stopped"]))
+        elif status_filter.upper() == "RUNNING":
+            query_r = query_r.where(AgentRun.status == "running")
         elif status_filter.upper() == "FAILED":
             query_r = query_r.where(AgentRun.status == "failed")
 
@@ -241,29 +243,20 @@ def observability_traces(
         if q and q.strip().lower() not in wf_id.lower():
             continue
 
-        status_str = "SUCCESS" if ar.status in ("completed", "running", "stopped") else "FAILED"
-        dur_ms = 450
-        if ar.started_at and ar.completed_at:
-            dur_calc = int((ar.completed_at - ar.started_at).total_seconds() * 1000)
-        dur_ms = min(max(dur_calc, 250), 35000)
-
-        events_count = (ar.summary or {}).get("events_discovered", 10)
-        p_tokens = 850 + (events_count * 45)
-        c_tokens = 320 + (events_count * 20)
-        t_tokens = p_tokens + c_tokens
-        cost = round((t_tokens / 1_000_000) * 0.15, 5)
-
+        status_str = {"completed": "SUCCESS", "stopped": "SUCCESS", "running": "RUNNING"}.get(ar.status, "FAILED")
+        # Agent runs record no LLM usage of their own (discovery/outreach are
+        # rule-based); tokens/cost/model come only from AgentExecutionMetric.
         combined_traces.append({
             "id": 10000 + ar.id,
             "workflowId": wf_id,
             "agentName": f"{ar.agent_type.capitalize()} Agent",
             "status": status_str,
-            "durationMs": dur_ms,
-            "promptTokens": p_tokens,
-            "completionTokens": c_tokens,
-            "totalTokens": t_tokens,
-            "estimatedCost": cost,
-            "modelName": "gemini-2.0-flash",
+            "durationMs": _run_duration_ms(ar),
+            "promptTokens": None,
+            "completionTokens": None,
+            "totalTokens": None,
+            "estimatedCost": None,
+            "modelName": None,
             "errorMessage": ar.error,
             "createdAt": ar.started_at.isoformat() if ar.started_at else "",
         })
@@ -343,81 +336,15 @@ def observability_ai_usage(
     _: User = Depends(require_roles("ADMIN")),
 ) -> dict[str, Any]:
     """Breakdown of LLM usage by model, daily token consumption, and cost attribution."""
-    model_breakdown: dict[str, dict[str, Any]] = {
-        "gemini-2.0-flash": {
-            "calls": 0,
-            "promptTokens": 0,
-            "completionTokens": 0,
-            "totalTokens": 0,
-            "costUsd": 0.0,
-        },
-        "gemini-1.5-pro": {
-            "calls": 0,
-            "promptTokens": 0,
-            "completionTokens": 0,
-            "totalTokens": 0,
-            "costUsd": 0.0,
-        },
-        "text-embedding-004": {
-            "calls": 0,
-            "promptTokens": 0,
-            "completionTokens": 0,
-            "totalTokens": 0,
-            "costUsd": 0.0,
-        },
-        "gemini-flash-lite": {
-            "calls": 0,
-            "promptTokens": 0,
-            "completionTokens": 0,
-            "totalTokens": 0,
-            "costUsd": 0.0,
-        },
-    }
-
-    # Aggregate from AgentExecutionMetric
-    metrics = db.scalars(select(AgentExecutionMetric).limit(500)).all()
-    for m in metrics:
-        model = m.model_name or "gemini-2.0-flash"
-        if model not in model_breakdown:
-            model_breakdown[model] = {
-                "calls": 0,
-                "promptTokens": 0,
-                "completionTokens": 0,
-                "totalTokens": 0,
-                "costUsd": 0.0,
-            }
-        b = model_breakdown[model]
+    # Only what executions actually recorded: no per-run estimates, no assumed models.
+    model_breakdown: dict[str, dict[str, Any]] = {}
+    for m in db.scalars(select(AgentExecutionMetric).limit(5000)).all():
+        b = model_breakdown.setdefault(m.model_name or "unknown model", {"calls": 0, "promptTokens": 0, "completionTokens": 0, "totalTokens": 0, "costUsd": 0.0})
         b["calls"] += 1
-        b["promptTokens"] += m.prompt_tokens
-        b["completionTokens"] += m.completion_tokens
-        b["totalTokens"] += m.total_tokens
-        b["costUsd"] = round(b["costUsd"] + float(m.estimated_cost), 5)
-
-    # Also aggregate from AgentRun executions
-    agent_runs = db.scalars(select(AgentRun).limit(500)).all()
-    for ar in agent_runs:
-        model = "gemini-2.0-flash" if ar.agent_type == "discovery" else "gemini-1.5-pro" if ar.agent_type == "outreach" else "gemini-flash-lite"
-        events_found = (ar.summary or {}).get("events_discovered", 10)
-        p_tokens = 950 + (events_found * 40)
-        c_tokens = 380 + (events_found * 15)
-        t_tokens = p_tokens + c_tokens
-        rate = 0.15 if "flash" in model else 1.25
-
-        b = model_breakdown[model]
-        b["calls"] += 1
-        b["promptTokens"] += p_tokens
-        b["completionTokens"] += c_tokens
-        b["totalTokens"] += t_tokens
-        b["costUsd"] = round(b["costUsd"] + ((t_tokens / 1_000_000) * rate), 5)
-
-    # Semantic embedding vectorization tally
-    events_count = int(db.scalar(select(func.count(DiscoveredEvent.id))) or 0)
-    emb = model_breakdown["text-embedding-004"]
-    emb["calls"] = max(events_count, 50)
-    emb["promptTokens"] = emb["calls"] * 128
-    emb["completionTokens"] = 0
-    emb["totalTokens"] = emb["promptTokens"]
-    emb["costUsd"] = round((emb["totalTokens"] / 1_000_000) * 0.025, 5)
+        b["promptTokens"] += m.prompt_tokens or 0
+        b["completionTokens"] += m.completion_tokens or 0
+        b["totalTokens"] += m.total_tokens or 0
+        b["costUsd"] = round(b["costUsd"] + float(m.estimated_cost or 0), 5)
 
     filtered_models = {k: v for k, v in model_breakdown.items() if v["calls"] > 0}
 

@@ -40,9 +40,9 @@ from backend.schemas import (
     SmtpTestOut,
     SmtpTestRequest,
 )
-from backend.services.smtp_config import get_smtp_info, save_smtp_settings, send_test_email
+from backend.services.smtp_config import SmtpConfigError, get_smtp_info, save_smtp_settings, send_test_email
 from backend.services.social_agent import state_machine
-from backend.services.social_agent.outreach import suppression
+from backend.services.social_agent.outreach import eligibility, suppression
 from backend.services.social_agent.outreach.auto_toggle import (
     get_outreach_auto_settings,
     is_outreach_auto_enabled,
@@ -50,9 +50,8 @@ from backend.services.social_agent.outreach.auto_toggle import (
     set_outreach_auto_settings,
 )
 from backend.services.social_agent.outreach.followup import process_followups
-from backend.services.social_agent.outreach.orchestrator import run_organizer_outreach, run_outreach_agent, send_outreach_message
+from backend.services.social_agent.outreach.orchestrator import outreach_config_from_settings, run_organizer_outreach, run_outreach_agent, send_outreach_message
 from backend.services.social_agent.outreach.senders import clear_outbox, get_outbox, provider_status
-from backend.services.social_agent.outreach.types import OutreachRunConfig
 from backend.services.social_agent.pipeline import event_extraction, normalize
 
 router = APIRouter(prefix="/acquisition/outreach", tags=["organizer-outreach"])
@@ -140,6 +139,15 @@ def get_outreach_run(run_id: int, db: Session = Depends(get_db), _user: User = _
     if run is None or run.agent_type != "outreach":
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Outreach run not found")
     return AgentRunOut.model_validate(run)
+
+
+@router.get("/backlog")
+def get_outreach_backlog(db: Session = Depends(get_db), _user: User = _admin) -> dict[str, Any]:
+    """How many discovered events have an organizer e-mail but no outreach
+    draft yet, and why: ready to draft, already over, outside the saved
+    sectors or places, or the organizer is suppressed/blocked."""
+    backlog = eligibility.outreach_backlog(db, outreach_config_from_settings(db))
+    return {**backlog, "autoEnabled": is_outreach_auto_enabled(db)}
 
 
 @router.get("/auto")
@@ -296,11 +304,10 @@ def act_on_outreach(outreach_id: int, payload: OutreachActionRequest, db: Sessio
 def trigger_batch_run(payload: OutreachBatchRunRequest | None = None, db: Session = Depends(get_db), _user: User = _admin) -> dict[str, Any]:
     """Agent 2's main entrypoint: selects eligible discovered events/
     organizers (from either producer) and drafts a message for each,
-    landing at PENDING_APPROVAL. Mirrors `/discovery/run`'s manual-trigger
-    shape and blocking behavior."""
-    config = OutreachRunConfig(max_candidates=get_settings().outreach_max_candidates_per_run)
-    if payload and payload.max_candidates is not None:
-        config.max_candidates = payload.max_candidates
+    landing at PENDING_APPROVAL. Uses the targeting saved in the Outreach
+    settings (sectors, places, batch size, sender) — the same as the
+    automatic run — so "Generate" drafts exactly what automation would."""
+    config = outreach_config_from_settings(db, payload.max_candidates if payload else None)
 
     summary = run_outreach_agent(db, config)
     run = db.execute(select(AgentRun).where(AgentRun.agent_type == "outreach").order_by(AgentRun.id.desc())).scalars().first()
@@ -351,14 +358,17 @@ def get_smtp_configuration(_user: User = _admin) -> SmtpConfigOut:
 @router.post("/smtp/config", response_model=SmtpConfigOut)
 def update_smtp_configuration(payload: SmtpConfigRequest, _user: User = _admin) -> SmtpConfigOut:
     """Save SMTP configuration to environment and update active email provider."""
-    info = save_smtp_settings(
-        host=payload.host,
-        port=payload.port,
-        username=payload.username,
-        password=payload.password,
-        from_email=payload.from_email,
-        use_tls=payload.use_tls,
-    )
+    try:
+        info = save_smtp_settings(
+            host=payload.host,
+            port=payload.port,
+            username=payload.username,
+            password=payload.password,
+            from_email=payload.from_email,
+            use_tls=payload.use_tls,
+        )
+    except SmtpConfigError as exc:  # invalid value or .env not writable: say so, nothing saved
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return SmtpConfigOut.model_validate(info)
 
 

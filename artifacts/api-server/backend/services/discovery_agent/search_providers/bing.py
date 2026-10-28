@@ -22,6 +22,11 @@ class BingSearchProvider(BaseSearchProvider):
 
     provider_id = "bing_search"
     provider_name = "Microsoft Bing Web Search API v7"
+    display_name = "Bing"
+    cost_rank = 45
+    setup_env = ("BING_SEARCH_API_KEY",)
+    docs_url = "https://learn.microsoft.com/en-us/lifecycle/announcements/bing-search-api-retirement"
+    retired_reason = "Unavailable: Microsoft retired the Bing Search APIs in August 2025"
 
     def __init__(self) -> None:
         self.settings = get_settings()

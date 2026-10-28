@@ -9,18 +9,17 @@ import {
 } from 'lucide-react';
 import {
   getGetCategoryQueryKey, getGetCityQueryKey, getGetDashboardQueryKey,
-  getGetEventQueryKey, getGetOrganizerQueryKey, getGetSavedEventsQueryKey,
+  getGetEventQueryKey, getGetOrganizerQueryKey, getGetRegistrationsQueryKey, getGetSavedEventsQueryKey,
   getGetSpeakerQueryKey, getGetVenueQueryKey, getListEventsQueryKey,
-  useCreateOrganizerEvent, useCreateReview, useGetAdminDashboard, useGetCategory,
+  useCreateReview, useGetAdminDashboard, useGetCategory,
   useGetCity, useGetDashboard, useGetEvent, useGetHome, useGetNotifications,
-  useGetOrganizer, useGetOrganizerAnalytics, useGetOrganizerDashboard,
-  useGetOrganizerEvents, useGetSavedEvents, useGetRegistrations, useGetSpeaker,
+  useGetOrganizer, useGetSavedEvents, useGetRegistrations, useGetSpeaker,
   useGetVenue, useHealthCheck, useListCategories, useListCities, useListEvents,
   useListOrganizers, useListVenues, useLogin, useRegisterForEvent, useRegisterUser,
   useSaveEvent, useUnsaveEvent, customFetch,
 } from '@workspace/api-client-react';
 import type {
-  Category, City, DirectoryDetail, EventCard, EventDetail, EventInput,
+  Category, City, DirectoryDetail, EventCard, EventDetail,
   ListEventsParams, Organizer, OrganizerDetail, RegistrationInput, ReviewInput,
   Venue, VenueDetail,
 } from '@workspace/api-client-react';
@@ -35,11 +34,13 @@ import { OrganizerProfilePage } from '@/ops/OrganizerProfilePage';
 import { ContactsPage } from '@/ops/ContactsPage';
 import { OutreachPage } from '@/ops/OutreachPage';
 import { ActivityPage } from '@/ops/ActivityPage';
+import { RunWizardPage } from '@/ops/RunWizardPage';
+import { RunReportPage } from '@/ops/RunReportPage';
+import { DiscoveryConfigPage } from '@/ops/DiscoveryConfigPage';
+import { AutomaticDiscoveryPage } from '@/ops/AutomaticDiscoveryPage';
 import { SettingsPage } from '@/ops/SettingsPage';
 import { TrustReviewPage } from '@/ops/TrustReviewPage';
 import { AutomationsPage } from '@/ops/AutomationsPage';
-import { CommunityDiscoveryPage } from '@/ops/CommunityDiscoveryPage';
-import { CommunityPromotionPage } from '@/ops/CommunityPromotionPage';
 import { SocialPromotionsPage } from '@/ops/SocialPromotionsPage';
 import { AttendeeAgentPage } from '@/ops/AttendeeAgentPage';
 import { WorkflowsLogsPage } from '@/ops/WorkflowsLogsPage';
@@ -135,43 +136,6 @@ export interface ScheduleItem {
   sessionTime: string;
   sessionDetail?: string | null;
   createdAt: string;
-}
-
-
-export interface AIEventMatch {
-  event: EventCard;
-  matchScore: number;
-  matchReason: string;
-  tags: string[];
-}
-
-export interface AIConciergeResponse {
-  reply: string;
-  suggestedQueries: string[];
-  matchedEvents: AIEventMatch[];
-}
-
-export interface AIPeerMatch {
-  attendee: AttendeeProfile;
-  matchScore: number;
-  matchReason: string;
-  mutualInterests: string[];
-}
-
-export interface AIEventBrief {
-  eventId: number;
-  title: string;
-  summary: string;
-  keyTakeaways: string[];
-  targetAudience: string[];
-  recommendedRole: string;
-  highlightSession?: string | null;
-}
-
-export interface PersonalizedRecommendations {
-  headline: string;
-  userContext: string;
-  items: AIEventMatch[];
 }
 
 
@@ -299,7 +263,8 @@ function useUpdateProfile() {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: getGetDashboardQueryKey() });
-      qc.invalidateQueries({ queryKey: ['registrations'] });
+      qc.invalidateQueries({ queryKey: getGetRegistrationsQueryKey() });
+      qc.invalidateQueries({ queryKey: keys.me });
     },
   });
 }
@@ -316,37 +281,6 @@ function useLogout() {
       window.dispatchEvent(new Event('auth-change'));
       qc.clear();
       setLocation('/login');
-    },
-  });
-}
-
-function useUpdateOrganizerEvent() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, data }: { id: number; data: Partial<EventInput> & { status?: string } }) =>
-      customFetch<EventCard>(`/api/organizer/events/${id}`, {
-        method: 'PATCH',
-        body: JSON.stringify(data),
-      }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['organizer', 'events'] });
-      qc.invalidateQueries({ queryKey: ['organizer', 'dashboard'] });
-      qc.invalidateQueries({ queryKey: getListEventsQueryKey() });
-    },
-  });
-}
-
-function useDeleteOrganizerEvent() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: number) =>
-      customFetch<{ status: string; message: string }>(`/api/organizer/events/${id}`, {
-        method: 'DELETE',
-      }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['organizer', 'events'] });
-      qc.invalidateQueries({ queryKey: ['organizer', 'dashboard'] });
-      qc.invalidateQueries({ queryKey: getListEventsQueryKey() });
     },
   });
 }
@@ -425,23 +359,6 @@ function useDeleteAdminReview() {
   });
 }
 
-function useDebounce<T>(value: T, delay: number): T {
-  const [debouncedValue, setDebouncedValue] = useState<T>(value);
-  useEffect(() => {
-    const handler = setTimeout(() => setDebouncedValue(value), delay);
-    return () => clearTimeout(handler);
-  }, [value, delay]);
-  return debouncedValue;
-}
-
-function useGetPeerMatches() {
-  return useQuery({
-    queryKey: ['ai-peer-matches'],
-    queryFn: () => customFetch<AIPeerMatch[]>('/api/ai/peer-matches'),
-  });
-}
-
-
 // ---------------------------------------------------------------------------
 // Calendar & Pass Utilities
 // ---------------------------------------------------------------------------
@@ -454,8 +371,9 @@ function downloadIcs(event: {
   endDate?: string;
   startTime?: string;
 }) {
+  if (!event.startDate) return; // no real date → no calendar file
   const cleanDate = (d: string) => d.replaceAll('-', '');
-  const start = cleanDate(event.startDate || new Date().toISOString().split('T')[0]);
+  const start = cleanDate(event.startDate);
   const end = event.endDate ? cleanDate(event.endDate) : start;
 
   const icsContent = [
@@ -470,8 +388,8 @@ function downloadIcs(event: {
     `DTSTART;VALUE=DATE:${start}`,
     `DTEND;VALUE=DATE:${end}`,
     `SUMMARY:${event.title.replace(/[,;]/g, ' ')}`,
-    `DESCRIPTION:${(event.description || 'Your confirmed pass with 100 TIMES.').replace(/\n/g, ' ')}`,
-    `LOCATION:${(event.location || '100 TIMES Event Venue').replace(/[,;]/g, ' ')}`,
+    ...(event.description ? [`DESCRIPTION:${event.description.replace(/\n/g, ' ')}`] : []),
+    ...(event.location ? [`LOCATION:${event.location.replace(/[,;]/g, ' ')}`] : []),
     'STATUS:CONFIRMED',
     'END:VEVENT',
     'END:VCALENDAR',
@@ -487,8 +405,8 @@ function downloadIcs(event: {
 }
 
 function downloadScheduleIcs(items: ScheduleItem[]) {
-  const vevents = items.map((item, i) => {
-    const cleanDate = item.eventDate.replaceAll('-', '') || '20250315';
+  const vevents = items.filter((item) => Boolean(item.eventDate)).map((item, i) => {
+    const cleanDate = item.eventDate.replaceAll('-', '');
     return [
       'BEGIN:VEVENT',
       `UID:100times-sched-${item.id}-${i}@100times.in`,
@@ -515,15 +433,14 @@ function downloadScheduleIcs(items: ScheduleItem[]) {
 
 function googleCalendarUrl(event: { title: string; location?: string; startDate: string; endDate?: string; description?: string }) {
   const cleanDate = (d: string) => d.replaceAll('-', '');
-  const start = cleanDate(event.startDate || new Date().toISOString().split('T')[0]);
-  const end = event.endDate ? cleanDate(event.endDate) : start;
-  const params = new URLSearchParams({
-    action: 'TEMPLATE',
-    text: event.title,
-    dates: `${start}/${end}`,
-    details: event.description || 'Confirmed event on 100 TIMES',
-    location: event.location || '',
-  });
+  const params = new URLSearchParams({ action: 'TEMPLATE', text: event.title });
+  if (event.startDate) {
+    const start = cleanDate(event.startDate);
+    const end = event.endDate ? cleanDate(event.endDate) : start;
+    params.set('dates', `${start}/${end}`);
+  }
+  if (event.description) params.set('details', event.description);
+  if (event.location) params.set('location', event.location);
   return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
 
@@ -609,8 +526,9 @@ function QRCodeSvg({ value, size = 140 }: { value: string; size?: number }) {
 function DigitalPassModal({ reg, open, onClose }: { reg: RegistrationPass | null; open: boolean; onClose: () => void }) {
   if (!open || !reg) return null;
 
-  const ticketCode = reg.ticketCode || `100T-${reg.eventId.toString().padStart(4, '0')}-${reg.id.toString().padStart(5, '0')}`;
-  const qrString = reg.qrCode || `100TIMES:EVENT=${reg.eventSlug}:REG=${ticketCode}:TIER=${reg.ticketType}`;
+  // Only the server-issued ticket code / QR payload are shown — never a client-generated stand-in.
+  const ticketCode = reg.ticketCode?.trim() || '';
+  const qrString = reg.qrCode?.trim() || ticketCode;
   const isVip = reg.ticketType === 'VIP';
   const isPremium = reg.ticketType === 'Premium';
 
@@ -645,8 +563,10 @@ function DigitalPassModal({ reg, open, onClose }: { reg: RegistrationPass | null
         </div>
 
         <div className="mt-6 text-center">
-          <p className="font-mono-face text-[10px] uppercase tracking-[.18em] text-accent">Confirmed Attendee</p>
-          <h2 className="mt-1 font-display text-3xl font-bold tracking-tight">{reg.userName || 'Aarav Mehta'}</h2>
+          <p className="font-mono-face text-[10px] uppercase tracking-[.18em] text-accent">
+            {reg.status ? `Registration ${reg.status.replace('_', ' ')}` : 'Attendee'}
+          </p>
+          <h2 className="mt-1 font-display text-3xl font-bold tracking-tight">{reg.userName || '—'}</h2>
           {(reg.jobTitle || reg.company) && (
             <p className="mt-1 text-sm font-medium text-muted-foreground">
               {reg.jobTitle}{reg.jobTitle && reg.company && ' · '}{reg.company}
@@ -655,10 +575,19 @@ function DigitalPassModal({ reg, open, onClose }: { reg: RegistrationPass | null
         </div>
 
         <div className="my-6 flex justify-center">
-          <div className="rounded-2xl border border-foreground/15 bg-muted/40 p-4 text-center">
-            <QRCodeSvg value={qrString} size={150} />
-            <p className="mt-3 font-mono-face text-[11px] font-bold tracking-widest text-foreground">{ticketCode}</p>
-          </div>
+          {ticketCode ? (
+            <div className="rounded-2xl border border-foreground/15 bg-muted/40 p-4 text-center">
+              <QRCodeSvg value={qrString} size={150} />
+              <p className="mt-3 font-mono-face text-[11px] font-bold tracking-widest text-foreground">{ticketCode}</p>
+            </div>
+          ) : (
+            <div className="max-w-xs rounded-2xl border border-dashed border-foreground/20 bg-muted/30 p-5 text-center" data-testid="status-pass-unavailable">
+              <p className="font-display text-base font-bold">Pass not available yet</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                No ticket code has been issued for this registration, so there is no scannable pass to show.
+              </p>
+            </div>
+          )}
         </div>
 
         <div className="space-y-3 rounded-2xl border border-foreground/10 bg-background/80 p-4 text-xs">
@@ -669,15 +598,16 @@ function DigitalPassModal({ reg, open, onClose }: { reg: RegistrationPass | null
           <div className="flex justify-between">
             <div>
               <p className="font-mono-face text-[9px] uppercase tracking-widest text-muted-foreground">Date & Time</p>
-              <p className="font-semibold text-foreground">{reg.eventStartDate ? fmtDate(reg.eventStartDate) : 'Coming soon'}</p>
+              <p className="font-semibold text-foreground">{reg.eventStartDate ? fmtDate(reg.eventStartDate) : 'Date to be announced'}</p>
             </div>
             <div className="text-right">
               <p className="font-mono-face text-[9px] uppercase tracking-widest text-muted-foreground">Venue</p>
-              <p className="font-semibold text-foreground">{reg.eventVenue || reg.eventLocation || 'Main Arena'}</p>
+              <p className="font-semibold text-foreground">{reg.eventVenue || reg.eventLocation || '—'}</p>
             </div>
           </div>
         </div>
 
+        {reg.eventStartDate ? (
         <div className="mt-6 grid grid-cols-2 gap-2.5">
           <button
             onClick={() => downloadIcs({ title: reg.eventTitle, location: reg.eventVenue || reg.eventLocation, startDate: reg.eventStartDate || '', endDate: reg.eventEndDate })}
@@ -696,10 +626,14 @@ function DigitalPassModal({ reg, open, onClose }: { reg: RegistrationPass | null
             <ExternalLink size={14} /> Google Cal
           </a>
         </div>
+        ) : (
+          <p className="mt-6 text-center text-xs text-muted-foreground">Calendar export becomes available once the event date is announced.</p>
+        )}
 
         <button
           onClick={() => window.print()}
-          className="button-press mt-2.5 flex w-full items-center justify-center gap-2 rounded-full bg-primary py-3 text-xs font-bold text-primary-foreground hover:bg-accent"
+          disabled={!ticketCode}
+          className="button-press mt-2.5 flex w-full disabled:opacity-40 items-center justify-center gap-2 rounded-full bg-primary py-3 text-xs font-bold text-primary-foreground hover:bg-accent"
           data-testid="button-print-pass"
         >
           <Printer size={15} /> Print / Save Badge
@@ -838,35 +772,16 @@ function ChatDrawer({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Fallback demo data
-// ---------------------------------------------------------------------------
-
-const fallbackCategories: Category[] = [
-  { id: 1, name: 'Pharmaceuticals', slug: 'pharmaceuticals', description: 'Pharmaceutical companies, drug manufacturing, research, and industry developments.', icon: '💊', eventCount: 142 },
-  { id: 2, name: 'Healthcare', slug: 'healthcare', description: 'Hospitals, healthcare providers, medical technology, and healthcare management.', icon: '🩺', eventCount: 128 },
-  { id: 3, name: 'Energy and Power Generation', slug: 'energy-and-power-generation', description: 'Conventional and renewable energy, power generation, and sector developments.', icon: '⚡', eventCount: 114 },
-  { id: 4, name: 'Telecommunications', slug: 'telecommunications', description: 'Telecom networks, operators, equipment, enterprise IT, and communications technology.', icon: '📡', eventCount: 105 },
-  { id: 5, name: 'Construction', slug: 'construction', description: 'Construction, infrastructure projects, industry trends, and construction technology.', icon: '🏗️', eventCount: 88 },
-  { id: 6, name: 'Mining', slug: 'mining', description: 'Mining operations, mineral extraction, projects, equipment, and industry news.', icon: '⛏️', eventCount: 64 },
-  { id: 7, name: 'Finance', slug: 'finance', description: 'Financial-sector news, business developments, products, and services.', icon: '💼', eventCount: 172 },
-  { id: 8, name: 'Packaging', slug: 'packaging', description: 'Packaging materials, machinery, manufacturers, suppliers, and industry innovations.', icon: '📦', eventCount: 79 },
-  { id: 9, name: 'Transport and Logistics', slug: 'transport-and-logistics', description: 'Railways, road transport, aviation, shipping, ports, and logistics.', icon: '🚚', eventCount: 120 },
-  { id: 10, name: 'Oil and Gas', slug: 'oil-and-gas', description: 'Oil and gas industry news, operations, technology, and business developments.', icon: '🛢️', eventCount: 85 },
-  { id: 11, name: 'Textiles', slug: 'textiles', description: 'Textile industry news and developments, including businesses and professionals across the textile value chain.', icon: '🧵', eventCount: 71 },
-  { id: 12, name: 'Manufacturing', slug: 'manufacturing', description: 'Manufacturing industry news, industrial operations, technology, and business developments.', icon: '🏭', eventCount: 154 },
-];
-const fallbackCities: City[] = [
-  { id: 1, name: 'Bengaluru', slug: 'bengaluru', country: 'India', image: '', eventCount: 218 },
-  { id: 2, name: 'Mumbai', slug: 'mumbai', country: 'India', image: '', eventCount: 164 },
-  { id: 3, name: 'New Delhi', slug: 'new-delhi', country: 'India', image: '', eventCount: 143 },
-  { id: 4, name: 'Dubai', slug: 'dubai', country: 'United Arab Emirates', image: '', eventCount: 95 },
-  { id: 5, name: 'Singapore', slug: 'singapore', country: 'Singapore', image: '', eventCount: 87 },
-];
-
 const cx = (...values: Array<string | false | null | undefined>) => values.filter(Boolean).join(' ');
 const fmtDate = (value?: string) => value ? new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value)) : 'Date to be announced';
-const money = (value?: number) => value === 0 ? 'Free' : value ? `₹${value.toLocaleString('en-IN')}` : 'Price on request';
+/** Event price → label. The API sends a Decimal (often a string like "1500.00"); never invents a price. */
+const money = (value?: number | string | null) => {
+  if (value === null || value === undefined || value === '') return 'Price not available';
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 'Price not available';
+  if (n === 0) return 'Free';
+  return `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+};
 
 
 // ---------------------------------------------------------------------------
@@ -906,82 +821,6 @@ function AIConciergeModal({ open, onClose }: { open: boolean; onClose: () => voi
             </div>
           )}
         </div>
-      </div>
-    </div>
-  );
-}
-
-function AIPeerMatchesWidget({ onOpenChat }: { onOpenChat: (peer: { id: number; name: string; company?: string | null }) => void }) {
-  const peerMatchesQuery = useGetPeerMatches();
-  const requestMutation = useRequestConnection();
-  const matches = peerMatchesQuery.data ?? [];
-  if (peerMatchesQuery.isLoading || matches.length === 0) return null;
-
-  return (
-    <div className="rounded-3xl border border-accent/30 bg-gradient-to-r from-accent/10 via-card to-background p-6" data-testid="widget-ai-peer-matches">
-      <div className="flex items-center justify-between border-b border-foreground/10 pb-4">
-        <div className="flex items-center gap-2.5">
-          <div className="grid h-8 w-8 place-items-center rounded-xl bg-accent text-accent-foreground">
-            <Sparkles size={16} />
-          </div>
-          <div>
-            <h3 className="font-display text-base font-bold">✦ AI Recommended Connections</h3>
-            <p className="text-xs text-muted-foreground">Peers with complementary skills & shared event interests</p>
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {matches.slice(0, 3).map((match: AIPeerMatch) => (
-          <div key={match.attendee.id} className="flex flex-col justify-between rounded-2xl border border-foreground/10 bg-background/90 p-4 hover:border-accent">
-            <div>
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-2.5">
-                  <div className="grid h-9 w-9 place-items-center rounded-full bg-secondary font-display font-bold text-sm text-secondary-foreground">
-                    {match.attendee.name.charAt(0)}
-                  </div>
-                  <div>
-                    <h4 className="font-display text-sm font-bold leading-tight">{match.attendee.name}</h4>
-                    <p className="text-[11px] text-muted-foreground">{match.attendee.jobTitle} · {match.attendee.company}</p>
-                  </div>
-                </div>
-                <span className="rounded-full bg-accent/20 px-2 py-0.5 font-mono-face text-[9px] font-bold text-accent">
-                  {match.matchScore}% Fit
-                </span>
-              </div>
-
-              <div className="mt-3 flex flex-wrap gap-1">
-                {match.mutualInterests.map((mi, mIdx) => (
-                  <span key={mIdx} className="rounded bg-muted px-1.5 py-0.5 font-mono-face text-[9px] text-muted-foreground">
-                    {mi}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            <div className="mt-4 flex items-center justify-between border-t border-foreground/10 pt-3">
-              <span className="font-mono-face text-[10px] text-muted-foreground">{match.attendee.country || 'Global'}</span>
-              {match.attendee.connectionStatus === 'connected' ? (
-                <button
-                  onClick={() => onOpenChat({ id: match.attendee.id, name: match.attendee.name, company: match.attendee.company })}
-                  className="inline-flex items-center gap-1 rounded-full bg-accent px-3 py-1 text-xs font-bold text-accent-foreground"
-                >
-                  <MessageSquare size={12} /> Message
-                </button>
-              ) : match.attendee.connectionStatus === 'pending_sent' ? (
-                <span className="text-[10px] font-mono-face text-muted-foreground">Request Sent</span>
-              ) : (
-                <button
-                  onClick={() => requestMutation.mutate(match.attendee.id)}
-                  disabled={requestMutation.isPending}
-                  className="inline-flex items-center gap-1 rounded-full border border-foreground/15 px-3 py-1 text-xs font-semibold hover:border-accent hover:text-accent"
-                >
-                  <UserPlus size={12} /> Connect
-                </button>
-              )}
-            </div>
-          </div>
-        ))}
       </div>
     </div>
   );
@@ -1045,11 +884,12 @@ function Header() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => window.dispatchEvent(new CustomEvent('open-ai-concierge'))}
-            className="button-press flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent/10 px-3.5 py-1.5 text-xs font-bold text-accent hover:bg-accent hover:text-accent-foreground"
+            className="button-press flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent/10 px-2.5 py-1.5 text-xs font-bold text-accent hover:bg-accent hover:text-accent-foreground sm:px-3.5"
             data-testid="button-header-ai-concierge"
+            aria-label="AI Assistant"
           >
             <Sparkles size={14} />
-            <span>AI Assistant</span>
+            <span className="hidden sm:inline">AI Assistant</span>
             <kbd className="hidden rounded bg-accent/20 px-1 py-0.2 font-mono-face text-[9px] text-accent lg:inline-block">Ctrl K</kbd>
           </button>
           <Link
@@ -1076,22 +916,24 @@ function Header() {
                   <Link
                     href="/admin"
                     className={cx(
-                      'button-press flex items-center gap-1.5 rounded-full border border-foreground/15 px-3 py-1.5 text-xs font-semibold hover:border-accent hover:text-accent',
+                      'button-press flex items-center gap-1.5 rounded-full border border-foreground/15 px-2.5 py-1.5 text-xs font-semibold hover:border-accent hover:text-accent sm:px-3',
                       location.startsWith('/admin') ? 'border-accent bg-accent/15 text-accent font-bold' : 'text-foreground'
                     )}
                     data-testid="link-header-admin"
                     title="Open Administrator Console"
+                    aria-label="Admin console"
                   >
                     <ShieldCheck size={14} className="text-accent" />
-                    <span>Admin</span>
+                    <span className="hidden sm:inline">Admin</span>
                   </Link>
                   <Link
                     href="/admin/settings"
                     className={cx(
-                      'button-press flex items-center justify-center rounded-full border border-foreground/15 p-2 text-xs font-semibold hover:border-accent hover:text-accent',
+                      'button-press hidden items-center justify-center rounded-full border border-foreground/15 p-2 text-xs font-semibold hover:border-accent hover:text-accent sm:flex',
                       location.startsWith('/admin/settings') ? 'border-accent bg-accent/15 text-accent' : 'text-muted-foreground'
                     )}
-                    title="System & Agent Settings"
+                    title="Providers & API keys"
+                    aria-label="Providers & API keys"
                     data-testid="link-header-settings"
                   >
                     <Settings2 size={15} />
@@ -1129,7 +971,7 @@ function Header() {
                 type="button"
                 onClick={() => logout.mutate()}
                 disabled={logout.isPending}
-                className="button-press rounded-full bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-accent disabled:opacity-50"
+                className="button-press whitespace-nowrap rounded-full bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground hover:bg-accent disabled:opacity-50 sm:px-4 sm:text-sm"
                 data-testid="link-logout"
               >
                 {logout.isPending ? 'Signing out…' : 'Sign out'}
@@ -1510,8 +1352,9 @@ function HomePage() {
   if (home.isError) return <ErrorState retry={() => home.refetch()} />;
   const payload = home.data;
   const featured = payload?.featured ?? [];
-  const cats = payload?.trending?.length ? payload.trending : fallbackCategories;
-  const cities = payload?.cities?.length ? payload.cities : fallbackCities;
+  const cats = payload?.trending ?? [];
+  const cities = payload?.cities ?? [];
+  const indexedCities = typeof payload?.stats?.cities === 'number' ? payload.stats.cities : null;
   return (
     <div className="page-enter">
       <section className="mx-auto max-w-[1440px] px-5 pb-16 pt-14 lg:px-10 lg:pb-24 lg:pt-24">
@@ -1530,7 +1373,7 @@ function HomePage() {
               </Link>
               <span className="flex items-center gap-2 px-2 text-xs text-muted-foreground">
                 <span className={cx('h-2 w-2 rounded-full', health.isError ? 'bg-destructive' : 'bg-[#2f9c76]')} />
-                {health.isError ? 'Signal offline' : 'Live in 14 cities'}
+                {health.isError ? 'Signal offline' : indexedCities ? `${indexedCities} ${indexedCities === 1 ? 'city' : 'cities'} indexed` : 'Live'}
               </span>
             </div>
           </div>
@@ -1553,12 +1396,22 @@ function HomePage() {
               <EventCardView event={event} featured={i === 0} />
             </div>
           ))}
+          {featured.length === 0 && (
+            <div className="md:col-span-2">
+              <EmptyState title="No published events yet." body="New events will appear here as soon as they are published." />
+            </div>
+          )}
         </div>
       </section>
 
       <section className="mx-auto mt-24 max-w-[1440px] px-5 lg:px-10">
         <SectionHeading kicker="02 / Browse by energy" title="Find your room" action="All sectors" href="/categories" />
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {cats.length === 0 && (
+            <div className="col-span-2 lg:col-span-4">
+              <EmptyState title="No sectors indexed yet." />
+            </div>
+          )}
           {cats.slice(0, 4).map((cat, i) => (
             <Link href={`/categories/${cat.slug}`} key={cat.id} className={cx('hover-lift group rounded-2xl border border-foreground/10 bg-card p-5 sm:p-7', i === 1 && 'bg-secondary')} data-testid={`card-category-${cat.id}`}>
               <span className="font-display text-3xl text-accent">{cat.icon}</span>
@@ -1585,6 +1438,11 @@ function HomePage() {
       <section className="mx-auto mt-24 max-w-[1440px] px-5 lg:px-10">
         <SectionHeading kicker="04 / Go further" title="Cities with a pulse" action="View all cities" href="/cities" />
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {cities.length === 0 && (
+            <div className="sm:col-span-2 lg:col-span-4">
+              <EmptyState title="No cities indexed yet." />
+            </div>
+          )}
           {cities.slice(0, 4).map((city) => (
             <Link href={`/cities/${city.slug}`} key={city.id} className="group relative min-h-44 overflow-hidden rounded-2xl border border-foreground/10 bg-muted p-5" data-testid={`card-city-${city.id}`}>
               <div className="absolute inset-0 bg-gradient-to-br from-[#e4b77d]/45 via-transparent to-[#193d42]/40" />
@@ -1609,6 +1467,7 @@ function EventsPage() {
   const [term, setTerm] = useState('');
   const params = useMemo(() => ({ ...filters, q: term || undefined }), [filters, term]);
   const query = useListEvents(params);
+  const categoriesQuery = useListCategories();
   const rawEvents = query.data?.items ?? [];
   const events = useMemo(() => {
     if (!filters.country || query.data?.items?.length) return rawEvents;
@@ -1706,8 +1565,8 @@ function EventsPage() {
               className="mt-2 w-full rounded-lg border border-foreground/15 bg-background px-3 py-2.5 text-sm"
               data-testid="select-filter-category"
             >
-              <option value="">Everything</option>
-              {fallbackCategories.map((c) => (
+              <option value="">{categoriesQuery.isError ? 'Everything (sectors unavailable)' : 'Everything'}</option>
+              {(categoriesQuery.data ?? []).map((c) => (
                 <option key={c.slug} value={c.slug}>{c.name}</option>
               ))}
             </select>
@@ -1923,9 +1782,18 @@ function EventDetailPage() {
                 <p className="mt-1 font-semibold">{money(event.price)}</p>
               </div>
             </div>
-            <Link href={`/organizers/${event.organizerId}`} className="mt-7 flex items-center justify-between border-t border-secondary-foreground/15 pt-5 text-sm font-semibold" data-testid="link-event-organizer">
-              By {event.organizer}<ArrowRight size={15} />
-            </Link>
+            {event.organizer && (
+              <p className="mt-7 border-t border-secondary-foreground/15 pt-5 text-sm font-semibold" data-testid="text-event-organizer">
+                By{' '}
+                {(event as typeof event & { organizerSlug?: string | null }).organizerSlug ? (
+                  <Link href={`/organizers/${(event as typeof event & { organizerSlug?: string | null }).organizerSlug}`} className="underline-offset-4 hover:underline">
+                    {event.organizer}
+                  </Link>
+                ) : (
+                  event.organizer
+                )}
+              </p>
+            )}
           </div>
           <div className="mt-5 rounded-2xl border border-foreground/10 bg-card p-6">
             <p className="font-mono-face text-[10px] uppercase tracking-[.15em] text-accent">People are saying</p>
@@ -2045,7 +1913,7 @@ function RegisterPage() {
   const [createdPass, setCreatedPass] = useState<RegistrationPass | null>(null);
   const [showPassModal, setShowPassModal] = useState(false);
   const [error, setError] = useState('');
-  const [form, setForm] = useState<RegistrationInput>({ firstName: '', lastName: '', email: '', phone: '', company: '', jobTitle: '', country: 'India', ticketType: 'Standard' });
+  const [form, setForm] = useState<RegistrationInput>({ firstName: '', lastName: '', email: '', phone: '', company: '', jobTitle: '', country: '', ticketType: 'Standard' });
   const update = (key: keyof RegistrationInput, value: string) => setForm((f) => ({ ...f, [key]: value }));
 
   // Auto-fill authenticated user data
@@ -2057,6 +1925,9 @@ function RegisterPage() {
         firstName: f.firstName || parts[0] || '',
         lastName: f.lastName || parts.slice(1).join(' ') || '',
         email: f.email || me.data?.email || '',
+        company: f.company || me.data?.company || '',
+        jobTitle: f.jobTitle || me.data?.jobTitle || '',
+        country: f.country || me.data?.country || '',
       }));
     }
   }, [me.data]);
@@ -2105,7 +1976,8 @@ function RegisterPage() {
     e.preventDefault();
     setError('');
     mutation.mutate(
-      { id: event.id, data: form },
+      // country: explicit null when blank so the API doesn't substitute a default.
+      { id: event.id, data: { ...form, country: form.country?.trim() || (null as unknown as undefined) } },
       {
         onSuccess: (res: any) => {
           const passData: RegistrationPass = {
@@ -2113,12 +1985,12 @@ function RegisterPage() {
             eventId: event.id,
             eventTitle: event.title,
             eventSlug: event.slug,
-            ticketType: form.ticketType,
+            ticketType: res.ticketType || form.ticketType,
             registeredAt: res.registeredAt,
-            status: 'confirmed',
+            status: res.status ?? '',
             userName: `${form.firstName} ${form.lastName}`.trim(),
-            company: form.company,
-            jobTitle: form.jobTitle,
+            company: res.company ?? form.company,
+            jobTitle: res.jobTitle ?? form.jobTitle,
             ticketCode: res.ticketCode,
             qrCode: res.qrCode,
             eventVenue: event.venue,
@@ -2188,6 +2060,7 @@ function RegisterPage() {
               <Field label="Phone" value={form.phone ?? ''} onChange={(v) => update('phone', v)} testId="input-registration-phone" />
               <Field label="Company" value={form.company ?? ''} onChange={(v) => update('company', v)} testId="input-registration-company" />
               <Field label="Job title" value={form.jobTitle ?? ''} onChange={(v) => update('jobTitle', v)} testId="input-registration-job-title" />
+              <Field label="Country" value={form.country ?? ''} onChange={(v) => update('country', v)} testId="input-registration-country" />
             </div>
             <label className="mt-5 block text-xs font-semibold text-muted-foreground">
               Ticket type
@@ -2246,8 +2119,8 @@ function Field({
 
 function DirectoryListPage({ kind }: { kind: 'categories' | 'cities' | 'organizers' | 'venues' }) {
   const config = {
-    categories: { title: 'Find your people.', kicker: 'Sectors / The right rooms', hook: useListCategories, empty: fallbackCategories },
-    cities: { title: 'Change your coordinates.', kicker: 'Cities / Go somewhere', hook: useListCities, empty: fallbackCities },
+    categories: { title: 'Find your people.', kicker: 'Sectors / The right rooms', hook: useListCategories, empty: [] as Category[] },
+    cities: { title: 'Change your coordinates.', kicker: 'Cities / Go somewhere', hook: useListCities, empty: [] as City[] },
     organizers: { title: 'Follow the curators.', kicker: 'Organizers / People behind the rooms', hook: useListOrganizers, empty: [] as Organizer[] },
     venues: { title: 'Know the room.', kicker: 'Venues / Places with a point of view', hook: useListVenues, empty: [] as Venue[] },
   }[kind];
@@ -2453,8 +2326,8 @@ function AuthPage({ mode: initialMode }: { mode: 'login' | 'register' | 'forgot'
     password: '',
     company: '',
     website: '',
-    city: 'Bengaluru',
-    country: 'India',
+    city: '',
+    country: '',
   });
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState('');
@@ -2475,18 +2348,18 @@ function AuthPage({ mode: initialMode }: { mode: 'login' | 'register' | 'forgot'
     const cleaned = raw.replace(/^HTTP\s+\d+\s+[^:]+:\s*/i, '').trim();
     const lower = cleaned.toLowerCase();
 
-    // Check for non-existent account or unrecognized credentials
+    // Credential failures: never claim the account doesn't exist (a wrong password looks the same).
     if (
       lower.includes('no account details found') ||
-      lower.includes('incorrect email or password') ||
+      lower.includes('incorrect') ||
       lower.includes('user not found') ||
       lower.includes('account not found') ||
       lower.includes('no user found') ||
       lower.includes('unauthorized')
     ) {
       return {
-        message: 'No account details found. Please create a new account.',
-        isNotFound: true,
+        message: 'Incorrect email or password.',
+        isNotFound: false,
       };
     }
 
@@ -2560,6 +2433,12 @@ function AuthPage({ mode: initialMode }: { mode: 'login' | 'register' | 'forgot'
           },
           onError: (err: any) => {
             setIsSubmitting(false);
+            // Any rejected credential (unknown email or wrong password) is reported the same way.
+            if (err?.status === 401 || err?.status === 403) {
+              setError('Incorrect email or password.');
+              setIsAccountNotFound(false);
+              return;
+            }
             const { message, isNotFound } = sanitizeAuthError(err);
             setError(message);
             setIsAccountNotFound(isNotFound);
@@ -2583,8 +2462,8 @@ function AuthPage({ mode: initialMode }: { mode: 'login' | 'register' | 'forgot'
           name: form.name.trim(),
           email: form.email.trim().toLowerCase(),
           password: form.password,
-          country: form.country?.trim() || 'India',
-          company: roleType === 'organiser' ? (form.company.trim() || `${form.name.trim()}'s Organization`) : undefined,
+          country: form.country?.trim() || null,
+          company: roleType === 'organiser' ? form.company.trim() || undefined : undefined,
         }),
       });
 
@@ -2602,11 +2481,12 @@ function AuthPage({ mode: initialMode }: { mode: 'login' | 'register' | 'forgot'
             method: 'POST',
             body: JSON.stringify({
               organizerName: form.name.trim(),
-              organizationName: form.company.trim() || `${form.name.trim()}'s Events`,
+              organizationName: form.company.trim(),
               contactEmail: form.email.trim().toLowerCase(),
-              website: form.website?.trim() || '',
-              city: form.city?.trim() || 'Bengaluru',
-              country: form.country?.trim() || 'India',
+              website: form.website?.trim() || null,
+              city: form.city?.trim() || null,
+              state: null,
+              country: form.country?.trim() || null,
             }),
           });
         } catch (onboardErr) {
@@ -3230,9 +3110,11 @@ function NetworkingTab() {
                           </p>
                         </div>
                       </div>
-                      <span className="rounded-full bg-muted px-2 py-0.5 font-mono-face text-[9px] text-muted-foreground">
-                        {att.country || 'Global'}
-                      </span>
+                      {att.country && (
+                        <span className="rounded-full bg-muted px-2 py-0.5 font-mono-face text-[9px] text-muted-foreground">
+                          {att.country}
+                        </span>
+                      )}
                     </div>
                     {att.bio && <p className="mt-3 text-xs leading-5 text-muted-foreground line-clamp-2">{att.bio}</p>}
                   </div>
@@ -3395,7 +3277,7 @@ function RegistrationsTab({
                 {reg.ticketType}
               </span>
               <span className="font-mono-face text-[10px] text-muted-foreground">
-                {reg.ticketCode || `100T-REG-${reg.id}`}
+                {reg.ticketCode || 'No ticket code issued'}
               </span>
             </div>
             <Link href={`/events/${reg.eventSlug}`} className="mt-1.5 block font-display text-xl font-bold hover:text-accent">
@@ -3403,7 +3285,7 @@ function RegistrationsTab({
             </Link>
             <p className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
               <CalendarDays size={13} className="text-accent" />
-              {reg.eventStartDate ? fmtDate(reg.eventStartDate) : fmtDate(reg.registeredAt)}
+              {reg.eventStartDate ? fmtDate(reg.eventStartDate) : 'Date to be announced'}
               {reg.eventVenue && ` · ${reg.eventVenue}`}
             </p>
           </div>
@@ -3431,13 +3313,20 @@ function SettingsPanel() {
   const [form, setForm] = useState({ name: '', jobTitle: '', company: '', bio: '', country: '' });
   useEffect(() => {
     if (me.data) {
-      const profile = me.data as typeof me.data & { company?: string | null; country?: string | null };
-      setForm((f) => ({ ...f, name: profile.name ?? '', company: profile.company ?? '', country: profile.country ?? '' }));
+      const profile = me.data;
+      setForm({
+        name: profile.name ?? '',
+        jobTitle: profile.jobTitle ?? '',
+        company: profile.company ?? '',
+        bio: profile.bio ?? '',
+        country: profile.country ?? '',
+      });
     }
   }, [me.data]);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
+    if (!me.data) return; // never save before the real profile has loaded (would blank fields)
     updateMutation.mutate(form, {
       onSuccess: () => {
         setSaved(true);
@@ -3467,9 +3356,14 @@ function SettingsPanel() {
         </label>
         <Field label="Country" value={form.country} onChange={(v) => setForm((f) => ({ ...f, country: v }))} testId="input-settings-country" />
         <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+          {updateMutation.isError && (
+            <p className="w-full text-xs text-destructive">
+              Could not save: {updateMutation.error instanceof Error ? updateMutation.error.message : 'Request failed'}
+            </p>
+          )}
           <button
             type="submit"
-            disabled={updateMutation.isPending}
+            disabled={updateMutation.isPending || !me.data}
             className="button-press rounded-full bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground hover:bg-accent disabled:opacity-60"
             data-testid="button-save-settings"
           >
@@ -3592,206 +3486,9 @@ function Metric({ label, value, icon: Icon }: { label: string; value: number; ic
   );
 }
 
-function EventCollection({ events, emptyTitle, emptyBody }: { events: EventCard[]; emptyTitle: string; emptyBody?: string }) {
-  return events.length ? (
-    <div className="grid gap-5 md:grid-cols-2">
-      {events.map((e) => (
-        <EventCardView event={e} key={e.id} />
-      ))}
-    </div>
-  ) : (
-    <EmptyState title={emptyTitle} body={emptyBody} />
-  );
-}
-
-function OrganizerPage({ view = 'overview' }: { view?: string }) {
-  const dash = useGetOrganizerDashboard();
-  const events = useGetOrganizerEvents();
-  const analytics = useGetOrganizerAnalytics();
-  if (dash.isLoading) return <LoadingState label="Loading organizer studio" />;
-  if (dash.isError) return <ErrorState retry={() => dash.refetch()} />;
-  const data = dash.data;
-  const list = events.data ?? data?.recentEvents ?? [];
-  return (
-    <div className="page-enter mx-auto max-w-[1440px] px-5 py-12 lg:px-10 lg:py-16">
-      <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
-        <div>
-          <p className="font-mono-face text-xs uppercase tracking-[.18em] text-accent">Organizer studio / {view}</p>
-          <h1 className="mt-4 font-display text-5xl font-extrabold tracking-[-.07em]">
-            {view === 'analytics' ? 'See what is moving.' : view === 'events' ? 'Your event desk.' : 'Make a room people remember.'}
-          </h1>
-        </div>
-        <Link href="/organizer/events/create" className="inline-flex items-center justify-center gap-2 rounded-full bg-accent px-5 py-3 text-sm font-bold text-accent-foreground" data-testid="link-create-organizer-event">
-          <Plus size={17} /> Create an event
-        </Link>
-      </div>
-      <div className="mt-10 grid gap-3 sm:grid-cols-4">
-        <Metric label="Total events" value={data?.totalEvents ?? 0} icon={CalendarDays} />
-        <Metric label="Published" value={data?.publishedEvents ?? 0} icon={Check} />
-        <Metric label="Registrations" value={data?.registrations ?? 0} icon={Users} />
-        <Metric label="Views" value={data?.views ?? 0} icon={TrendingUp} />
-      </div>
-      {view === 'analytics' ? (
-        <AnalyticsPanel data={analytics.data} />
-      ) : (
-        <div className="mt-12">
-          <SectionHeading kicker="Your calendar" title="Recent events" action="Event desk" href="/organizer/events" />
-          <div className="space-y-3">
-            {list.length ? (
-              list.map((event) => (
-                <Link href={`/events/${event.slug}`} key={event.id} className="flex items-center justify-between rounded-2xl border border-foreground/10 bg-card p-5 hover:border-accent" data-testid={`row-organizer-event-${event.id}`}>
-                  <div>
-                    <p className="font-display text-xl font-bold">{event.title}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">{fmtDate(event.startDate)} · {event.location}</p>
-                  </div>
-                  <span className="rounded-full bg-secondary px-2.5 py-1 font-mono-face text-[9px] uppercase text-secondary-foreground">{event.status}</span>
-                </Link>
-              ))
-            ) : (
-              <EmptyState title="Your event desk is empty." body="Give your next gathering a place on the calendar." />
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function AnalyticsPanel({ data }: { data?: { views: number[]; registrations: number[]; conversion: number[]; ticketDistribution: Record<string, number> } }) {
-  const values = data?.views ?? [32, 48, 40, 67, 59, 82, 74];
-  return (
-    <div className="mt-12 rounded-2xl border border-foreground/10 bg-card p-6 sm:p-8">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="font-mono-face text-[10px] uppercase tracking-[.17em] text-accent">Last 7 weeks</p>
-          <h2 className="mt-2 font-display text-2xl font-bold">Audience momentum</h2>
-        </div>
-        <LineChart className="text-accent" />
-      </div>
-      <div className="mt-10 flex h-48 items-end gap-2 border-b border-foreground/10">
-        {values.map((v, i) => (
-          <div key={i} className="group relative flex-1 rounded-t-md bg-accent/75 transition-all hover:bg-accent" style={{ height: `${Math.max(10, Math.min(100, v))}%` }}>
-            <span className="absolute -top-6 left-1/2 hidden -translate-x-1/2 font-mono-face text-[9px] group-hover:block">{v}</span>
-          </div>
-        ))}
-      </div>
-      <div className="mt-5 flex justify-between font-mono-face text-[9px] uppercase text-muted-foreground">
-        <span>7 weeks ago</span>
-        <span>This week</span>
-      </div>
-    </div>
-  );
-}
-
-function CreateEventPage() {
-  const create = useCreateOrganizerEvent();
-  const queryClient = useQueryClient();
-  const [, setLocation] = useLocation();
-  const [error, setError] = useState('');
-  const [form, setForm] = useState<EventInput>({
-    title: '',
-    description: '',
-    eventType: 'Conference',
-    category: 'artificial-intelligence',
-    startDate: '',
-    endDate: '',
-    startTime: '09:30 AM',
-    location: 'Bengaluru',
-    format: 'in-person',
-    price: 0,
-  });
-
-  const set = (key: keyof EventInput, value: string | number) => {
-    setForm((f) => {
-      const updated = { ...f, [key]: value };
-      if (key === 'startDate' && (!f.endDate || f.endDate < (value as string))) {
-        updated.endDate = value as string;
-      }
-      return updated;
-    });
-  };
-
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    setError('');
-    const payload = {
-      ...form,
-      title: form.title.trim(),
-      description: form.description.trim(),
-      endDate: form.endDate || form.startDate,
-      location: form.location.trim() || 'Bengaluru',
-      price: Number(form.price) || 0,
-    };
-
-    create.mutate(
-      { data: payload },
-      {
-        onSuccess: (event) => {
-          queryClient.invalidateQueries();
-          setLocation(`/events/${event.slug}`);
-        },
-        onError: (err: unknown) => {
-          const msg = (err as { message?: string })?.message || 'Could not create the event. Check the required details.';
-          setError(msg);
-        },
-      }
-    );
-  };
-  return (
-    <div className="page-enter mx-auto max-w-[1000px] px-5 py-12 lg:px-10 lg:py-16">
-      <Link href="/organizer/events" className="inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground hover:text-accent" data-testid="link-back-organizer-events">
-        <ArrowLeft size={15} /> Event desk
-      </Link>
-      <div className="mt-10 max-w-2xl">
-        <p className="font-mono-face text-xs uppercase tracking-[.18em] text-accent">Organizer studio / New event</p>
-        <h1 className="mt-4 font-display text-5xl font-extrabold tracking-[-.07em]">Put something<br />good on the calendar.</h1>
-      </div>
-      <form onSubmit={submit} className="mt-12 rounded-3xl border border-foreground/10 bg-card p-6 sm:p-9">
-        <div className="grid gap-5 sm:grid-cols-2">
-          <div className="sm:col-span-2">
-            <Field label="Event title" value={form.title} onChange={(v) => set('title', v)} required testId="input-event-title" />
-          </div>
-          <div className="sm:col-span-2">
-            <label className="block text-xs font-semibold text-muted-foreground">
-              Description
-              <textarea required minLength={10} value={form.description} onChange={(e) => set('description', e.target.value)} className="mt-2 min-h-32 w-full rounded-lg border border-foreground/15 bg-background px-3 py-3 text-sm outline-none focus:border-accent" data-testid="input-event-description" />
-            </label>
-          </div>
-          <Field label="Event type" value={form.eventType} onChange={(v) => set('eventType', v)} required testId="input-event-type" />
-          <label className="block text-xs font-semibold text-muted-foreground">
-            Sector
-            <select value={form.category} onChange={(e) => set('category', e.target.value)} className="mt-2 w-full rounded-lg border border-foreground/15 bg-background px-3 py-3 text-sm" data-testid="select-event-category">
-              {fallbackCategories.map((c) => (
-                <option key={c.slug} value={c.slug}>{c.name}</option>
-              ))}
-            </select>
-          </label>
-          <Field label="Start date" type="date" value={form.startDate} onChange={(v) => set('startDate', v)} required testId="input-event-start-date" />
-          <Field label="End date" type="date" value={form.endDate} onChange={(v) => set('endDate', v)} required testId="input-event-end-date" />
-          <Field label="Start time" type="time" value={form.startTime} onChange={(v) => set('startTime', v)} required testId="input-event-start-time" />
-          <Field label="Location" value={form.location} onChange={(v) => set('location', v)} required testId="input-event-location" />
-          <label className="block text-xs font-semibold text-muted-foreground">
-            Format
-            <select value={form.format} onChange={(e) => set('format', e.target.value as EventInput['format'])} className="mt-2 w-full rounded-lg border border-foreground/15 bg-background px-3 py-3 text-sm" data-testid="select-event-format">
-              <option value="in-person">In person</option>
-              <option value="online">Online</option>
-            </select>
-          </label>
-          <Field label="Price (INR)" type="number" value={String(form.price)} onChange={(v) => set('price', Number(v))} testId="input-event-price" />
-        </div>
-        {error && <p className="mt-5 text-sm text-destructive" data-testid="status-create-event-error">{error}</p>}
-        <button disabled={create.isPending} className="mt-8 inline-flex items-center gap-2 rounded-full bg-primary px-6 py-3.5 text-sm font-bold text-primary-foreground hover:bg-accent" data-testid="button-create-event">
-          {create.isPending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />} Publish event
-        </button>
-      </form>
-    </div>
-  );
-}
-
 const ADMIN_NAV = [
-  { view: 'overview', label: 'Overview', href: '/admin' },
+  { view: 'overview', label: 'Overview', href: '/admin/platform' },
   { view: 'events', label: 'Events', href: '/admin/events' },
-  { view: 'discovery', label: 'Discovery', href: '/admin/discovery' },
   { view: 'users', label: 'Users', href: '/admin/users' },
   { view: 'organizers', label: 'Organizers', href: '/admin/organizers' },
   { view: 'categories', label: 'Sectors', href: '/admin/categories' },
@@ -3882,7 +3579,7 @@ function AdminEventsWorkspace() {
                     </td>
                     <td className="px-6 py-4 text-xs">
                       <span className="capitalize text-foreground">{e.format}</span>
-                      <div className="text-muted-foreground">{Number(e.price) === 0 ? 'Free' : `₹${e.price}`}</div>
+                      <div className="text-muted-foreground">{money(e.price)}</div>
                     </td>
                     <td className="px-6 py-4">
                       <span
@@ -4127,7 +3824,7 @@ function AdminCategoriesWorkspace() {
   if (query.isLoading) return <LoadingState label="Loading sectors" />;
   if (query.isError) return <ErrorState retry={() => query.refetch()} />;
 
-  const sourceCategories = query.data?.length ? query.data : fallbackCategories;
+  const sourceCategories = query.data ?? [];
   const categories = sourceCategories.filter((c) => {
     return !search || c.name.toLowerCase().includes(search.toLowerCase()) || c.slug.toLowerCase().includes(search.toLowerCase());
   });
@@ -4385,10 +4082,10 @@ function AdminPage({ view = 'overview' }: { view?: string }) {
     ['Reviews', d?.reviews ?? 0, Star],
   ];
   return (
-    <div className="page-enter mx-auto max-w-[1440px] px-5 py-12 lg:px-10 lg:py-16">
+    <div className="page-enter">
       <div className="flex items-end justify-between">
         <div>
-          <p className="font-mono-face text-xs uppercase tracking-[.18em] text-accent">Admin / {view}</p>
+          <p className="font-mono-face text-xs uppercase tracking-[.18em] text-accent">Admin / Platform data / {view}</p>
           <h1 className="mt-4 font-display text-5xl font-extrabold tracking-[-.07em]">
             {view === 'overview' ? 'Keep the signal clean.' : `Manage ${view}.`}
           </h1>
@@ -4411,10 +4108,10 @@ function AdminPage({ view = 'overview' }: { view?: string }) {
           </Link>
         ))}
         <Link
-          href="/admin/ops"
+          href="/admin"
           className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent/10 px-4 py-2 text-xs font-semibold text-accent hover:bg-accent hover:text-accent-foreground transition"
         >
-          Operations Console <ArrowRight size={12} />
+          Operations Dashboard <ArrowRight size={12} />
         </Link>
       </div>
 
@@ -4532,15 +4229,23 @@ function Router() {
         <Route path="/admin/discovery/contacts" component={() => <OpsLayout><ContactsPage /></OpsLayout>} />
         <Route path="/admin/outreach" component={() => <OpsLayout><OutreachPage /></OpsLayout>} />
         <Route path="/admin/outreach/:tab" component={() => <OpsLayout><OutreachPage /></OpsLayout>} />
-        <Route path="/admin/activity" component={() => <OpsLayout><ActivityPage /></OpsLayout>} />
+        {/* Discover events: guided run, automatic schedule, history and reports, configuration */}
+        <Route path="/admin/discover" component={() => <OpsLayout><RunWizardPage /></OpsLayout>} />
+        <Route path="/admin/discover/automatic" component={() => <OpsLayout><AutomaticDiscoveryPage /></OpsLayout>} />
+        <Route path="/admin/discover/configuration" component={() => <OpsLayout><DiscoveryConfigPage /></OpsLayout>} />
+        <Route path="/admin/discover/runs" component={() => <OpsLayout><ActivityPage /></OpsLayout>} />
+        <Route path="/admin/discover/runs/:id" component={() => <OpsLayout><RunReportPage /></OpsLayout>} />
+        {/* Old "Agent Activity" URL — run history now lives under Discover events. */}
+        <Route path="/admin/activity" component={() => <Redirect to="/admin/discover/runs" replace />} />
         <Route path="/admin/settings" component={() => <OpsLayout><SettingsPage /></OpsLayout>} />
-        {/* Platform data workspaces (unchanged placeholders) */}
-        <Route path="/admin/events" component={() => <AdminPage view="events" />} />
-        <Route path="/admin/users" component={() => <AdminPage view="users" />} />
-        <Route path="/admin/organizers" component={() => <AdminPage view="organizers" />} />
-        <Route path="/admin/categories" component={() => <AdminPage view="categories" />} />
-        <Route path="/admin/venues" component={() => <AdminPage view="venues" />} />
-        <Route path="/admin/reviews" component={() => <AdminPage view="reviews" />} />
+        {/* Platform data moderation — admin-guarded and listed in the admin side navigation via OpsLayout */}
+        <Route path="/admin/platform" component={() => <OpsLayout><AdminPage view="overview" /></OpsLayout>} />
+        <Route path="/admin/events" component={() => <OpsLayout><AdminPage view="events" /></OpsLayout>} />
+        <Route path="/admin/users" component={() => <OpsLayout><AdminPage view="users" /></OpsLayout>} />
+        <Route path="/admin/organizers" component={() => <OpsLayout><AdminPage view="organizers" /></OpsLayout>} />
+        <Route path="/admin/categories" component={() => <OpsLayout><AdminPage view="categories" /></OpsLayout>} />
+        <Route path="/admin/venues" component={() => <OpsLayout><AdminPage view="venues" /></OpsLayout>} />
+        <Route path="/admin/reviews" component={() => <OpsLayout><AdminPage view="reviews" /></OpsLayout>} />
 
         <Route component={NotFoundPage} />
       </Switch>

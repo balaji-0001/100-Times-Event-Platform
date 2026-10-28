@@ -82,6 +82,7 @@ class OutreachRunSummary:
     skipped_duplicate: int = 0
     skipped_suppressed: int = 0
     skipped_no_organizer: int = 0
+    skipped_past_event: int = 0  # the event already took place: no point inviting its organizer
 
     def as_dict(self) -> dict[str, int]:
         return {
@@ -90,4 +91,5 @@ class OutreachRunSummary:
             "skipped_duplicate": self.skipped_duplicate,
             "skipped_suppressed": self.skipped_suppressed,
             "skipped_no_organizer": self.skipped_no_organizer,
+            "skipped_past_event": self.skipped_past_event,
         }

@@ -85,3 +85,5 @@ env/
 _*.log
 _final_test_result.json
 
+# Event pictures organisers upload (user content, not code)
+artifacts/api-server/uploads/

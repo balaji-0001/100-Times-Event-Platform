@@ -25,9 +25,12 @@ def event_card(db: Session, event: Event, user_id: int | None = None) -> EventCa
         startDate=event.start_date,
         endDate=event.end_date,
         startTime=event.start_time,
-        location=event.venue.city.name if event.venue and event.venue.city else "Online",
-        venue=event.venue.name if event.venue else "Online",
-        organizer=event.organizer.name if event.organizer else "100 TIMES",
+        # Only what the event really has: an in-person event without a venue
+        # is not "Online", and an event without an organizer isn't ours.
+        location=event.venue.city.name if event.venue and event.venue.city else (event.city_name or ("Online" if event.format == "online" else "")),
+        venue=event.venue.name if event.venue else ("Online" if event.format == "online" else ""),
+        organizer=event.organizer.name if event.organizer else "",
+        organizerSlug=event.organizer.slug if event.organizer else None,
         image=event.image or "",
         rating=round(float(rating or 0), 1),
         attendeeCount=int(attendee_count or 0),

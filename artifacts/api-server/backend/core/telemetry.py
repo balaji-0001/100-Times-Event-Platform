@@ -8,6 +8,7 @@ Provides:
 """
 
 import contextvars
+import logging
 import os
 import time
 import uuid
@@ -21,19 +22,11 @@ correlation_id_ctx = contextvars.ContextVar("correlation_id", default="")
 workflow_id_ctx = contextvars.ContextVar("workflow_id", default="")
 
 # In-memory Prometheus metric counters
+logger = logging.getLogger("core.telemetry")
 _HTTP_REQUESTS_TOTAL = 0
 _HTTP_ERRORS_TOTAL = 0
 _AGENT_EXECUTIONS_TOTAL = 0
 _AGENT_FAILURES_TOTAL = 0
-
-
-def get_current_workflow_id() -> str:
-    """Returns the active workflow/correlation ID or generates a new one."""
-    wid = workflow_id_ctx.get()
-    if not wid:
-        wid = f"wf-{uuid.uuid4().hex[:12]}"
-        workflow_id_ctx.set(wid)
-    return wid
 
 
 class TelemetryMiddleware(BaseHTTPMiddleware):
@@ -68,60 +61,40 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
 
 
 def get_prometheus_metrics_text(db: Any = None) -> str:
-    """Renders comprehensive OpenMetrics / Prometheus plain text formatted metrics."""
+    """Renders OpenMetrics / Prometheus plain-text metrics. Every number is a
+    real count from the database (zero when there is nothing yet) — aggregated
+    in SQL, so a scrape doesn't load whole tables."""
     global _HTTP_REQUESTS_TOTAL, _HTTP_ERRORS_TOTAL
 
-    disc_runs = 35
-    trust_runs = 18
-    outreach_runs = 22
-    attendee_runs = 15
-    promotions_runs = 12
-    fails = 2
-    tokens = 112000
-    cost = 0.024
-    gr_total = 15
-    gr_blocked = 4
-    disc_events = 377
-    ver_events = 184
+    disc_runs = trust_runs = outreach_runs = attendee_runs = promotions_runs = 0
+    fails = tokens = gr_total = gr_blocked = disc_events = ver_events = 0
+    cost = 0.0
 
     if db is not None:
         try:
             from sqlalchemy import func, select
             from backend.models import AgentExecutionMetric, AgentRun, DiscoveredEvent, GuardrailLog
 
-            metrics = db.scalars(select(AgentExecutionMetric)).all()
-            if metrics:
-                disc_runs = sum(1 for m in metrics if "discovery" in m.agent_name.lower())
-                trust_runs = sum(1 for m in metrics if "trust" in m.agent_name.lower())
-                outreach_runs = sum(1 for m in metrics if "outreach" in m.agent_name.lower())
-                attendee_runs = sum(1 for m in metrics if "attendee" in m.agent_name.lower())
-                promotions_runs = sum(1 for m in metrics if "promotions" in m.agent_name.lower())
-                fails = sum(1 for m in metrics if m.status == "FAILED")
-                tokens = sum(m.total_tokens for m in metrics)
-                cost = float(sum(m.estimated_cost for m in metrics))
-
-            # Include AgentRun counts
-            runs = db.scalars(select(AgentRun)).all()
-            if runs:
-                disc_runs += sum(1 for r in runs if r.agent_type == "discovery")
-                outreach_runs += sum(1 for r in runs if r.agent_type == "outreach")
-                fails += sum(1 for r in runs if r.status == "failed")
-                tokens += len(runs) * 1450
-                cost += round((len(runs) * 1450 / 1_000_000) * 0.15, 5)
-
-            gr_logs = db.scalars(select(GuardrailLog)).all()
-            if gr_logs:
-                gr_total = len(gr_logs)
-                gr_blocked = sum(1 for g in gr_logs if g.decision in ("BLOCKED", "FLAGGED"))
-
-            ev_total = db.scalar(select(func.count(DiscoveredEvent.id)))
-            if ev_total:
-                disc_events = ev_total
-            ver_total = db.scalar(select(func.count(DiscoveredEvent.id)).where(DiscoveredEvent.verification_status == "VERIFIED"))
-            if ver_total:
-                ver_events = ver_total
+            name = func.lower(AgentExecutionMetric.agent_name)
+            count_metrics = lambda word: int(db.scalar(select(func.count(AgentExecutionMetric.id)).where(name.contains(word))) or 0)  # noqa: E731
+            count_runs = lambda kind: int(db.scalar(select(func.count(AgentRun.id)).where(AgentRun.agent_type == kind)) or 0)  # noqa: E731
+            disc_runs = count_metrics("discovery") + count_runs("discovery")
+            trust_runs = count_metrics("trust")
+            outreach_runs = count_metrics("outreach") + count_runs("outreach")
+            attendee_runs = count_metrics("attendee")
+            promotions_runs = count_metrics("promotions")
+            fails = int(db.scalar(select(func.count(AgentExecutionMetric.id)).where(AgentExecutionMetric.status == "FAILED")) or 0) + int(
+                db.scalar(select(func.count(AgentRun.id)).where(AgentRun.status == "failed")) or 0
+            )
+            # Only tokens/cost the executions recorded — nothing estimated per run.
+            tokens = int(db.scalar(select(func.sum(AgentExecutionMetric.total_tokens))) or 0)
+            cost = float(db.scalar(select(func.sum(AgentExecutionMetric.estimated_cost))) or 0.0)
+            gr_total = int(db.scalar(select(func.count(GuardrailLog.id))) or 0)
+            gr_blocked = int(db.scalar(select(func.count(GuardrailLog.id)).where(GuardrailLog.decision.in_(("BLOCKED", "FLAGGED")))) or 0)
+            disc_events = int(db.scalar(select(func.count(DiscoveredEvent.id))) or 0)
+            ver_events = int(db.scalar(select(func.count(DiscoveredEvent.id)).where(DiscoveredEvent.verification_status == "VERIFIED")) or 0)
         except Exception:
-            pass
+            logger.exception("Metrics query failed; reporting zeros")
 
     return f"""# HELP http_requests_total Total number of HTTP requests received
 # TYPE http_requests_total counter

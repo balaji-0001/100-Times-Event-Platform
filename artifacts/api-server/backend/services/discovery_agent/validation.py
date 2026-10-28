@@ -6,6 +6,7 @@ unparseable/relative date is a review note, not an auto-reject — only a
 *confidently parsed* past date is.
 """
 
+import re
 from datetime import date, datetime
 
 from email_validator import EmailNotValidError, validate_email
@@ -60,6 +61,32 @@ def try_parse_date(raw: str | None) -> date | None:
     return parse_written_date(raw)
 
 
+_NOT_A_COUNTRY = {"", "worldwide", "global", "online", "virtual", "all", "all countries", "international"}
+# Titles of directory / category pages, not of an event.
+_LISTING_TITLE = re.compile(
+    r"^(browse|find|search|discover|explore|list of)\b"
+    r"|^all (events|trade fairs|trade shows|exhibitions|conferences|fairs)\b"
+    r"|\btrade (fairs|shows) for\b"
+    r"|\b(trade fairs|trade shows|exhibitions|expos|events) in\b"
+    r"|\b(trade fairs|trade shows|exhibitions|expos|events|conferences|fairs) (calendar|list)\b"
+    r"|^upcoming\b.*\b(trade fairs|trade shows|exhibitions|expos|events|conferences)$"
+)
+_COUNTRY_SYNONYMS = {"dubai": "united arab emirates", "abu dhabi": "united arab emirates"}
+
+
+def _country_key(value: str | None) -> str | None:
+    """Comparable country name, or None when the value isn't a real country."""
+    from backend.services.discovery_agent.country_utils import normalize_country
+
+    raw = (value or "").strip().lower()
+    if raw in _NOT_A_COUNTRY:
+        return None
+    if raw in _COUNTRY_SYNONYMS:
+        return _COUNTRY_SYNONYMS[raw]
+    normalized = (normalize_country(value) or "").strip().lower()
+    return _COUNTRY_SYNONYMS.get(normalized, normalized) or None
+
+
 def validate_email_syntax(email: str | None) -> bool:
     if not email:
         return False
@@ -93,6 +120,9 @@ def validate_event(
     min_confidence_score: int = 0,
     blacklisted_keywords: list[str] | None = None,
     excluded_domains: list[str] | None = None,
+    target_countries: list[str] | None = None,
+    target_cities: dict[str, list[str]] | None = None,
+    target_places: dict[str, dict] | None = None,
 ) -> ValidationResult:
     """Validates an event candidate against 100 TIMES event discovery rules.
 
@@ -123,6 +153,18 @@ def validate_event(
                 None,
                 rejection_reason="NON_BUSINESS_ACTIVITY",
             )
+
+    # 0b. A listing / category page read as if it were one event (only for
+    # text-guessed candidates — structured event data is trusted): "Browse
+    # through our Trade Fairs for Building", "Trade Shows in India".
+    if candidate.best_effort and _LISTING_TITLE.search(t_low):
+        return ValidationResult(
+            "REJECTED",
+            [f"{candidate.name!r} is a listing page title, not an event."],
+            0,
+            None,
+            rejection_reason="LISTING_PAGE",
+        )
 
     # 1. Blacklisted keywords check (anti-spam / scam)
     if blacklisted_keywords:
@@ -285,6 +327,44 @@ def validate_event(
                 rejection_reason="MISSING_LOCATION",
             )
 
+    # 7b. Target countries: an in-person/hybrid event confirmed to be elsewhere
+    # is rejected; one whose country the source doesn't state can't be
+    # confirmed, so it is held for review rather than counted as verified.
+    country_unconfirmed = False
+    wanted_countries = {_country_key(c) for c in (target_countries or []) if _country_key(c)}
+    if wanted_countries and (candidate.event_format or "").strip().lower() not in ("online", "virtual"):
+        event_country = _country_key(candidate.country)
+        if event_country and event_country not in wanted_countries:
+            return ValidationResult(
+                "REJECTED",
+                [f"Event is in {candidate.country}, outside the requested countries."],
+                0,
+                parsed_date,
+                rejection_reason="OUT_OF_TARGET_COUNTRY",
+            )
+        if not event_country:
+            country_unconfirmed = True
+            notes.append("The source doesn't state the event's country — location could not be matched to the requested countries.")
+
+    # 7c. Target places: where cities and/or whole states were ticked for the
+    # event's country, the event must be in one of those cities or anywhere in
+    # one of those states. Confirmed elsewhere -> rejected; where the source
+    # doesn't say (or the city isn't in the state lists) -> held for review,
+    # never counted as verified.
+    city_unconfirmed = False
+    if target_cities and not target_places:
+        target_places = {country: {"cities": cities, "states": [], "state_cities": {}} for country, cities in target_cities.items()}
+    if target_places and (candidate.event_format or "").strip().lower() not in ("online", "virtual"):
+        rules = {_country_key(country): rule for country, rule in target_places.items() if _country_key(country)}
+        rule = rules.get(_country_key(candidate.country) or "")
+        if rule:
+            verdict, detail = _place_verdict(candidate, rule)
+            if verdict == "reject":
+                return ValidationResult("REJECTED", [detail], 0, parsed_date, rejection_reason="OUT_OF_TARGET_CITY")
+            if verdict == "unknown":
+                city_unconfirmed = True
+                notes.append(detail)
+
     # 8. Ticket URL verification
     if reject_missing_ticket_url and not candidate.ticket_url and not candidate.url:
         return ValidationResult(
@@ -385,9 +465,52 @@ def validate_event(
             rejection_reason="LOW_CONFIDENCE",
         )
 
-    if confidence < confidence_threshold or parsed_date is None or candidate.best_effort or category_unsupported or no_organizer_contact:
+    if (
+        confidence < confidence_threshold
+        or parsed_date is None
+        or candidate.best_effort
+        or category_unsupported
+        or no_organizer_contact
+        or country_unconfirmed
+        or city_unconfirmed
+    ):
         status = "NEEDS_REVIEW"
     else:
         status = "VERIFIED"
 
     return ValidationResult(status, notes, confidence, parsed_date, rejection_reason=None)
+
+
+def _place_verdict(candidate: ExtractedEventCandidate, rule: dict) -> tuple[str, str]:
+    """("ok" | "reject" | "unknown", note) for an event against one country's
+    ticked cities and whole ticked states (see geo_scope.GeoScope.place_rules)."""
+    from backend.services.discovery_agent.geo_scope import city_key, known_states, state_key
+
+    country = candidate.country
+    cities = rule.get("cities") or []
+    states = rule.get("states") or []
+    wanted = ", ".join([*cities, *states])
+    event_city = city_key(candidate.city)
+    if event_city and event_city in {city_key(c) for c in cities}:
+        return "ok", ""
+    if not states:
+        if event_city:
+            return "reject", f"Event is in {candidate.city}, outside the requested cities ({wanted})."
+        return "unknown", f"The source doesn't state the event's city — it could not be matched to {wanted}."
+    # Whole states: the event's own state, "City, State" text, or its city's state in the picker's lists.
+    # A region that isn't a recognised state ("Greater London") is not used as evidence.
+    recognised = known_states(country, (rule.get("state_cities") or {}).keys()) | {state_key(s, country) for s in states}
+    event_state = next((key for key in (state_key(candidate.state, country),
+                                        state_key(candidate.city.split(",")[1], country) if candidate.city and "," in candidate.city else None)
+                        if key and key in recognised), None)
+    if not event_state and event_city:
+        for state, state_cities in (rule.get("state_cities") or {}).items():
+            if event_city in {city_key(c) for c in state_cities}:
+                event_state = state_key(state, country)
+                break
+    if event_state:
+        if event_state in {state_key(s, country) for s in states}:
+            return "ok", ""
+        return "reject", f"Event is in {candidate.city or candidate.state} ({candidate.state or 'state from its city'}), outside the requested places ({wanted})."
+    where = f"in {candidate.city}" if candidate.city else "without a stated city or state"
+    return "unknown", f"The event is {where}; its state could not be confirmed against {wanted}."

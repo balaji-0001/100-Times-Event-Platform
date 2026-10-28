@@ -265,7 +265,10 @@ def send_templated_notification(
         try:
             provider = get_email_provider()
             send_res = provider.send(recipient=recipient_email, subject=subject, body=body)
-            email_status = "sent" if send_res.ok else "failed"
+            if send_res.ok:
+                email_status = "sent"
+            else:
+                email_status = "not_sent_smtp_not_configured" if not provider.is_real else "failed"
         except Exception:
             email_status = "failed"
 

@@ -30,24 +30,25 @@ def test_social_search_queries_generated():
 
 
 def test_date_range_queries_and_validation():
-    """Verify that specifying date_from and date_to influences queries and filters out-of-range dates."""
+    """Verify that specifying date_from and date_to influences queries and filters out-of-range dates.
+    (Far-future dates: a fixed 2026 date became "past" and hit the past-event rule first.)"""
     config = DiscoveryConfig(
         cities=["Pune"],
         states=["Maharashtra"],
         categories=["Finance"],
         country="India",
-        date_from="2026-11-01",
-        date_to="2026-11-30",
+        date_from="2099-11-01",
+        date_to="2099-11-30",
         search_depth=10,
     )
     queries = build_search_queries(config)
-    assert any("November 2026" in q for q in queries)
+    assert any("November 2099" in q for q in queries)
 
     # Event within date range -> VERIFIED
     ev_in_range = ExtractedEventCandidate(
-        name="FinTech Conclave 2026",
+        name="FinTech Conclave 2099",
         category="Finance",
-        date="2026-11-15",
+        date="2099-11-15",
         extraction_confidence=80,
     )
     org = OrganizerCandidate(found=True, name="Finance Org", email="team@finconclave.org")
@@ -56,16 +57,16 @@ def test_date_range_queries_and_validation():
         60,
         organizer=org,
         supported_categories=["Finance"],
-        date_from="2026-11-01",
-        date_to="2026-11-30",
+        date_from="2099-11-01",
+        date_to="2099-11-30",
     )
     assert res_in.status == "VERIFIED"
 
     # Event before date_from -> REJECTED with OUT_OF_DATE_RANGE
     ev_early = ExtractedEventCandidate(
-        name="FinTech Conclave 2026",
+        name="FinTech Conclave 2099",
         category="Finance",
-        date="2026-10-25",
+        date="2099-10-25",
         extraction_confidence=80,
     )
     res_early = validate_event(
@@ -73,17 +74,17 @@ def test_date_range_queries_and_validation():
         60,
         organizer=org,
         supported_categories=["Finance"],
-        date_from="2026-11-01",
-        date_to="2026-11-30",
+        date_from="2099-11-01",
+        date_to="2099-11-30",
     )
     assert res_early.status == "REJECTED"
     assert res_early.rejection_reason == "OUT_OF_DATE_RANGE"
 
     # Event after date_to -> REJECTED with OUT_OF_DATE_RANGE
     ev_late = ExtractedEventCandidate(
-        name="FinTech Conclave 2026",
+        name="FinTech Conclave 2099",
         category="Finance",
-        date="2026-12-15",
+        date="2099-12-15",
         extraction_confidence=80,
     )
     res_late = validate_event(
@@ -91,8 +92,8 @@ def test_date_range_queries_and_validation():
         60,
         organizer=org,
         supported_categories=["Finance"],
-        date_from="2026-11-01",
-        date_to="2026-11-30",
+        date_from="2099-11-01",
+        date_to="2099-11-30",
     )
     assert res_late.status == "REJECTED"
     assert res_late.rejection_reason == "OUT_OF_DATE_RANGE"

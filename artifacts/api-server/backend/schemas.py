@@ -16,7 +16,7 @@ class UserInput(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
-    country: str | None = Field(default="India", max_length=80)
+    country: str | None = Field(default=None, max_length=80)
     role: Literal["USER", "ORGANIZER"] | None = None
     company: str | None = Field(default=None, max_length=160)
 
@@ -35,6 +35,8 @@ class UserOut(APIModel):
     email_verified: bool = Field(default=True, alias="emailVerified")
     country: str | None = None
     company: str | None = None
+    job_title: str | None = Field(default=None, alias="jobTitle")
+    bio: str | None = None
 
 
 class ForgotPasswordInput(BaseModel):
@@ -143,6 +145,7 @@ class EventCard(APIModel):
     location: str
     venue: str
     organizer: str
+    organizer_slug: str | None = Field(default=None, alias="organizerSlug")
     image: str = ""
     rating: float
     attendee_count: int = Field(alias="attendeeCount")
@@ -184,18 +187,24 @@ class RegistrationInput(BaseModel):
     phone: str | None = Field(default=None, max_length=40)
     company: str | None = Field(default=None, max_length=120)
     job_title: str | None = Field(default=None, max_length=120, alias="jobTitle")
-    country: str | None = Field(default="India", max_length=80)
+    country: str | None = Field(default=None, max_length=80)
     ticket_type: Literal["Free", "Standard", "Premium", "VIP"] = Field(alias="ticketType")
 
 
 class RegistrationOut(APIModel):
+    @field_validator("status", mode="before")
+    @classmethod
+    def _lower_status(cls, value: str) -> str:
+        return str(value or "").lower()
+
     id: int
     event_id: int = Field(alias="eventId")
     event_title: str = Field(alias="eventTitle")
     event_slug: str = Field(alias="eventSlug")
     ticket_type: str = Field(alias="ticketType")
     registered_at: datetime = Field(alias="registeredAt")
-    status: Literal["confirmed", "pending", "cancelled"]
+    # Stored lifecycle states are uppercase (registration_automation.REGISTRATION_STATES).
+    status: Literal["confirmed", "pending", "cancelled", "registered", "waitlisted", "attended", "no_show"]
     user_name: str = Field(default="", alias="userName")
     company: str | None = None
     job_title: str | None = Field(default=None, alias="jobTitle")
@@ -285,8 +294,8 @@ class OrganizerDashboard(BaseModel):
     total_events: int = Field(alias="totalEvents")
     published_events: int = Field(alias="publishedEvents")
     registrations: int
-    views: int
-    conversion_rate: float = Field(alias="conversionRate")
+    views: int | None = None  # page views aren't tracked
+    conversion_rate: float | None = Field(default=None, alias="conversionRate")
     recent_events: list[EventCard] = Field(alias="recentEvents")
 
 
@@ -608,12 +617,6 @@ class TrackEventRequest(BaseModel):
     visitor_id: str | None = Field(default=None, alias="visitorId")
 
 
-class ConversionSimulationRequest(BaseModel):
-    opportunity_id: int = Field(alias="opportunityId")
-    clicks: int = Field(default=3, ge=1, le=50)
-    registrations: int = Field(default=1, ge=0, le=20)
-
-
 class KeywordPerformanceOut(APIModel):
     keyword: str
     frequency: int
@@ -803,6 +806,14 @@ class OutreachStatsOut(APIModel):
 
 # --- Event Discovery Agent ---
 
+class DiscoveryLocation(BaseModel):
+    """One node of the admin UI's country -> state -> city selection."""
+
+    country: str | None = Field(default=None, max_length=120)
+    state: str | None = Field(default=None, max_length=120)
+    city: str | None = Field(default=None, max_length=120)
+
+
 class DiscoveryRunRequest(BaseModel):
     """Optional per-run overrides for a manually-triggered discovery scan —
     any field left unset falls back to the configured `discovery_*` settings."""
@@ -811,6 +822,9 @@ class DiscoveryRunRequest(BaseModel):
     states: list[str] | None = None
     countries: list[str] | None = None
     country: str | None = None
+    locations: list[DiscoveryLocation] | None = Field(default=None, max_length=2000)
+    # {country: {state: [cities]}} for countries where a whole state was ticked.
+    region_cities: dict[str, dict[str, list[str]]] | None = Field(default=None, alias="regionCities")
     categories: list[str] | None = None
     sources: list[str] | None = None
     events_per_run: int | None = Field(default=None, alias="eventsPerRun", ge=1, le=1000)
@@ -834,14 +848,18 @@ class DiscoveryRunRequest(BaseModel):
     reject_missing_location: bool | None = Field(default=None, alias="rejectMissingLocation")
     reject_missing_ticket_url: bool | None = Field(default=None, alias="rejectMissingTicketUrl")
     reject_unmatched_category: bool | None = Field(default=None, alias="rejectUnmatchedCategory")
+    keep_rejected_events: bool | None = Field(default=None, alias="keepRejectedEvents")
     min_title_length: int | None = Field(default=None, alias="minTitleLength")
     min_description_length: int | None = Field(default=None, alias="minDescriptionLength")
     min_confidence_score: int | None = Field(default=None, alias="minConfidenceScore")
     blacklisted_keywords: list[str] | None = Field(default=None, alias="blacklistedKeywords")
     excluded_domains: list[str] | None = Field(default=None, alias="excludedDomains")
     listing_urls: list[str] | None = Field(default=None, alias="listingUrls")
+    # Only to try a NEW key; when absent the saved key (settings or .env) is used.
     ticketmaster_api_key: str | None = Field(default=None, alias="ticketmasterApiKey")
     ticketmaster_enabled: bool | None = Field(default=None, alias="ticketmasterEnabled")
+    # Web-search providers this run may call (search-engine ids); None = every configured one.
+    search_providers: list[str] | None = Field(default=None, alias="searchProviders", max_length=20)
 
 
 # --- Community Discovery Agent ("Agent 5") ---
@@ -982,6 +1000,8 @@ class DiscoveryAutoStatusOut(APIModel):
     interval_minutes: int = Field(alias="intervalMinutes")
     country: str | None = None
     countries: list[str] = Field(default_factory=list)
+    locations: list[dict] = Field(default_factory=list)
+    region_cities: dict[str, dict[str, list[str]]] = Field(default_factory=dict, alias="regionCities")
     cities: list[str] = Field(default_factory=list)
     states: list[str] = Field(default_factory=list)
     categories: list[str] = Field(default_factory=list)
@@ -1002,20 +1022,28 @@ class DiscoveryAutoStatusOut(APIModel):
     reject_missing_ticket_url: bool = Field(default=False, alias="rejectMissingTicketUrl")
     reject_unmatched_category: bool = Field(default=False, alias="rejectUnmatchedCategory")
     fallback_to_other_sector: bool = Field(default=True, alias="fallbackToOtherSector")
+    keep_rejected_events: bool = Field(default=True, alias="keepRejectedEvents")
     min_title_length: int = Field(default=8, alias="minTitleLength")
     min_description_length: int = Field(default=20, alias="minDescriptionLength")
     min_confidence_score: int = Field(default=50, alias="minConfidenceScore")
     blacklisted_keywords: list[str] = Field(default_factory=list, alias="blacklistedKeywords")
     excluded_domains: list[str] = Field(default_factory=list, alias="excludedDomains")
     listing_urls: list[str] = Field(default_factory=list, alias="listingUrls")
-    ticketmaster_api_key: str | None = Field(default=None, alias="ticketmasterApiKey")
+    # Whether a Ticketmaster key is saved, and its last 4 characters — never the key.
+    ticketmaster_api_key_set: bool = Field(default=False, alias="ticketmasterApiKeySet")
+    ticketmaster_api_key_hint: str | None = Field(default=None, alias="ticketmasterApiKeyHint")
     ticketmaster_enabled: bool = Field(default=False, alias="ticketmasterEnabled")
+    search_providers: list[str] | None = Field(default=None, alias="searchProviders")
 
 
 class DiscoveryAutoToggleRequest(BaseModel):
     enabled: bool | None = None
+    # How often automatic discovery runs (minutes); read by the scheduler every cycle.
+    interval_minutes: int | None = Field(default=None, alias="intervalMinutes", ge=15, le=10080)
     country: str | None = None
     countries: list[str] | None = None
+    locations: list[DiscoveryLocation] | None = Field(default=None, max_length=2000)
+    region_cities: dict[str, dict[str, list[str]]] | None = Field(default=None, alias="regionCities")
     cities: list[str] | None = None
     states: list[str] | None = None
     categories: list[str] | None = None
@@ -1036,14 +1064,19 @@ class DiscoveryAutoToggleRequest(BaseModel):
     reject_missing_ticket_url: bool | None = Field(default=None, alias="rejectMissingTicketUrl")
     reject_unmatched_category: bool | None = Field(default=None, alias="rejectUnmatchedCategory")
     fallback_to_other_sector: bool | None = Field(default=None, alias="fallbackToOtherSector")
+    keep_rejected_events: bool | None = Field(default=None, alias="keepRejectedEvents")
     min_title_length: int | None = Field(default=None, alias="minTitleLength")
     min_description_length: int | None = Field(default=None, alias="minDescriptionLength")
     min_confidence_score: int | None = Field(default=None, alias="minConfidenceScore")
     blacklisted_keywords: list[str] | None = Field(default=None, alias="blacklistedKeywords")
     excluded_domains: list[str] | None = Field(default=None, alias="excludedDomains")
     listing_urls: list[str] | None = Field(default=None, alias="listingUrls")
+    # A new key to save; "" removes the saved key; omitted keeps it.
     ticketmaster_api_key: str | None = Field(default=None, alias="ticketmasterApiKey")
     ticketmaster_enabled: bool | None = Field(default=None, alias="ticketmasterEnabled")
+    # [] / list = exactly these providers; omitted keeps the saved choice.
+    search_providers: list[str] | None = Field(default=None, alias="searchProviders", max_length=20)
+    reset_search_providers: bool | None = Field(default=None, alias="resetSearchProviders")
 
 
 class OutreachAutoStatusOut(APIModel):
@@ -1106,6 +1139,14 @@ class AgentRunOut(APIModel):
     config_snapshot: dict[str, Any] | None = Field(default=None, alias="configSnapshot")
     summary: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
+
+    @field_validator("config_snapshot")
+    @classmethod
+    def _redact_secrets(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        # Older runs stored the Ticketmaster key in their snapshot; never return it.
+        if value and value.get("ticketmaster_api_key"):
+            value = {**value, "ticketmaster_api_key": "(set)"}
+        return value
 
 
 # --- SMTP Email Configuration & Outbox ---
