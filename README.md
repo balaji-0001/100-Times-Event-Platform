@@ -1,292 +1,427 @@
-# 100 TIMES — Autonomous Event Discovery, Trust & AI-Driven Growth Platform
+# 100 TIMES — Business Event Discovery & Growth Platform
 
-**100 TIMES** is an enterprise-grade, full-stack event discovery marketplace, attendee networking ecosystem, and autonomous AI-driven growth platform. It pairs a modern global event marketplace (Conferences, Expos, Summits, Workshops, Organizers, Venues, Speakers, Cities, and Sectors) with an integrated suite of **Autonomous AI Agents** orchestrated via **LangGraph**, **Google Gemini**, **Anthropic Claude**, and **FastAPI** for continuous event discovery, organizer outreach, trust scoring, and multi-channel promotion.
+**100 TIMES** is a full-stack platform for business events: conferences, trade fairs, expos and summits. People find and register for events, organisers publish and promote them, and three software agents do the slow research work: finding upcoming events across the web, checking every submitted event for safety, and drafting invitations to organisers.
 
----
-
-## Key Pillars & Autonomous Agent Ecosystem
-
-### 1. Global Event Discovery Marketplace & Desk
-* **Rich Multi-Dimensional Discovery:** Filter and search global events by sector, city, format (`In-Person`, `Virtual`, `Hybrid`), date range, and popularity.
-* **Comprehensive Directories:** Dedicated profile and detail pages for **Events**, **Organizers**, **Venues**, **Speakers**, **Cities**, and **Sectors**.
-* **Role-Based Workspaces & Unified Auth:**
-  * **Attendee Hub:** Track digital passes, saved events, reviews, networking, and personalized AI recommendations.
-  * **Organiser Studio (`/organizer`):** 25+ field event builder, automated Trust Agent verification, registration analytics, and attendee communication. Organisers can give every event a picture — upload their own (JPG/PNG/WebP, up to 5 MB) or pick one of 5 ready-made pictures for the event's sector (see [Event Pictures](#event-pictures)).
-  * **Admin Operations Console (`/admin`):** Central command center for governing AI discovery agents, outreach approval queues, trust reviews, automations, and system telemetry.
-* **Friendly Authentication UX:** Seamless account creation with sanitized error handling (no raw technical `401 Unauthorized` errors exposed to users, clear "No account details found" guidance with instant one-click registration).
-
-### 2. Discovery Agent — Autonomous Event & Organizer Research
-Finds upcoming events for the countries, cities and sectors an admin selects, and verifies each event's organiser — by fixed rules on the pages' own data, never invented details. A run is a concurrent six-stage pipeline (`orchestrator.py`) that stops as soon as the target number of **verified** events is reached:
-1. **Plan:** search queries for every sector × place pair (`query_seeds.py`) and the selected sources (`catalog.py`).
-2. **Collect:** web search through the configured providers — self-hosted **SearXNG** first (free), **Exa** as a paid top-up within a per-run budget, DuckDuckGo as last resort — plus direct reads of the source catalogue.
-3. **Read pages (`page_extractor.py`):** schema.org event data first, then linked event pages, then a best-effort text reader whose results always go to review.
-4. **Screen:** guardrails, sector match (a hard filter), country/city/state scope, past-date and duplicate checks (`validation.py`, `discovery_dedup.py`).
-5. **Find organiser (`organizer_identifier.py`):** the organiser named on the event page or its official site, with a published contact e-mail; every field keeps the URL it came from.
-6. **Decide & save (`storage.py`):** VERIFIED / NEEDS_REVIEW / REJECTED, with evidence URLs; rejected events can be kept for admin review.
-
-**Source catalogue (`source_registry.py`, 80+ entries):** global event directories (IndustryEvents, ConferenceGrid, TradeShowBuzz, EventsEye, TradeFairDates, Expolya …), sector directories (Convene.md and Medical Events Now for medical conferences, OnSite and HackEvents for tech), exhibition organisers and venue calendars (Informa, RX, DMG Events, Messe Düsseldorf, Koelnmesse, DWTC, ExCeL …), associations and official APIs (IEEE vTools, Ticketmaster). Each catalogue entry is checked before it is added: robots.txt allows the page, and the platform's reader finds upcoming events on it. Sites that refuse automated access are not worked around. Each source's real health from runs and live checks is shown in the admin console.
-
-**Admin pages:** run wizard (`/admin/discover`), automatic schedule (`/admin/discover/automatic`), sources & providers (`/admin/discover/configuration`), run history with per-source reports (`/admin/discover/runs`), and the event, organiser and contact lists under `/admin/discovery`.
-
-### 3. Outreach Agent (Agent 2) — Contextual B2B Invitation Engine
-Automates personalized invitations to event organizers with strict human-in-the-loop moderation:
-* **Eligibility & Threshold Gating:** Enforces match thresholds and contact completeness before drafting emails.
-* **Cryptographic Attribution Tracking:** Generates unique tracking URLs (`/api/attribution/click/{token}`) that attribute onboarding stages directly to outreach campaigns.
-* **Human-in-the-Loop Moderation:** All generated invitations wait in **Pending Approval** in the Admin Console before dispatch via SMTP.
-* **Automated Multi-Stage Follow-ups:** Automatically schedules follow-up drafts if an organizer hasn't responded within configured intervals.
-
-### 4. Trust Agent — Event Verification & Safety Scoring
-Evaluates every submitted event for safety, legitimacy, and completeness:
-* **Duplicate Detection:** Calculates similarity scores against existing catalog listings and external discovered events.
-* **Completeness & Scam Analysis:** Analyzes description quality, location feasibility, organizer credentials, and suspicious phrases.
-* **Moderation Queue (`/admin/trust-review`):** High-confidence legitimate events publish instantly; borderline or flagged submissions enter an administrative review queue with one-click Approve, Reject, or Request Changes actions.
-
-### 5. Attendee Agent — Intent Matching & Community Engagement
-Listens to permitted community signals (Telegram, Discord, Reddit, RSS) to extract structured attendee interest:
-* **Structured Intent Extraction:** Parses user queries into `category`, `location`, `time_range`, `event_type`, and `preferences`.
-* **Weighted Relevance Scoring:** Matches user intent against live platform events to draft helpful, context-rich recommendations.
-* **Registration Automation:** Coordinates capacity limits, waitlists, RFC 5545 `.ics` calendar sync, and multi-stage reminders (`T-7d`, `T-24h`, `T-1h`).
-
-### 6. Social & Community Promotions
-* **Multi-Platform Publishing:** Publishes promotional event briefs to Telegram channels/groups, Discord servers, LinkedIn, Instagram, Facebook, and X.
-* **Configurable Cadence & Safety:** Platform-specific rate limiting, customizable targeting by sector, and automated toggle controls.
-
-### 7. Automations & Observability Command Center
-* **Unified Automations Dashboard (`/admin/automations`):** Real-time monitoring and toggles for Discovery, Outreach, Trust, and Social agents.
-* **Observability & Telemetry (`/admin/observability`):** System health metrics, error rates, agent run history, and audit trails.
-* **n8n Workflow Integration:** Eight production n8n workflows for event registration, confirmations, reminders, cancellations, and organizer retention.
+Everything an agent produces is evidence-based (every saved fact keeps the URL it came from) and anything that contacts the outside world waits for a person, unless an admin deliberately switches on automatic publishing.
 
 ---
 
-## System Architecture
+## Contents
+
+1. [What the platform does](#what-the-platform-does)
+2. [Accounts and roles](#accounts-and-roles)
+3. [The three agents](#the-three-agents)
+4. [Automations](#automations)
+5. [Sectors](#sectors)
+6. [Event sources](#event-sources)
+7. [AI models, web search and costs](#ai-models-web-search-and-costs)
+8. [Architecture](#architecture)
+9. [Tech stack](#tech-stack)
+10. [Repository structure](#repository-structure)
+11. [Getting started](#getting-started)
+12. [Configuration reference](#configuration-reference)
+13. [Database](#database)
+14. [Admin console map](#admin-console-map)
+15. [Testing](#testing)
+16. [Rules the code follows](#rules-the-code-follows)
+17. [Known limitations](#known-limitations)
+
+---
+
+## What the platform does
+
+| For | What they can do | Where |
+|---|---|---|
+| **Visitors** | Browse and search events by sector, country, city, format (in person / online / hybrid) and date (today, this weekend, next 7 days, this month, next 3 months or a custom range); browse sectors, cities, organisers and venues; ask the AI Assistant in plain language ("Find healthcare exhibitions in the USA"). | `/`, `/events`, `/categories`, `/cities`, `/organizers`, `/venues` |
+| **Attendees** | Everything visitors can, plus: register for events, save events, keep a profile (personal details, interests, industries, countries), get recommendations and reminders, manage registrations and notifications. | `/dashboard/*` |
+| **Organisers** | Publish events with a step-by-step form, write the description with the "Write it for me" assistant, add a picture (upload or pick a ready-made one for the sector), see registrations and analytics. Every submitted event goes through the Trust Agent. | `/organizer/*` |
+| **Admins** | Run and schedule event discovery, review discovered events and organiser contacts, approve outreach e-mails, decide borderline Trust reviews, manage social promotion and automations, watch system health, AI usage and costs. | `/admin/*` |
+
+---
+
+## Accounts and roles
+
+Attendee and organiser accounts are completely separate.
+
+- **Sign-up** asks for the account type. An attendee account has role `USER`; an organiser account has role `ORGANIZER` (a company name is required). Roles are never upgraded automatically.
+- **Access is enforced on the server**, not just hidden in the interface:
+  - attendee APIs (`/api/attendee/*`, saved events, registrations, networking) use `require_attendee`;
+  - organiser APIs (`/api/organizer/*`) use `require_organiser`;
+  - admin APIs require `ADMIN` (admins can use everything).
+- **The interface follows the role:** attendees never see "List an event"; organisers never see attendee tools and can't register for events; typing another area's URL shows a "this area is for … accounts" page. After login each role lands on its own home (`/dashboard`, `/organizer` or `/admin`).
+- **Attendee data** lives in its own `attendee_profiles` table (migration `0015`).
+- **The header** shows one profile button; all account options (dashboard, profile, List an event, admin pages, sign out) are in its drop-down menu.
+
+---
+
+## The three agents
+
+### 1. Event Discovery Agent
+
+Finds upcoming events for the countries, cities and sectors an admin selects, and the organiser behind each one. It uses fixed rules on the pages' own data (no AI model writes or guesses event details). A run is a concurrent six-stage pipeline (`backend/services/discovery_agent/orchestrator.py`) that stops as soon as the target number of **verified** events is reached:
+
+1. **Plan:** one search query per selected sector × place (`query_seeds.py`), plus the selected sources (`catalog.py`).
+2. **Collect:** web search through the configured providers and direct reads of the source catalogue (site readers in `adapters/`).
+3. **Read pages:** schema.org event data first, then linked event pages, then a best-effort text reader whose results always go to review (`page_extractor.py`, `text_extractor.py`).
+4. **Screen:** guardrails, sector match, country / city / state scope, past dates and duplicates (`validation.py`, `discovery_dedup.py`, `categorizer.py`).
+5. **Find organiser:** the organiser named on the event page or its official site, with a published contact e-mail; listing sites', venues' and placeholder mailboxes are rejected; every field keeps the URL it was read from (`organizer_identifier.py`).
+6. **Decide and save:** `VERIFIED`, `NEEDS_REVIEW` or `REJECTED`, with evidence URLs (`storage.py`).
+
+Every run saves a full report (per stage, per source, per search provider) plus its **usage and estimated cost**, viewable under *Run history & reports*.
+
+### 2. Trust & Safety Agent
+
+Checks every event an organiser submits (`backend/services/trust_agent/`): completeness, duplicates against existing and discovered events, scam and spam language, prohibited content. It scores the event and publishes in two steps (approve, then publish). Confident results publish or reject automatically; uncertain ones wait in the **Trust review** queue (`/admin/trust-review`) for a person.
+
+### 3. Organizer Outreach Agent
+
+Drafts personal invitation e-mails to the organisers the Discovery Agent found, asking them to list their events on 100 TIMES, and drafts follow-ups when there's no reply (`backend/services/social_agent/outreach/`). **It never sends on its own:** every draft waits in *Pending* until a person approves and sends it over SMTP. Invitation links carry attribution tokens so sign-ups can be traced back to the campaign.
+
+---
+
+## Automations
+
+Automations are switched on and off on `/admin/automations`. **All of them start switched off.**
+
+| Automation | Trigger | What it does |
+|---|---|---|
+| **Automatic discovery** | On a schedule (default hourly), when on | Runs the Discovery Agent with the saved configuration. |
+| **Outreach drafting & follow-ups** | On a schedule, when on | Drafts invitations and follow-ups. Drafts only; sending is always manual. |
+| **Trust check** | Instantly, on every submission | Always on; runs the Trust & Safety Agent. |
+| **Social promotion** | Instantly, when an event is published (from any path, including the admin Events page) | Writes a post per enabled platform (Instagram, Facebook, LinkedIn, Telegram, Discord) with UTM tracking. A post goes live automatically only on platforms with **auto-publish** on and **practice mode (dry run)** off; otherwise it waits for approval. Published Instagram links use the post's real permalink. Managed on `/admin/social-promotions`. |
+| **Attendee reminders** | Every hour, when on | Reminders before an attendee's events, deadline alerts, change notices and new-match digests, only for attendees who opted in, each notice at most once. |
+
+The in-process scheduler is `backend/services/social_agent/scheduler.py`; each loop checks its own live switch, so turning one on or off needs no restart. Optional n8n workflows (`infra/n8n/workflows/`, `n8n/workflows/`) cover registration e-mails, reminders and other event-lifecycle messages.
+
+---
+
+## Sectors
+
+The platform lists events in **12 business sectors** (plus "Other"):
+
+Construction · Energy and Power Generation · Finance · Healthcare · Manufacturing · Mining · Oil and Gas · Packaging · Pharmaceuticals · Telecommunications · Textiles · Transport and Logistics
+
+**Technology is not a 100 TIMES sector.** Its category row is kept in the database but hidden everywhere (`backend/services/sectors.py`): it's not offered on the site or in the organiser form, `/api/categories/technology` returns 404, and discovery still *recognises* technology events so it can reject them, instead of misfiling them under another sector.
+
+---
+
+## Event sources
+
+The source catalogue (`backend/services/discovery_agent/source_registry.py`) has **59 event websites** the Event Finder reads directly, plus official APIs and search tools. Each entry records the sectors and countries it covers, how it's read (event pages, structured event data, official API, calendar feed) and its live health from real runs.
+
+| Kind | Examples |
+|---|---|
+| Global event directories | IndustryEvents, ConferenceGrid, TradeShowBuzz, EventsEye, TradeFairDates, Expolya, Conference Alerts, Clocate, Trade Show Radar, Tradefest |
+| Sector directories | Medical Events Now, Convene.md (medical), The Expo Co and Pilars (construction) |
+| Exhibition organisers | Informa Markets, RX Global, dmg events, Terrapinn, Messe Düsseldorf, Messe Frankfurt, NürnbergMesse, Tarsus, Clarion |
+| Venue calendars | India Expo Centre & Mart, Dubai World Trade Centre, ExCeL London, Javits Center, McCormick Place, Singapore EXPO |
+| Associations and official APIs | IEEE (vTools API), ASME, ASCE, ASCO, GTR Events, Ticketmaster Discovery API |
+
+**Rules for every source:** it's added only after checking that robots.txt allows the page and the reader finds upcoming events on it; sites that block automated visitors are not worked around (no stealth, no proxies, no headless retries after a 403). Sources whose events don't fall in the 12 sectors were removed.
+
+---
+
+## AI models, web search and costs
+
+### AI models
+
+All AI calls go through one client, `backend/services/social_agent/ai_client.py`, which supports **Google Gemini** and **Anthropic Claude** with the same four operations (structured answer, text, web-search-grounded answer, connectivity ping). Switch with `AI_PROVIDER=gemini|anthropic` and `GEMINI_MODEL` / `ANTHROPIC_MODEL`. The client never invents a fallback answer: a missing key or failed call raises `AIClientError`, and callers fall back to their fixed templates.
+
+| Feature | Uses AI for |
+|---|---|
+| Trust & Safety Agent | A structured safety assessment (`trust_assessment`) |
+| Outreach Agent | Writing invitations and follow-ups (`write_outreach_email`) |
+| Social promotion | Writing each platform's post (`generate_social_promotion_post`) |
+| Website AI Assistant | Turning a question into search filters (`event_search_filters`) |
+| Organiser "Write it for me" | Writing an event description from the form's facts only |
+| Event Discovery Agent | No AI model. Only the "Google via Gemini" search provider calls Gemini (Google Search grounding). |
+
+### Web search providers
+
+Self-hosted **SearXNG** (free) is asked first; paid providers top up one at a time, cheapest first, only while results are short and within `PAID_SEARCH_CALLS_PER_RUN`: **Exa**, **Google via Gemini grounding**, **Google Custom Search**, **Brave**. DuckDuckGo is the last resort. (Bing's API was retired by Microsoft in August 2025.)
+
+### Usage and cost tracking
+
+Every discovery run stores its own usage in `agent_runs.summary["usage"]` (`backend/services/discovery_agent/run_usage.py`), shown on **System health → AI Usage & Cost**:
+
+- **Search queries** (attempted, with results, from cache, no results, not sent) and **provider requests** (attempted, succeeded, failed, rate-limited), counted so retries, cache hits and parallel calls aren't double-counted.
+- **AI model calls and tokens** exactly as each model API reports them.
+- **Cost:** a provider's own reported cost first (Exa reports it); otherwise a configured price (`SEARCH_PRICING_USD_PER_1000`, `AI_MODEL_PRICING_USD_PER_MTOK`); otherwise **Unknown**. A provider is never assumed free just because it doesn't report a cost; only self-hosted SearXNG and the DuckDuckGo fallback have no per-search fee. Failed requests cost $0.
+- A **latest run** summary and a **per-run history** table, re-priced from stored counts whenever prices change.
+
+---
+
+## Architecture
 
 ```mermaid
 flowchart TB
     subgraph Frontend["Frontend — React 19 + TypeScript + Vite + Tailwind CSS"]
-        MP["Public Event Marketplace\n(Explore, Sectors, Cities, Organizers, Venues, AI Concierge)"]
-        HUB["Attendee Hub & Organiser Studio\n(/dashboard, /organizer)"]
-        ADMIN["Admin Operations Console\n(/admin: Discovery, Outreach, Trust, Automations, Observability)"]
+        PUB["Public site\n(Explore, Sectors, Cities, Organizers, Venues, AI Assistant)"]
+        ATT["Attendee dashboard\n(/dashboard)"]
+        ORG["Organiser studio\n(/organizer)"]
+        ADM["Admin console\n(/admin)"]
     end
 
-    subgraph Backend["Backend — FastAPI + SQLAlchemy 2.0 (Python 3.11+)"]
-        API["REST API Routers (/api/*)\nauth | events | discovery | outreach | trust | attendee-agent | automations | observability"]
-        DISC["Discovery Agent\n(Web search, 80+ catalogue sources, official APIs)"]
-        OUT["Outreach Engine\n(AI Drafting -> Approval -> SMTP)"]
-        TRUST["Trust Agent\n(Completeness, Deduplication, Safety)"]
-        ATT["Attendee Agent\n(Signal Extraction, Intent Matching)"]
-        SOC["Social & Community Promotion Engine"]
-        LLM["Unified AI Client Boundary (Gemini / Anthropic)"]
+    subgraph Backend["Backend — FastAPI + SQLAlchemy 2.0"]
+        API["REST API (/api/*)\nrole guards: attendee / organiser / admin"]
+        DISC["Event Discovery Agent\n(59 website sources, APIs, web search)"]
+        TRUST["Trust & Safety Agent"]
+        OUT["Organizer Outreach Agent\n(drafts → approval → SMTP)"]
+        AUTO["Automations\n(scheduler, social promotion, attendee reminders)"]
+        AI["AI client\n(Gemini / Claude)"]
     end
 
-    subgraph Storage["Data & Infrastructure"]
-        MYSQL[("MySQL 8.0 (Docker Port 3306)\n58 Production Tables")]
-        N8N["n8n Workflow Engine (Port 5678)"]
-        SEARX["SearXNG search (Docker, Port 8888)"]
+    subgraph Infra["Data & infrastructure"]
+        DB[("MySQL 8.0\n(Docker, port 3306)")]
+        SX["SearXNG\n(Docker, port 8888)"]
+        N8N["n8n (optional, port 5678)"]
+        SOC["Instagram · Facebook · LinkedIn\nTelegram · Discord"]
     end
 
-    MP -->|"@workspace/api-client-react"| API
-    HUB -->|"@workspace/api-client-react"| API
-    ADMIN -->|"Admin JWT API"| API
+    PUB --> API
+    ATT --> API
+    ORG --> API
+    ADM --> API
     API --> DISC
-    API --> OUT
     API --> TRUST
-    API --> ATT
-    API --> SOC
-    DISC --> LLM
-    OUT --> LLM
-    TRUST --> LLM
-    ATT --> LLM
-    SOC --> LLM
-    API --> MYSQL
-    DISC --> SEARX
+    API --> OUT
+    API --> AUTO
+    TRUST --> AI
+    OUT --> AI
+    AUTO --> AI
+    DISC --> SX
+    AUTO --> SOC
+    API --> DB
     N8N <--> API
 ```
 
 ---
 
-## Tech Stack
+## Tech stack
 
 | Layer | Technologies |
-| :--- | :--- |
-| **Frontend** | React 19, TypeScript, Vite, Tailwind CSS, Wouter Router, TanStack React Query, Lucide Icons |
-| **Backend API** | Python 3.11+, FastAPI, Uvicorn, Pydantic v2, SQLAlchemy 2.0, Alembic, PyJWT, passlib / bcrypt |
-| **Database** | MySQL 8.0 (Docker container `100times-mysql` on port `3306`), PyMySQL |
-| **AI Orchestration** | LangGraph, Google GenAI SDK, Anthropic Claude SDK |
-| **Web Search** | Self-hosted SearXNG (free, `infra/searxng/`), Exa (optional paid top-up), DuckDuckGo fallback |
-| **Automation** | n8n workflow engine (port 5678), in-process async schedulers |
-| **Client Libraries** | `@workspace/api-client-react` (auto-generated typed React Query hooks and custom fetch) |
+|---|---|
+| Frontend | React 19, TypeScript, Vite 7, Tailwind CSS 4, Wouter router, TanStack React Query, Radix UI, Lucide icons |
+| Backend | Python 3.11+ (developed on 3.14), FastAPI, Uvicorn, Pydantic v2 + pydantic-settings, SQLAlchemy 2.0, Alembic, PyJWT, passlib/bcrypt |
+| Database | MySQL 8.0 in Docker (`100times-mysql`), PyMySQL |
+| AI | Google GenAI SDK (Gemini), Anthropic SDK (Claude), LangGraph (workflow pipeline only) |
+| Web reading | requests/httpx, BeautifulSoup, Playwright (optional browser rendering for script-built pages) |
+| Web search | SearXNG (self-hosted), Exa, Gemini grounding, Google Custom Search, Brave, DuckDuckGo fallback |
+| Workspace | pnpm workspace; `lib/api-client-react` (generated React Query hooks) and `lib/api-spec` (OpenAPI) |
+| Automation | In-process asyncio scheduler; optional n8n |
 
 ---
 
-## Repository Structure
+## Repository structure
 
 ```text
-100-Times-Event-Platform/
 ├── artifacts/
-│   ├── 100-times/                        # React 19 + Vite Frontend
-│   │   ├── public/event-images/          # Ready-made event pictures, 5 per sector (+ SOURCES.json)
-│   │   ├── src/
-│   │   │   ├── App.tsx                   # Main application router, Header, AuthPage & Marketplace
-│   │   │   ├── ops/                      # Admin Operations Console:
-│   │   │   │   ├── OpsLayout.tsx         # Admin navigation & search layout
-│   │   │   │   ├── DashboardPage.tsx     # Operations overview & agent metrics
-│   │   │   │   ├── RunWizardPage.tsx     # Step-by-step discovery run wizard
-│   │   │   │   ├── AutomaticDiscoveryPage.tsx # Scheduled discovery settings
-│   │   │   │   ├── DiscoveryConfigPage.tsx    # Sources, search providers & defaults
-│   │   │   │   ├── RunReportPage.tsx     # Per-run report (stages, sources, outcomes)
-│   │   │   │   ├── DiscoveryPage.tsx     # Discovered events & organizer leads
-│   │   │   │   ├── OutreachPage.tsx      # Outreach campaigns & review queue
-│   │   │   │   ├── TrustReviewPage.tsx   # Trust & safety verification queue
-│   │   │   │   ├── AutomationsPage.tsx   # Live agent toggle controls & schedules
-│   │   │   │   ├── ObservabilityPage.tsx # Telemetry, health & execution metrics
-│   │   │   │   └── SettingsPage.tsx      # Target sectors, limits & API configurations
-│   │   │   ├── organizer/                # Organiser Studio workspace (event wizard, EventPictureField)
-│   │   │   ├── lib/eventImageLibrary.ts  # Sector → ready-made picture list
-│   │   │   └── components/               # UI components (CountrySelect, ErrorBoundary, etc.)
-│   │   └── package.json
-│   └── api-server/                       # FastAPI Backend + Autonomous Agents
+│   ├── 100-times/                       # React frontend
+│   │   ├── public/event-images/         # Ready-made event pictures, 5 per sector (+ SOURCES.json)
+│   │   └── src/
+│   │       ├── App.tsx                  # Router, header + account menu, public pages, auth, role gates
+│   │       ├── lib/account.ts           # Account type, home path per role, which areas a role may open
+│   │       ├── attendee/                # Attendee dashboard: Discover, Profile, API hooks
+│   │       ├── organizer/               # Organiser studio, picture field, description assistant
+│   │       └── ops/                     # Admin console (run wizard, reports, outreach, trust review,
+│   │                                    #   automations, social promotion, observability, settings …)
+│   └── api-server/                      # FastAPI backend
 │       ├── backend/
-│       │   ├── core/                     # Config, security, rate limiters, telemetry
-│       │   ├── routes/                   # API routers (auth, events, discovery, outreach, media, etc.)
-│       │   ├── services/
-│       │   │   ├── discovery_agent/      # Agent 1: pipeline, source catalogue, site readers (adapters/), search providers
-│       │   │   ├── social_agent/         # Outreach drafting, social connectors & promotion pipelines
-│       │   │   ├── attendee_agent/       # Attendee signal parser & event recommendation
-│       │   │   ├── community_agent/      # Community discovery & promotion
-│       │   │   └── guardrails.py         # Content moderation & safety enforcement
-│       │   ├── models.py                 # 58 SQLAlchemy ORM database models
-│       │   ├── schemas.py                # Pydantic schemas & data contracts
-│       │   └── main.py                   # FastAPI application entrypoint
-│       ├── alembic/                      # Database migrations
-│       ├── tests/                        # Comprehensive Pytest test suite
-│       ├── uploads/                      # Organiser-uploaded event pictures (created at runtime, not in git)
-│       └── .env.example                  # Environment configuration template
-├── infra/searxng/                        # SearXNG settings for the Discovery Agent's web search
-├── lib/
-│   ├── api-client-react/                 # Generated React Query hooks & customFetch
-│   └── api-spec/                         # OpenAPI specification
-├── n8n/workflows/                        # 8 production n8n automation workflows
-├── docker-compose.yml                    # Docker Compose stack
-├── start_dev.py                          # Unified development launcher script
-└── README.md                             # Platform documentation
+│       │   ├── main.py                  # App entry point, routers, background scheduler
+│       │   ├── core/                    # Settings (config.py), security, rate limiter
+│       │   ├── models.py                # SQLAlchemy models (64 tables)
+│       │   ├── schemas.py               # Pydantic request/response models
+│       │   ├── dependencies.py          # Auth + role guards (require_attendee, require_organiser …)
+│       │   ├── routes/                  # API routers
+│       │   └── services/
+│       │       ├── discovery_agent/     # Pipeline, source registry, site readers, search providers, usage
+│       │       ├── trust_agent/         # Trust & Safety Agent
+│       │       ├── social_agent/        # AI client, outreach agent, publishers, social promotion, scheduler
+│       │       ├── attendee_agent/      # Catalog, matching, AI Assistant, reminders, attendee profile
+│       │       ├── sectors.py           # Removed sectors (Technology)
+│       │       └── event_writer.py      # Organiser description assistant
+│       ├── alembic/versions/            # Database migrations (0001–0015)
+│       ├── tests/                       # Pytest suite (60 files, 700+ tests)
+│       ├── requirements.txt
+│       └── .env.example                 # Every setting, with comments (no real values)
+├── infra/
+│   ├── searxng/                         # SearXNG settings for discovery web search
+│   └── n8n/workflows/                   # n8n workflows (discovery, outreach follow-up, publishing …)
+├── n8n/workflows/                       # n8n event-lifecycle workflows (registration, reminders …)
+├── lib/                                 # Shared frontend packages (API client, OpenAPI spec)
+├── docker-compose.yml                   # SearXNG, n8n, (optional) Postgres and API services
+├── start_dev.py                         # Starts backend (8000) and frontend (5174) together
+└── pnpm-workspace.yaml
 ```
 
 ---
 
-## Local Development & Quickstart
+## Getting started
 
 ### Prerequisites
-* **Python 3.11+**
-* **Node.js 20+** and **pnpm** (`npm install -g pnpm`)
-* **Docker Desktop** (running)
 
-### 1. Database Setup (MySQL 8.0 Container)
-Start the MySQL 8.0 Docker container:
-```bash
-docker run -d --name 100times-mysql -p 3306:3306 -e MYSQL_ROOT_PASSWORD=<choose-a-strong-password> -e MYSQL_DATABASE=100times mysql:8.0
-```
+- **Python 3.11+**
+- **Node.js 20+** and **pnpm** (`npm install -g pnpm`)
+- **Docker Desktop**, running
 
-Start the self-hosted SearXNG search engine the Discovery Agent uses (free, no API key):
+### 1. Start MySQL and SearXNG
+
 ```bash
+docker run -d --name 100times-mysql -p 3306:3306 \
+  -v 100times_data:/var/lib/mysql \
+  -e MYSQL_ROOT_PASSWORD=<choose-a-strong-password> -e MYSQL_DATABASE=100times mysql:8.0
+
 docker compose up -d searxng
 ```
-Then set `SEARXNG_URL=http://127.0.0.1:8888` in the backend `.env`. Paid providers are optional: `EXA_API_KEY` enables Exa as a top-up when SearXNG returns too few results (capped per run by `PAID_SEARCH_CALLS_PER_RUN`).
 
-### 2. Configure Backend Environment
-Copy the backend `.env.example` file:
+The named volume (`100times_data`) keeps the data if the container is removed.
+
+### 2. Configure the backend
+
 ```bash
 cp artifacts/api-server/.env.example artifacts/api-server/.env
 ```
-Ensure `DATABASE_URL` is configured:
+
+Set at least:
+
 ```env
 DATABASE_URL=mysql+pymysql://root:<your-mysql-password>@127.0.0.1:3306/100times?charset=utf8mb4
+JWT_SECRET=<a long random string>
+SEARXNG_URL=http://127.0.0.1:8888
 ```
 
-### 3. Install Dependencies
-**Backend:**
+Everything else is optional; see [Configuration reference](#configuration-reference). Settings are read from `.env` files in this order, the **last one found wins**: the current directory, `artifacts/api-server/`, `artifacts/`, the project root, and the folder above it. Check that no parent folder has an `.env` overriding the values you set.
+
+### 3. Install dependencies
+
 ```bash
+# Backend
 cd artifacts/api-server
-python -m pip install -r requirements.txt
+python -m venv backend/venv
+backend/venv/Scripts/python -m pip install -r requirements.txt   # Windows
+# source backend/venv/bin/activate && pip install -r requirements.txt   # macOS / Linux
+python -m playwright install chromium   # optional: browser rendering for script-built pages
 cd ../..
-```
 
-**Frontend:**
-```bash
+# Frontend
 pnpm install
 ```
 
-### 4. Launch Services
-**Start FastAPI Backend:**
+### 4. Create the database tables
+
+In development the tables are created at startup (`AUTO_CREATE_SCHEMA=true`). For production run the migrations:
+
 ```bash
 cd artifacts/api-server
-python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+alembic upgrade head
 ```
 
-**Start Vite Frontend:**
+### 5. Run
+
 ```bash
-cd artifacts/100-times
-npx vite --host 0.0.0.0 --port 5174
+python start_dev.py
 ```
 
-* **Frontend Marketplace & Admin:** [http://localhost:5174](http://localhost:5174)
-* **Backend API Documentation:** [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+or separately:
+
+```bash
+cd artifacts/api-server && python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+cd artifacts/100-times && npx vite --host 0.0.0.0 --port 5174
+```
+
+| What | Address |
+|---|---|
+| Website and admin console | http://localhost:5174 |
+| API docs (Swagger) | http://127.0.0.1:8000/docs |
+| Health check | http://127.0.0.1:8000/api/healthz |
+
+The frontend proxies `/api` to the backend.
 
 ---
 
-## Viewing the Database
+## Configuration reference
 
-### Option A: VS Code Database Client Extension
-1. Open the **Database** panel in your VS Code sidebar.
-2. Click **Create Connection** / **`+`** ➔ select **MySQL**.
-3. Enter connection settings:
-   * **Host:** `127.0.0.1`
-   * **Port:** `3306`
-   * **Username:** `root`
-   * **Password:** your MySQL root password (keep it in `.env`, never in this file)
-   * **Database:** `100times`
-4. Expand `100times` ➔ `TABLE` to view all 58 tables and interact with live records.
+All settings live in `artifacts/api-server/.env` (template: `.env.example`). **Never commit `.env`**; it's in `.gitignore`.
 
-### Option B: Terminal CLI via Docker
-Connect directly to the interactive MySQL shell:
-```bash
-docker exec -it 100times-mysql mysql -u root -p 100times
-```
-Run queries:
-```sql
-SHOW TABLES;
-SELECT id, name, email, role, created_at FROM users;
-SELECT id, name, city, start_date, lifecycle_state FROM events;
-```
+| Group | Settings | Notes |
+|---|---|---|
+| App | `APP_NAME`, `ENVIRONMENT`, `APP_BASE_URL`, `PLATFORM_LISTING_URL`, `CORS_ORIGINS`, `AUTO_CREATE_SCHEMA`, `SEED_DEMO_DATA` | `PLATFORM_LISTING_URL` is the public site address used in promotion links and event pictures. |
+| Database & auth | `DATABASE_URL`, `JWT_SECRET`, `JWT_ALGORITHM`, `ACCESS_TOKEN_EXPIRE_MINUTES` | |
+| AI | `AI_PROVIDER`, `GEMINI_API_KEY`, `GEMINI_MODEL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | `AI_PROVIDER` is `gemini` or `anthropic`. |
+| Web search | `SEARXNG_URL`, `EXA_API_KEY`, `GOOGLE_SEARCH_API_KEY`, `GOOGLE_CSE_ID`, `BRAVE_SEARCH_API_KEY`, `SEARCH_STRATEGY`, `PAID_SEARCH_CALLS_PER_RUN` | `SEARCH_STRATEGY` = `free_first` (default) or `parallel`. |
+| Cost prices | `SEARCH_PRICING_USD_PER_1000`, `AI_MODEL_PRICING_USD_PER_MTOK` | JSON; used only where a provider doesn't report its cost. |
+| Discovery | `DISCOVERY_DAILY_LIMIT`, `DISCOVERY_CONFIDENCE_THRESHOLD`, `DISCOVERY_BROWSER_FETCH`, `DISCOVERY_EVENTS_PER_LISTING`, `TICKETMASTER_API_KEY` | |
+| Trust Agent | `TRUST_AGENT_AUTO_APPROVE_SCORE`, `TRUST_AGENT_MIN_DESCRIPTION_LENGTH`, `TRUST_AGENT_MAX_DAILY_SUBMISSIONS_PER_ORGANIZER` | |
+| Outreach & e-mail | `OUTREACH_MATCH_THRESHOLD`, `OUTREACH_DAILY_CAP`, `OUTREACH_FOLLOWUP_DAYS`, `ORGANIZER_FOLLOWUP_*`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`, `SMTP_USE_TLS` | Without SMTP, e-mails stay unsent and attendee notices are in-app only. |
+| Social publishing | `INSTAGRAM_ACCESS_TOKEN`, `INSTAGRAM_BUSINESS_ACCOUNT_ID`, `FACEBOOK_PAGE_ACCESS_TOKEN`, `FACEBOOK_PAGE_ID`, `LINKEDIN_ACCESS_TOKEN`, `LINKEDIN_ORGANIZATION_ID`, `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `SOCIAL_AGENT_DAILY_CAP_PER_PLATFORM` | Telegram and Discord also need a channel set as the platform's destination on the Social promotion page. |
+| n8n | `N8N_URL`, `N8N_ENCRYPTION_KEY`, `N8N_WEBHOOK_SECRET`, `N8N_WEBHOOKS_ENABLED` | Optional. |
 
 ---
 
-## Event Pictures
+## Database
 
-When creating an event in the Organiser Studio (`/organizer/events/create`), the **Event Picture** section offers:
-* **Upload your picture** — JPG, PNG or WebP up to 5 MB. `POST /api/organizer/event-images` (organisers and admins) checks the file really is that image type, stores it under a random name in `artifacts/api-server/uploads/event-images/`, and the event links to it at `/api/media/event-images/<name>`.
-* **Choose a ready-made picture** — 5 pictures per sector (14 sectors, 70 pictures) in `artifacts/100-times/public/event-images/<sector>/`. They are free Unsplash photos (Unsplash License: commercial use allowed, no attribution required); `SOURCES.json` lists each original. A sector without its own set uses the general (`other`) pictures.
+- **MySQL 8.0**, database `100times`, 64 tables (`backend/models.py`). Migrations are in `alembic/versions/`.
+- **Moving the database** to another machine: export with `mysqldump` inside the container, copy the file out, import it on the other side.
 
-The picture is optional; an event without one keeps the platform's default image.
+  ```bash
+  docker exec 100times-mysql sh -c 'mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --single-transaction --databases 100times > /tmp/100times.sql'
+  docker cp 100times-mysql:/tmp/100times.sql ./100times.sql
+  # on the other machine, after starting its container:
+  docker cp ./100times.sql 100times-mysql:/tmp/100times.sql
+  docker exec 100times-mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" < /tmp/100times.sql'
+  ```
+
+  The export contains users' e-mails and password hashes: share it privately, never in git. On Windows PowerShell don't redirect `mysqldump` output with `>` (it re-encodes the file); use the two-step export above.
+- **Starting fresh** works too: the backend creates the tables and loads the source catalogue on first start.
 
 ---
 
-## Running Automated Tests
+## Admin console map
 
-Run the complete backend test suite (700+ tests; they never touch the real database or send real e-mail):
+| Section | Pages |
+|---|---|
+| Overview | Dashboard `/admin` |
+| Discover events | Run discovery `/admin/discover`, Automatic discovery `/admin/discover/automatic`, Run history & reports `/admin/discover/runs` |
+| Event management | New discoveries `/admin/discovery`, All events, Organizers, Contacts `/admin/discovery/*` |
+| Discovery configuration | Sources, search providers and defaults `/admin/discover/configuration` |
+| Organizer outreach | All / Pending / Sent / Delivered / Replies / Follow-ups `/admin/outreach/*` |
+| Platform data | Overview, Events, Users, Organizers, Sectors, Venues, Reviews |
+| Agents | Trust agent `/admin/trust-review` |
+| Automations | All automations `/admin/automations`, Social promotion `/admin/social-promotions` |
+| Administration | Providers & API keys `/admin/settings`, System health `/admin/observability` (incl. AI Usage & Cost), n8n workflows, Audit & system logs |
+
+---
+
+## Testing
+
 ```bash
+# Backend: 700+ tests
 cd artifacts/api-server
-pytest
-```
+python -m pytest
 
-Type-check the frontend:
-```bash
+# Frontend type check
 cd artifacts/100-times
 npx tsc --noEmit -p .
 ```
 
+The test suite never touches the real database or sends real e-mail (guards in `tests/conftest.py`), and AI calls are replaced with a fake client.
+
 ---
 
-## Security & Privacy Policy
-* All sensitive credentials, tokens, and database credentials are excluded from version control via strict `.gitignore` rules.
-* Human approval gates are enforced for all external email campaigns and borderline trust decisions.
-* Built-in SSRF protection, rate limiting, and input sanitization protect all public and administrative endpoints.
+## Rules the code follows
+
+- **No invented data.** Every number, status, e-mail and timestamp shown in the admin console comes from the database; missing facts stay empty instead of being guessed. AI writers may only use facts they were given.
+- **People approve outreach.** Outreach e-mails are always sent by a person; borderline Trust reviews are decided by a person; social posts go live automatically only on platforms an admin set to auto-publish.
+- **Automations default off.**
+- **Respect websites.** robots.txt is honoured and blocks are never worked around.
+- **Secrets stay out of git.** API keys and passwords live only in `.env`; the app reports which settings are missing by name, never their values.
+- **Built-in protection.** SSRF protection on outgoing requests, rate limiting, input validation and role checks on every protected endpoint.
+
+---
+
+## Known limitations
+
+- **Instagram needs a public picture.** A post's picture must be downloadable from the internet, so Instagram posts for events with a locally stored picture only work once the site is hosted at `PLATFORM_LISTING_URL` (or `PUBLIC_BASE_URL`).
+- **LinkedIn posting** needs `LINKEDIN_ACCESS_TOKEN`; **Telegram and Discord** need a destination channel.
+- **Some sources have no sector pages.** Many exhibition organisers filter their calendars with on-page search, so there is no fixed per-sector link; discovery reads their full calendar and filters by sector itself.
+- **Gemini Google Search grounding** has no free tier on Gemini 3 models; it needs a paid Gemini plan.
