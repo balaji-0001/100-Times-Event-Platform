@@ -257,13 +257,13 @@ def test_blocked_search_with_queued_queries_ends_the_run(db_session, monkeypatch
 
 # Exactly what DiscoverySourcesManager.tsx sends for each Discovery Strategy toggle.
 UI_WEB = ["web", "google_search", "bing_search", "linkedin_search"]
-UI_DIRECTORIES = ["global_adapters", "dev_events", "wikicfp", "eventseye", "clocate", "tradeshowradar", "tradefairdates",
+UI_DIRECTORIES = ["global_adapters", "clocate", "wikicfp", "eventseye", "clocate", "tradeshowradar", "tradefairdates",
                   "conference_alerts", "rx_global", "informa_markets", "terrapinn",
-                  "messe_frankfurt_org", "dmg_events", "dwtc_org", "gtr_events", "ieee_events", "acm", "dwtc_events",
+                  "messe_frankfurt_org", "dmg_events", "dwtc_org", "gtr_events", "ieee_events", "dwtc_events",
                   "excel_london", "javits_center", "mccormick_place", "messe_frankfurt_venue", "india_expo_centre", "us_ita",
                   "indian_trade_portal"]
-UI_AGGREGATORS = ["consumer_aggregators", "event_platforms", "eventbrite", "meetup", "allevents", "skillboxes"]
-AGGREGATOR_ADAPTERS = {"eventbrite", "meetup", "allevents", "skillboxes"}
+UI_AGGREGATORS = ["consumer_aggregators", "event_platforms", "eventbrite", "meetup", "allevents"]
+AGGREGATOR_ADAPTERS = {"eventbrite", "meetup", "allevents"}
 
 
 def _plan(db_session, monkeypatch, sources):
@@ -290,7 +290,7 @@ def test_web_search_toggle_runs_only_web_search(db_session, monkeypatch):
 
 def test_directories_toggle_runs_only_b2b_adapters(db_session, monkeypatch):
     adapters, listings, queries = _plan(db_session, monkeypatch, UI_DIRECTORIES)  # India-only run
-    assert {"dev_events", "eventseye", "tradefairdates", "india_expo_centre"} <= adapters
+    assert {"eventseye", "tradefairdates", "india_expo_centre"} <= adapters
     assert not {"dwtc_events", "excel_london", "javits_center"} & adapters  # venues in unselected countries
     assert not adapters & AGGREGATOR_ADAPTERS
     assert listings == [] and queries == []
@@ -300,8 +300,8 @@ def test_aggregators_toggle_runs_only_aggregators(db_session, monkeypatch):
     adapters, listings, queries = _plan(db_session, monkeypatch, UI_AGGREGATORS)
     # Aggregators run once, as their city listing pages — not again as adapters.
     assert adapters == set()
-    assert {h for u in listings for h in ("allevents", "eventbrite", "meetup", "skillboxes") if h in u} == {"allevents", "eventbrite", "meetup", "skillboxes"}
-    assert listings and all(any(h in u for h in ("allevents", "eventbrite", "meetup", "skillboxes")) for u in listings)
+    assert {h for u in listings for h in ("allevents", "eventbrite", "meetup") if h in u} == {"allevents", "eventbrite", "meetup"}
+    assert listings and all(any(h in u for h in ("allevents", "eventbrite", "meetup")) for u in listings)
     assert not any("10times" in u for u in listings)  # 10Times refuses automated requests (403) — removed
     assert queries == []
 

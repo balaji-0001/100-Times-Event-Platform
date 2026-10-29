@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { customFetch } from '@workspace/api-client-react';
 import {
@@ -16,11 +16,18 @@ import {
   ShieldCheck,
   Zap,
 } from 'lucide-react';
-import { Badge, ErrorState, Kicker, LoadingState, StatCard } from './ui';
+import { Badge, ErrorState, Kicker, LoadingState, StatCard, cx } from './ui';
+import { type DiscoveryRunsUsage, LatestRunUsage, RunUsageHistory } from './DiscoveryRunUsage';
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : 'Request failed');
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
-const ms = (v: number | null | undefined) => (isNum(v) ? `${v}ms` : '—');
+// Durations read best in the largest whole unit: 850 ms, 61.1 s, 4.2 min.
+const ms = (v: number | null | undefined) => {
+  if (!isNum(v)) return '—';
+  if (v < 1000) return `${Math.round(v)} ms`;
+  if (v < 60_000) return `${(v / 1000).toFixed(1)} s`;
+  return `${(v / 60_000).toFixed(1)} min`;
+};
 const healthTone = (h: string) => (h === 'HEALTHY' ? 'good' : h === 'UNKNOWN' ? 'neutral' : 'warn');
 
 interface OverviewMetrics {
@@ -81,10 +88,67 @@ interface AIUsageData {
       completionTokens: number;
       totalTokens: number;
       costUsd: number;
+      costComplete?: boolean; // false when some calls used a model without a known price
     }
   >;
+  searchProviders?: {
+    runsCounted: number;
+    providers: SearchProviderUsage[];
+  };
+  discoveryRuns?: DiscoveryRunsUsage;
   currency: string;
   lastUpdated: string;
+}
+
+interface SearchProviderUsage {
+  id: string;
+  name: string;
+  isFree: boolean;
+  configured: boolean;
+  unavailableReason: string | null;
+  runs: number;
+  calls: number;
+  successes: number;
+  failures: number;
+  rateLimited: number;
+  results: number;
+  costUsd: number | null; // only what the provider itself reported
+  lastUsedAt: string | null;
+}
+
+function SearchProviderCard({ p }: { p: SearchProviderUsage }) {
+  const row = (label: string, value: ReactNode) => (
+    <div className="flex justify-between gap-3 text-muted-foreground">
+      <span>{label}</span>
+      <span className="font-mono text-foreground">{value}</span>
+    </div>
+  );
+  return (
+    <div className={cx('rounded-2xl border border-foreground/10 bg-card p-5 space-y-3', !p.configured && !p.calls && 'opacity-70')} data-testid={`card-search-provider-${p.id}`}>
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="font-display text-sm font-bold text-foreground">{p.name}</h3>
+        <div className="flex shrink-0 gap-1.5">
+          <Badge tone={p.isFree ? 'good' : 'neutral'}>{p.isFree ? 'Free' : 'Paid'}</Badge>
+          {p.configured ? <Badge tone="good">Set up</Badge> : <Badge tone="warn">Not set up</Badge>}
+        </div>
+      </div>
+      {!p.configured && p.unavailableReason && <p className="text-[11px] text-muted-foreground">{p.unavailableReason}</p>}
+      <div className="space-y-1 text-xs">
+        {row('Searches:', p.calls.toLocaleString())}
+        {row('Succeeded / failed:', `${p.successes.toLocaleString()} / ${p.failures.toLocaleString()}`)}
+        {p.rateLimited > 0 && row('Rate-limited:', p.rateLimited.toLocaleString())}
+        {row('Results returned:', p.results.toLocaleString())}
+        {row('Used in runs:', p.runs.toLocaleString())}
+        <div className="mt-2 flex justify-between gap-3 border-t border-foreground/5 pt-2 text-muted-foreground">
+          <span className="font-semibold text-foreground">Cost:</span>
+          <span className="font-mono font-bold text-accent">
+            {p.costUsd !== null ? `$${p.costUsd.toFixed(4)}` : p.isFree ? '$0 (free)' : p.calls ? 'Not reported by provider' : '—'}
+          </span>
+        </div>
+        {p.lastUsedAt && <p className="pt-1 text-[11px] text-muted-foreground">Last used {new Date(p.lastUsedAt).toLocaleString()}</p>}
+      </div>
+    </div>
+  );
 }
 
 interface GuardrailLogItem {
@@ -229,7 +293,7 @@ export function ObservabilityPage() {
           {overviewQuery.isError && (
             <ErrorState title="Could not load telemetry overview." error={overviewQuery.error} retry={() => overviewQuery.refetch()} />
           )}
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 2xl:grid-cols-6">
             <StatCard label="Total Workflows" value={overview ? overview.totalExecutions : '—'} sub={overview ? `${overview.successCount} succeeded` : undefined} />
             <StatCard
               label="Success Rate"
@@ -383,8 +447,7 @@ export function ObservabilityPage() {
               <option value="Discovery">Discovery Agent</option>
               <option value="Trust">Trust & Safety Agent</option>
               <option value="Outreach">Outreach Agent</option>
-              <option value="Attendee">Attendee Concierge</option>
-              <option value="Promotions">Promotions Agent</option>
+              <option value="Promotions">Social promotion (automation)</option>
             </select>
             <select
               value={traceStatusFilter}
@@ -481,6 +544,14 @@ export function ObservabilityPage() {
           {aiUsageQuery.isError && (
             <ErrorState title="Could not load AI usage." error={aiUsageQuery.error} retry={() => aiUsageQuery.refetch()} />
           )}
+          {aiUsage?.discoveryRuns?.latest ? (
+            <LatestRunUsage run={aiUsage.discoveryRuns.latest} />
+          ) : (
+            aiUsage && <p className="text-sm text-muted-foreground">No discovery run has recorded usage yet. Start a run and its searches, AI calls and costs appear here.</p>
+          )}
+          {(aiUsage?.discoveryRuns?.history.length ?? 0) > 0 && <RunUsageHistory runs={aiUsage!.discoveryRuns!.history} />}
+
+          <h2 className="pt-4 font-display text-base font-bold">AI models · all runs</h2>
           {!aiUsageQuery.isError && aiUsage && Object.keys(aiUsage.models ?? {}).length === 0 && (
             <p className="text-sm text-muted-foreground">No AI model usage recorded yet.</p>
           )}
@@ -506,12 +577,29 @@ export function ObservabilityPage() {
                   </div>
                   <div className="flex justify-between text-muted-foreground border-t border-foreground/5 pt-2 mt-2">
                     <span className="font-semibold text-foreground">Estimated Cost:</span>
-                    <span className="font-mono font-bold text-accent">${data.costUsd.toFixed(5)}</span>
+                    <span className="font-mono font-bold text-accent">
+                      ${data.costUsd.toFixed(5)}{data.costComplete === false && ' + unknown'}
+                    </span>
                   </div>
                 </div>
               </div>
             ))}
           </div>
+
+          {aiUsage?.searchProviders && (
+            <div className="space-y-3 pt-4" data-testid="section-search-provider-usage">
+              <div>
+                <h2 className="font-display text-base font-bold">Web search providers · all runs</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Searches made by the Discovery Agent, totalled from {aiUsage.searchProviders.runsCounted} discovery run
+                  {aiUsage.searchProviders.runsCounted === 1 ? '' : 's'} with a provider report. Cost is shown only where the provider reports it (Exa does; Brave doesn't).
+                </p>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {aiUsage.searchProviders.providers.map((p) => <SearchProviderCard key={p.id} p={p} />)}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

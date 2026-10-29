@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { Link } from 'wouter';
-import { ArrowRight, Sparkles } from 'lucide-react';
+import { ArrowRight, Play, Sparkles } from 'lucide-react';
+import { useAttendeeAdminOverview, useRunAttendeeNotifications, useSetAttendeeNotificationsAuto } from '@/attendee/api';
 import {
   useAutomationRequests, useCreateAutomationRequest,
   useDiscoveryAutoStatus, useSetDiscoveryAuto,
   useOutreachAutoStatus, useSetOutreachAuto,
   useDiscoveryRuns, useOutreachRuns,
+  usePromotionSettings, usePromotionStats,
 } from './api';
 import { Badge, Btn, EmptyState, ErrorState, LoadingState, Notice, PageHeader, Panel, Switch, fmtDateTime, inputClass } from './ui';
 import { OutreachSettingsButton } from './OutreachSettingsModal';
@@ -109,6 +111,20 @@ export function AutomationsPage() {
   const discoveryRuns = useDiscoveryRuns();
   const outreachRuns = useOutreachRuns();
   const requests = useAutomationRequests();
+  const promotionSettings = usePromotionSettings();
+  const promotionStats = usePromotionStats();
+  const attendee = useAttendeeAdminOverview();
+  const setReminderAuto = useSetAttendeeNotificationsAuto();
+  const runReminders = useRunAttendeeNotifications();
+  const reminders = attendee.data?.notifications;
+  const reminderRun = runReminders.data as { usersConsidered?: number; reminder?: number; deadline?: number; change?: number; new_matches?: number; errors?: string[] } | undefined;
+
+  const promoPlatforms = promotionSettings.data ?? [];
+  const promoOn = promoPlatforms.filter((p) => p.enabled);
+  const promoLive = promoOn.filter((p) => !p.dryRun);
+  const promoAuto = promoOn.filter((p) => p.autoPublish);
+  const PLATFORM_LABEL: Record<string, string> = { instagram: 'Instagram', facebook: 'Facebook', linkedin: 'LinkedIn', telegram: 'Telegram', discord: 'Discord' };
+  const platformNames = (list: typeof promoPlatforms) => list.map((p) => PLATFORM_LABEL[p.platform] ?? p.platform).join(', ');
 
   const lastDiscoveryRun = latestRun(discoveryRuns.data);
   const lastOutreachRun = latestRun(outreachRuns.data);
@@ -205,12 +221,86 @@ export function AutomationsPage() {
           <Link href="/admin/trust-review" className={`mt-3 ${linkClass}`}>View trust review <ArrowRight size={11} /></Link>
         </AutomationCard>
 
+        <AutomationCard
+          title="Social promotion"
+          description="When an event is published, writes a promotion post for each platform switched on (Instagram, Facebook, LinkedIn, Telegram, Discord). A post waits for a person to approve it unless auto-publish is on for that platform; in practice mode (dry run) nothing is posted."
+          trigger="Instantly, when an event is published"
+        >
+          {promotionSettings.isLoading ? (
+            <p className="mt-2 text-xs text-muted-foreground">Loading platform settings…</p>
+          ) : promotionSettings.isError ? (
+            <p className="mt-2 text-xs text-red-700 dark:text-red-300">Could not load platform settings.</p>
+          ) : (
+            <div className="mt-2 space-y-1 border-t border-foreground/10 pt-2 text-[11px] text-muted-foreground" data-testid="automation-social-promotion">
+              <p>Platforms on: <strong>{promoOn.length ? platformNames(promoOn) : 'none — nothing is promoted'}</strong></p>
+              {promoOn.length > 0 && (
+                <p>
+                  Posting live: <strong>{promoLive.length ? platformNames(promoLive) : 'none (all in practice mode)'}</strong>
+                  {' · '}Auto-publish: <strong>{promoAuto.length ? platformNames(promoAuto) : 'off (every post needs approval)'}</strong>
+                </p>
+              )}
+            </div>
+          )}
+          {promotionStats.data && (
+            <p className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <Badge tone="good">{promotionStats.data.published} published</Badge>
+              <Badge tone="warn">{promotionStats.data.pendingApproval} awaiting approval</Badge>
+              <Badge tone="info">{promotionStats.data.dryRun} practice runs</Badge>
+              {promotionStats.data.failed > 0 && <Badge tone="danger">{promotionStats.data.failed} failed</Badge>}
+            </p>
+          )}
+          <Link href="/admin/social-promotions" className={`mt-3 ${linkClass}`}>Manage social promotion <ArrowRight size={11} /></Link>
+        </AutomationCard>
+
+        <AutomationCard
+          title="Attendee reminders"
+          description="Sends attendees reminders before their events, registration-deadline alerts, event-change notices and new-match digests. Only for attendees who switched notifications on, only the kinds each chose, and each notice at most once."
+          trigger="Every hour, when on"
+          toggle={{
+            enabled: reminders?.autoEnabled ?? false,
+            loading: attendee.isLoading || attendee.isError || setReminderAuto.isPending,
+            onChange: (next) => setReminderAuto.mutate(next),
+            label: 'Attendee reminders',
+            error: setReminderAuto.isError ? setReminderAuto.error : null,
+          }}
+        >
+          {attendee.isError ? (
+            <p className="mt-2 text-xs text-red-700 dark:text-red-300">Could not load reminder status.</p>
+          ) : reminders ? (
+            <div className="mt-2 space-y-2 border-t border-foreground/10 pt-2 text-[11px] text-muted-foreground" data-testid="automation-attendee-reminders">
+              <p className="flex flex-wrap gap-2">
+                <Badge tone="neutral">{reminders.sentByKind.reminder ?? 0} reminders</Badge>
+                <Badge tone="neutral">{reminders.sentByKind.deadline ?? 0} deadline alerts</Badge>
+                <Badge tone="neutral">{reminders.sentByKind.change ?? 0} change notices</Badge>
+                <Badge tone="neutral">{reminders.sentByKind.new_matches ?? 0} new-match digests</Badge>
+              </p>
+              <p>Last run: {reminders.lastSweep.at ? `${fmtDateTime(reminders.lastSweep.at)} (${reminders.lastSweep.result})` : 'never'}</p>
+              {reminders.emailDelivery.status !== 'REAL' && (
+                <p className="text-amber-700 dark:text-amber-300">E-mail isn't set up, so attendees get in-app notifications only.</p>
+              )}
+            </div>
+          ) : (
+            <p className="mt-2 text-xs text-muted-foreground">Loading reminder status…</p>
+          )}
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <Btn variant="secondary" size="sm" loading={runReminders.isPending} onClick={() => runReminders.mutate()}><Play size={12} /> Run now</Btn>
+            {reminderRun && (
+              <span className="text-[11px] text-muted-foreground">
+                Checked {reminderRun.usersConsidered ?? 0} attendee(s): sent {reminderRun.reminder ?? 0} reminders, {reminderRun.deadline ?? 0} deadline alerts,
+                {' '}{reminderRun.change ?? 0} change notices, {reminderRun.new_matches ?? 0} digests.{reminderRun.errors?.length ? ` Errors: ${reminderRun.errors.join('; ')}` : ''}
+              </span>
+            )}
+            {runReminders.isError && <span className="text-[11px] text-red-700 dark:text-red-300">Couldn't run it: {runReminders.error instanceof Error ? runReminders.error.message : 'unknown error'}</span>}
+          </div>
+        </AutomationCard>
+
         <Panel className="p-6">
           <div className="flex items-center gap-2"><Sparkles size={16} className="text-accent" /><h3 className="font-display text-lg font-bold">What's deliberately manual</h3></div>
-          <p className="mt-2 text-sm text-muted-foreground">Two things never run on a timer, by design, no matter what's switched on above:</p>
+          <p className="mt-2 text-sm text-muted-foreground">These never happen on their own, by design, no matter what's switched on above:</p>
           <ul className="mt-3 space-y-2 text-sm">
             <li>• <strong>Sending an outreach email.</strong> Drafting can be automatic; sending always needs a person to click Approve, then Send.</li>
             <li>• <strong>Deciding a borderline Trust Review case.</strong> The Trust Agent auto-decides only when it's confident; everything else waits in the review queue.</li>
+            <li>• <strong>Posting a promotion live</strong> on a platform without auto-publish. Social promotion drafts the post; a person approves it.</li>
           </ul>
         </Panel>
       </div>

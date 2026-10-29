@@ -33,6 +33,20 @@ def build_utm_tracking_url(event: Event, platform: str, app_base_url: str | None
     return tracking_url, utm_params
 
 
+def public_media(event: Event) -> list[str]:
+    """The event picture as a full web address a social platform can fetch.
+    Pictures stored on this site (`/event-images/...`, `/uploads/...`) are
+    served from the same public site the promotion links point to."""
+    image = (event.image or "").strip()
+    if image.startswith(("https://", "http://")):
+        return [image]
+    if image.startswith("/"):
+        settings = get_settings()
+        base = (settings.public_base_url or settings.platform_listing_url or "").rstrip("/")
+        return [f"{base}{image}"] if base.startswith(("https://", "http://")) else []
+    return []
+
+
 def _format_event_details(event: Event) -> tuple[str, str, str, str]:
     when = event.start_date.strftime("%A, %d %B %Y") if event.start_date else "Coming Soon"
     start_time = getattr(event, "start_time", "09:30 AM") or "09:30 AM"
@@ -56,7 +70,7 @@ def _clean_category_tag(cat_name: str | None) -> str:
 
 def _deterministic_instagram_post(event: Event, tracking_url: str) -> dict[str, Any]:
     when, start_time, where, price = _format_event_details(event)
-    cat_tag = _clean_category_tag(event.category.name if event.category else "Technology")
+    cat_tag = _clean_category_tag(event.category.name if event.category else "Events")
     city_tag = _clean_category_tag(event.city_name or "India")
     desc = (event.description or "").strip()[:240]
 
@@ -71,7 +85,7 @@ def _deterministic_instagram_post(event: Event, tracking_url: str) -> dict[str, 
         f"🔗 {tracking_url}\n\n"
         f"#100Times #{cat_tag} #{city_tag}Events #IndiaEvents #Networking"
     )
-    media = [event.image] if event.image else []
+    media = public_media(event)
     return {"title": f"Instagram Promo: {event.title}", "content": content, "media_urls": media}
 
 
@@ -90,7 +104,7 @@ def _deterministic_facebook_post(event: Event, tracking_url: str) -> dict[str, A
         f"Reserve your spot today: {tracking_url}\n\n"
         f"Will you be joining us? Tag colleagues or friends who would benefit from attending!"
     )
-    media = [event.image] if event.image else []
+    media = public_media(event)
     return {"title": f"Facebook Post: {event.title}", "content": content, "media_urls": media}
 
 
@@ -111,7 +125,7 @@ def _deterministic_linkedin_post(event: Event, tracking_url: str) -> dict[str, A
         f"Learn more and secure your registration here: {tracking_url}\n\n"
         f"#ProfessionalDevelopment #{cat_tag} #Leadership #Networking #100Times"
     )
-    media = [event.image] if event.image else []
+    media = public_media(event)
     return {"title": f"LinkedIn Update: {event.title}", "content": content, "media_urls": media}
 
 
@@ -129,7 +143,7 @@ def _deterministic_telegram_post(event: Event, tracking_url: str) -> dict[str, A
         f"{desc}\n\n"
         f"🔗 [Register & View Full Schedule]({tracking_url})"
     )
-    media = [event.image] if event.image else []
+    media = public_media(event)
     return {"title": f"Telegram Broadcast: {event.title}", "content": content, "media_urls": media}
 
 
@@ -148,7 +162,7 @@ def _deterministic_discord_post(event: Event, tracking_url: str) -> dict[str, An
         f"👉 **RSVP & Event Details:** <{tracking_url}>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
-    media = [event.image] if event.image else []
+    media = public_media(event)
     return {"title": f"Discord Announcement: {event.title}", "content": content, "media_urls": media}
 
 
@@ -209,7 +223,7 @@ def generate_platform_promotion_content(event: Event, platform: str, tracking_ur
             if platform_key in ("instagram", "linkedin") and "#100Times" not in content_text:
                 content_text = f"{content_text.rstrip()}\n\n#100Times"
 
-            media = [event.image] if event.image else []
+            media = public_media(event)
             return {
                 "title": parsed.title,
                 "content": content_text,

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { customFetch } from '@workspace/api-client-react';
-import { CheckCircle2, ShieldAlert, ShieldCheck, XCircle, RefreshCw, AlertTriangle, History } from 'lucide-react';
+import { CheckCircle2, ShieldAlert, ShieldCheck, XCircle, RefreshCw, AlertTriangle, History, Send } from 'lucide-react';
 import { Badge, ErrorState, Kicker, LoadingState } from './ui';
 import { Link } from 'wouter';
 
@@ -66,7 +66,7 @@ export function TrustReviewPage() {
       notes,
     }: {
       reviewId: number;
-      decision: 'APPROVE' | 'REJECT' | 'REQUEST_CHANGES';
+      decision: 'APPROVE' | 'PUBLISH' | 'REJECT' | 'REQUEST_CHANGES';
       notes?: string;
     }) =>
       customFetch(`/api/trust/reviews/${reviewId}/decision`, {
@@ -182,7 +182,35 @@ export function TrustReviewPage() {
                   </p>
                 </div>
 
+                {/* Actions follow the review's stage: review → Approve / Request Changes / Reject;
+                    approved → Publish (or "Published" once live); rejected/duplicate → Approve / Request Changes. */}
                 <div className="flex flex-wrap items-center gap-2">
+                  {item.status === 'APPROVED' ? (
+                    item.eventLifecycleState === 'PUBLISHED' ? (
+                      <span
+                        className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3.5 py-1.5 text-xs font-bold text-emerald-700 dark:text-emerald-300"
+                        data-testid={`status-trust-published-${item.id}`}
+                      >
+                        <CheckCircle2 size={14} /> Published
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() =>
+                          decisionMutation.mutate({
+                            reviewId: item.id,
+                            decision: 'PUBLISH',
+                            notes: notesByReview[item.id] || 'Published by Admin in Trust Review Console',
+                          })
+                        }
+                        disabled={decisionMutation.isPending}
+                        className="inline-flex items-center gap-1.5 rounded-full bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-emerald-500"
+                        data-testid={`button-trust-publish-${item.id}`}
+                      >
+                        <Send size={14} /> Publish
+                      </button>
+                    )
+                  ) : (
+                  <>
                   <button
                     onClick={() =>
                       decisionMutation.mutate({
@@ -195,7 +223,7 @@ export function TrustReviewPage() {
                     className="inline-flex items-center gap-1.5 rounded-full bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-emerald-500"
                     data-testid={`button-trust-approve-${item.id}`}
                   >
-                    <CheckCircle2 size={14} /> Approve & Publish
+                    <CheckCircle2 size={14} /> Approve
                   </button>
                   <button
                     onClick={() =>
@@ -211,20 +239,24 @@ export function TrustReviewPage() {
                   >
                     <RefreshCw size={14} /> Request Changes
                   </button>
-                  <button
-                    onClick={() =>
-                      decisionMutation.mutate({
-                        reviewId: item.id,
-                        decision: 'REJECT',
-                        notes: notesByReview[item.id] || 'Rejected by moderation team.',
-                      })
-                    }
-                    disabled={decisionMutation.isPending}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-rose-500/40 bg-rose-500/10 px-3.5 py-1.5 text-xs font-bold text-rose-400 hover:bg-rose-500/20"
-                    data-testid={`button-trust-reject-${item.id}`}
-                  >
-                    <XCircle size={14} /> Reject
-                  </button>
+                  {item.status === 'NEEDS_REVIEW' && (
+                    <button
+                      onClick={() =>
+                        decisionMutation.mutate({
+                          reviewId: item.id,
+                          decision: 'REJECT',
+                          notes: notesByReview[item.id] || 'Rejected by moderation team.',
+                        })
+                      }
+                      disabled={decisionMutation.isPending}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-rose-500/40 bg-rose-500/10 px-3.5 py-1.5 text-xs font-bold text-rose-400 hover:bg-rose-500/20"
+                      data-testid={`button-trust-reject-${item.id}`}
+                    >
+                      <XCircle size={14} /> Reject
+                    </button>
+                  )}
+                  </>
+                  )}
                 </div>
               </div>
 

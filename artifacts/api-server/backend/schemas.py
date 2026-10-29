@@ -3,7 +3,7 @@ from datetime import date as _Date  # alias for use inside classes that also hav
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 
 class APIModel(BaseModel):
@@ -17,8 +17,17 @@ class UserInput(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
     country: str | None = Field(default=None, max_length=80)
-    role: Literal["USER", "ORGANIZER"] | None = None
+    role: Literal["USER", "ORGANIZER"] | None = None  # ignored: the account type below decides
     company: str | None = Field(default=None, max_length=160)
+    # Attendee and organiser accounts are separate; an organiser account needs
+    # the organisation's name.
+    account_type: Literal["attendee", "organiser"] = Field(default="attendee", alias="accountType")
+
+    @model_validator(mode="after")
+    def _organiser_needs_company(self) -> "UserInput":
+        if self.account_type == "organiser" and len((self.company or "").strip()) < 2:
+            raise ValueError("Organisation name is required for an organiser account")
+        return self
 
 
 class LoginInput(BaseModel):
@@ -32,11 +41,18 @@ class UserOut(APIModel):
     email: EmailStr
     role: Literal["USER", "ORGANIZER", "ADMIN"]
     roles: list[str] = Field(default_factory=list)
+    account_type: Literal["attendee", "organiser", "admin"] = Field(default="attendee", alias="accountType")
     email_verified: bool = Field(default=True, alias="emailVerified")
     country: str | None = None
     company: str | None = None
     job_title: str | None = Field(default=None, alias="jobTitle")
     bio: str | None = None
+
+    @model_validator(mode="after")
+    def _account_type_from_role(self) -> "UserOut":
+        # Always derived from `role`, so every place that builds a UserOut agrees.
+        self.account_type = {"ADMIN": "admin", "ORGANIZER": "organiser"}.get(self.role, "attendee")
+        return self
 
 
 class ForgotPasswordInput(BaseModel):
@@ -396,14 +412,6 @@ class ScheduleItemOut(APIModel):
     created_at: datetime = Field(alias="createdAt")
 
 
-class ProfileUpdateInput(BaseModel):
-    name: str | None = Field(default=None, min_length=2, max_length=120)
-    job_title: str | None = Field(default=None, max_length=120, alias="jobTitle")
-    company: str | None = Field(default=None, max_length=120)
-    bio: str | None = Field(default=None, max_length=500)
-    country: str | None = Field(default=None, max_length=80)
-
-
 class AIEventMatch(APIModel):
     event: EventCard
     match_score: int = Field(alias="matchScore", ge=0, le=100)
@@ -420,13 +428,6 @@ class AIConciergeResponse(APIModel):
     reply: str
     suggested_queries: list[str] = Field(alias="suggestedQueries", default_factory=list)
     matched_events: list[AIEventMatch] = Field(alias="matchedEvents", default_factory=list)
-
-
-class AIPeerMatch(APIModel):
-    attendee: AttendeeProfileOut
-    match_score: int = Field(alias="matchScore", ge=0, le=100)
-    match_reason: str = Field(alias="matchReason")
-    mutual_interests: list[str] = Field(alias="mutualInterests", default_factory=list)
 
 
 class AIEventBrief(APIModel):

@@ -12,7 +12,6 @@ DEFAULT_LISTING_URLS = [
     "https://www.eventbrite.com/d/{country}--{city}/events/",
     "https://www.eventbrite.com/d/{city}/events/",
     "https://www.meetup.com/find/?location={city}&source=EVENTS",
-    "https://www.skillboxes.com/events",
 ]
 
 # Sites that spell some cities differently in their URLs. allevents.in

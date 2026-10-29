@@ -46,7 +46,7 @@ from sqlalchemy.orm import Session
 from backend.core.config import Settings, get_settings
 from backend.models import AgentExecutionMetric, AgentRun, DiscoveredEvent
 from backend.services import guardrails
-from backend.services.discovery_agent import catalog, categorizer, geo_scope, listing_sources, organizer_identifier, page_extractor, query_seeds, storage, validation, web_search
+from backend.services.discovery_agent import catalog, categorizer, geo_scope, listing_sources, organizer_identifier, page_extractor, query_seeds, run_usage, storage, validation, web_search
 from backend.services.discovery_agent.adapters.base import SourceError
 from backend.services.discovery_agent.discovery_dedup import DedupIndex
 from backend.services.discovery_agent.search_providers import search_engine
@@ -893,8 +893,10 @@ class _DiscoveryPipeline:
             return
         self._last_flush = now
         self.summary.timings = self.timings()
-        self.report.merge_search_stats(self.search_stats.snapshot())
+        snapshot = self.search_stats.snapshot()
+        self.report.merge_search_stats(snapshot)
         self.summary.sources = self.report.summary()  # live progress for the UI
+        self.summary.usage = self.usage(snapshot)
         self.run.summary = _build_summary_dict(self.summary)
         self.db.add(self.run)
         try:
@@ -971,6 +973,11 @@ class _DiscoveryPipeline:
         self.report.close(self.stop_reason)
         self.summary.sources = self.report.summary()
         self.summary.search_log = list(self.search_stats.log)
+        self.summary.usage = self.usage(snapshot)
+
+    def usage(self, snapshot: dict[str, dict]) -> dict:
+        """This run's queries, provider calls, AI tokens and estimated costs."""
+        return run_usage.build_run_usage(snapshot, self.search_stats.usage_snapshot(), search_engine.providers, self.summary.verified_events)
 
     def persist_source_health(self) -> None:
         """Store each adapter/aggregator's real outcome in the registry table,
@@ -1062,13 +1069,32 @@ def run_discovery_agent(
         db.commit()
         _CANCELLED_RUN_IDS.discard(run.id)
 
-        # Real execution metric: measured wall time and the search cost the
-        # providers reported (Exa returns its billed amount). Discovery itself
-        # uses no AI model; Google-via-Gemini grounded searches are counted.
+        # Real execution metrics: measured wall time and the search cost the
+        # providers reported (Exa returns its billed amount), plus one row per
+        # AI model the run actually called (Google via Gemini grounding), with
+        # the tokens the model API reported and their priced cost.
         try:
             provider_rows = (summary.sources or {}).get("sources", [])
             reported_cost = sum(r.get("cost_usd") or 0 for r in provider_rows if r.get("kind") == "search_provider")
             gemini_calls = sum(r.get("calls") or 0 for r in provider_rows if r.get("id") == "google_gemini")
+            for model_row in (summary.usage or {}).get("ai_models", []):
+                db.add(
+                    AgentExecutionMetric(
+                        workflow_id=f"wf-disc-{run.id:04d}",
+                        agent_name="DiscoveryAgent",
+                        status="SUCCESS" if model_row["calls"] > model_row["failed_calls"] else "FAILED",
+                        duration_ms=0,
+                        prompt_tokens=model_row["prompt_tokens"],
+                        completion_tokens=model_row["completion_tokens"],
+                        total_tokens=model_row["total_tokens"],
+                        # The column can't be empty: an unpriced model stores 0 with cost_known=False.
+                        estimated_cost=Decimal(str(round(model_row["cost_usd"] or 0, 5))),
+                        model_name=model_row["model"],
+                        meta_json={"calls": model_row["calls"], "failed_calls": model_row["failed_calls"], "used_by": model_row["used_by"],
+                                   "cost_usd": model_row["cost_usd"], "cost_known": model_row["cost_usd"] is not None, "run_id": run.id},
+                        created_at=datetime.now(timezone.utc),
+                    )
+                )
             db.add(
                 AgentExecutionMetric(
                     workflow_id=f"wf-disc-{run.id:04d}",

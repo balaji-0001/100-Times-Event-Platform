@@ -1,9 +1,9 @@
 import { type FormEvent, type ReactNode, useMemo, useState, useEffect, useRef } from 'react';
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  AlertTriangle, ArrowDownRight, ArrowLeft, ArrowRight, Bell, CalendarDays, CalendarPlus, Check,
+  AlertTriangle, ArrowDownRight, ArrowLeft, ArrowRight, Bell, CalendarDays, CalendarPlus, Check, ChevronDown,
   Compass, Download, ExternalLink, Filter, Globe, Heart, LayoutDashboard,
-  LineChart, ListFilter, Loader2, LockKeyhole, MapPin, Menu, MessageSquare, Plus, Printer,
+  LineChart, ListFilter, Loader2, LockKeyhole, LogOut, MapPin, Menu, MessageSquare, Plus, Printer,
   QrCode, Search, Send, Settings2, ShieldCheck, Sparkles, Star, Ticket, Trash2,
   TrendingUp, UserCheck, UserPlus, UserRound, Users, X, Zap,
 } from 'lucide-react';
@@ -23,6 +23,7 @@ import type {
   ListEventsParams, Organizer, OrganizerDetail, RegistrationInput, ReviewInput,
   Venue, VenueDetail,
 } from '@workspace/api-client-react';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { Link, Redirect, Route, Switch, Router as WouterRouter, useLocation, useParams } from 'wouter';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { CountrySelect } from '@/components/CountrySelect';
@@ -42,7 +43,6 @@ import { SettingsPage } from '@/ops/SettingsPage';
 import { TrustReviewPage } from '@/ops/TrustReviewPage';
 import { AutomationsPage } from '@/ops/AutomationsPage';
 import { SocialPromotionsPage } from '@/ops/SocialPromotionsPage';
-import { AttendeeAgentPage } from '@/ops/AttendeeAgentPage';
 import { WorkflowsLogsPage } from '@/ops/WorkflowsLogsPage';
 import { OrganizerStudioPage } from '@/organizer/OrganizerStudio';
 import { ObservabilityPage } from '@/ops/ObservabilityPage';
@@ -54,11 +54,13 @@ import {
   DeleteAccountModal,
   EmailVerificationBanner,
 } from '@/components/AccountSecurityPages';
-import { keys, useMe } from '@/ops/api';
+import { keys, useMe, type Me } from '@/ops/api';
+import { type AccountType, accountTypeOf, canOpenPath, homePathFor, useAccount } from '@/lib/account';
 import {
-  AssistantPanel, AttendeeOverview, ExternalRegistrationsPanel, MatchesPanel, NotificationsPanel,
-  PreferencesPanel, SavedEventsPanel,
+  AssistantPanel, AttendeeOverview, DiscoverPanel, ExternalRegistrationsPanel, MatchesPanel, NotificationsPanel,
+  PreferencesPanel, ProfilePanel, SavedEventsPanel,
 } from '@/attendee/pages';
+import { useAttendeeProfile } from '@/attendee/api';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import '@/index.css';
@@ -252,24 +254,6 @@ function useDeleteScheduleItem() {
     },
   });
 }
-
-function useUpdateProfile() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (data: { name?: string; jobTitle?: string; company?: string; bio?: string; country?: string }) =>
-      customFetch('/api/dashboard/profile', {
-        method: 'PATCH',
-        body: JSON.stringify(data),
-      }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: getGetDashboardQueryKey() });
-      qc.invalidateQueries({ queryKey: getGetRegistrationsQueryKey() });
-      qc.invalidateQueries({ queryKey: keys.me });
-    },
-  });
-}
-
-
 
 function useLogout() {
   const qc = useQueryClient();
@@ -789,7 +773,7 @@ const money = (value?: number | string | null) => {
 // ---------------------------------------------------------------------------
 
 function AIConciergeModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const hasToken = typeof window !== 'undefined' && Boolean(localStorage.getItem('100-times-auth-token'));
+  const { hasToken, type } = useAccount();
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-md" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
@@ -809,7 +793,15 @@ function AIConciergeModal({ open, onClose }: { open: boolean; onClose: () => voi
           </button>
         </div>
         <div className="min-h-0 flex-1 p-4">
-          {hasToken ? (
+          {type === 'organiser' ? (
+            <div className="grid h-full place-items-center text-center">
+              <div>
+                <p className="font-display text-xl font-bold">The event assistant is for attendee accounts</p>
+                <p className="mt-2 text-sm text-muted-foreground">You're signed in with an organiser account. Manage your events from the organiser dashboard.</p>
+                <Link href="/organizer" onClick={onClose} className="mt-5 inline-block rounded-full bg-primary px-6 py-3 text-sm font-bold text-primary-foreground hover:bg-accent">Organiser dashboard</Link>
+              </div>
+            </div>
+          ) : hasToken ? (
             <AssistantPanel compact />
           ) : (
             <div className="grid h-full place-items-center text-center">
@@ -835,32 +827,119 @@ function Logo() {
   );
 }
 
+const ACCOUNT_LABEL: Record<AccountType, string> = { admin: 'Admin', organiser: 'Organiser', attendee: 'Attendee' };
+
+type MenuLink = { label: string; href: string; icon: typeof UserRound; testId: string };
+
+// Everything a signed-in account can open, grouped per account type.
+const ACCOUNT_MENU: Record<AccountType, MenuLink[]> = {
+  attendee: [
+    { label: 'My dashboard', href: '/dashboard', icon: LayoutDashboard, testId: 'dashboard' },
+    { label: 'Discover events', href: '/dashboard/discover', icon: Compass, testId: 'discover' },
+    { label: 'Saved events', href: '/dashboard/saved-events', icon: Heart, testId: 'saved' },
+    { label: 'My registrations', href: '/dashboard/registrations', icon: Ticket, testId: 'registrations' },
+    { label: 'Notifications', href: '/dashboard/notifications', icon: Bell, testId: 'notifications' },
+    { label: 'My profile', href: '/dashboard/profile', icon: UserRound, testId: 'profile' },
+  ],
+  organiser: [
+    { label: 'Organiser dashboard', href: '/organizer', icon: LayoutDashboard, testId: 'dashboard' },
+    { label: 'My events', href: '/organizer/events', icon: CalendarDays, testId: 'events' },
+    { label: 'List an event', href: '/organizer/events/create', icon: Plus, testId: 'list-event' },
+    { label: 'Analytics', href: '/organizer/analytics', icon: LineChart, testId: 'analytics' },
+    { label: 'Organiser profile', href: '/organizer/profile', icon: UserRound, testId: 'profile' },
+  ],
+  admin: [
+    { label: 'Admin console', href: '/admin', icon: ShieldCheck, testId: 'admin' },
+    { label: 'Event discovery', href: '/admin/discovery', icon: Compass, testId: 'discovery' },
+    { label: 'List an event', href: '/organizer/events/create', icon: Plus, testId: 'list-event' },
+    { label: 'Providers & API keys', href: '/admin/settings', icon: Settings2, testId: 'settings' },
+  ],
+};
+
+function AccountMenu({ type, name, email }: { type: AccountType; name?: string | null; email?: string | null }) {
+  const [location, setLocation] = useLocation();
+  const logout = useLogout();
+  const display = name || email?.split('@')[0] || 'Account';
+  const isActive = (href: string) => location === href || (href !== '/admin' && href !== '/dashboard' && href !== '/organizer' && location.startsWith(`${href}/`));
+  const itemClass =
+    'flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium outline-none data-[highlighted]:bg-muted data-[highlighted]:text-foreground';
+
+  return (
+    <DropdownMenu.Root modal={false}>
+      <DropdownMenu.Trigger asChild>
+        <button
+          type="button"
+          className="button-press group flex items-center gap-1.5 rounded-full border border-foreground/15 py-1.5 pl-1.5 pr-2.5 text-sm font-semibold hover:border-accent data-[state=open]:border-accent data-[state=open]:bg-accent/10"
+          aria-label={`Account menu for ${display}`}
+          data-testid="button-account-menu"
+        >
+          <span className="grid h-7 w-7 place-items-center rounded-full bg-primary text-xs font-bold uppercase text-primary-foreground">
+            {display.charAt(0)}
+          </span>
+          <span className="hidden max-w-[120px] truncate lg:inline">{display}</span>
+          <ChevronDown size={15} className="text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+        </button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          align="end"
+          sideOffset={8}
+          collisionPadding={16}
+          className="z-50 w-[min(18rem,calc(100vw-32px))] rounded-2xl border border-foreground/10 bg-background p-1.5 shadow-xl"
+          data-testid="menu-account"
+        >
+          <div className="flex items-center gap-3 px-3 pb-3 pt-2">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-primary text-sm font-bold uppercase text-primary-foreground">
+              {display.charAt(0)}
+            </span>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold">{display}</p>
+              {email && <p className="truncate text-xs text-muted-foreground">{email}</p>}
+            </div>
+            <span className="ml-auto shrink-0 rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-bold text-accent">{ACCOUNT_LABEL[type]}</span>
+          </div>
+          <DropdownMenu.Separator className="mx-1 mb-1 h-px bg-foreground/10" />
+          {ACCOUNT_MENU[type].map(({ label, href, icon: Icon, testId }) => (
+            <DropdownMenu.Item
+              key={href}
+              onSelect={() => setLocation(href)}
+              className={cx(itemClass, isActive(href) ? 'text-accent font-semibold' : 'text-foreground')}
+              data-testid={`menu-account-${testId}`}
+            >
+              <Icon size={16} className={isActive(href) ? 'text-accent' : 'text-muted-foreground'} />
+              {label}
+            </DropdownMenu.Item>
+          ))}
+          <DropdownMenu.Separator className="mx-1 my-1 h-px bg-foreground/10" />
+          <DropdownMenu.Item
+            onSelect={() => logout.mutate()}
+            disabled={logout.isPending}
+            className={cx(itemClass, 'text-destructive data-[highlighted]:bg-destructive/10 data-[highlighted]:text-destructive data-[disabled]:opacity-50')}
+            data-testid="menu-account-logout"
+          >
+            <LogOut size={16} />
+            {logout.isPending ? 'Signing out…' : 'Sign out'}
+          </DropdownMenu.Item>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
+}
+
 function Header() {
   const [open, setOpen] = useState(false);
   const [location] = useLocation();
   const logout = useLogout();
 
-  const [hasToken, setHasToken] = useState(() =>
-    typeof window !== 'undefined' ? Boolean(localStorage.getItem('100-times-auth-token')) : false
-  );
-
-  useEffect(() => {
-    const handleAuthChange = () => {
-      setHasToken(typeof window !== 'undefined' && Boolean(localStorage.getItem('100-times-auth-token')));
-    };
-    window.addEventListener('auth-change', handleAuthChange);
-    window.addEventListener('storage', handleAuthChange);
-    return () => {
-      window.removeEventListener('auth-change', handleAuthChange);
-      window.removeEventListener('storage', handleAuthChange);
-    };
-  }, []);
-
-  const me = useMe(hasToken);
-  const isLoggedIn = hasToken && Boolean(me.data) && !me.isError;
-  const isAdmin = isLoggedIn && me.data?.role === 'ADMIN';
-  const isOrganiser = isLoggedIn && (me.data?.role === 'ORGANIZER' || me.data?.roles?.includes('organiser') || me.data?.roles?.includes('organizer'));
-  const isMultiRole = isOrganiser && (me.data?.roles?.includes('attendee') || me.data?.role === 'ORGANIZER' || me.data?.role === 'ADMIN');
+  // Attendee and organiser accounts get different headers: attendees never see
+  // "List an event"; organisers never see attendee tools (assistant, dashboard).
+  const { me, signedIn: isLoggedIn, type } = useAccount();
+  const isAdmin = type === 'admin';
+  const isOrganiser = type === 'organiser';
+  const showListEvent = !isLoggedIn || isOrganiser || isAdmin;
+  const showAssistant = !isOrganiser;
+  const homeHref = isLoggedIn ? homePathFor(type) : '/login';
+  const homeLabel = isOrganiser ? 'Organiser dashboard' : isAdmin ? 'Admin console' : 'My dashboard';
 
   const nav = [
     ['Explore', '/events'],
@@ -874,15 +953,17 @@ function Header() {
     <header className="sticky top-0 z-40 border-b border-foreground/10 bg-background/90 backdrop-blur-xl">
       <div className="mx-auto flex h-[72px] max-w-[1440px] items-center justify-between px-5 lg:px-10">
         <Logo />
-        <nav className="hidden items-center gap-6 md:flex">
+        <nav className="hidden items-center gap-4 whitespace-nowrap md:flex xl:gap-6">
           {nav.map(([label, href]) => (
             <Link key={href} href={href} data-testid={`link-nav-${label.toLowerCase()}`} className={cx('text-sm font-medium transition-colors hover:text-accent', location.startsWith(href) && 'text-accent font-semibold')}>
               {label}
             </Link>
           ))}
         </nav>
-        <div className="flex items-center gap-2">
-          <button
+        {/* Never wrap a button label (it doubles the button's height); lower-priority extras
+            appear only on wider screens so the row always fits. */}
+        <div className="flex shrink-0 items-center gap-2 whitespace-nowrap">
+          {showAssistant && <button
             onClick={() => window.dispatchEvent(new CustomEvent('open-ai-concierge'))}
             className="button-press flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent/10 px-2.5 py-1.5 text-xs font-bold text-accent hover:bg-accent hover:text-accent-foreground sm:px-3.5"
             data-testid="button-header-ai-concierge"
@@ -890,97 +971,24 @@ function Header() {
           >
             <Sparkles size={14} />
             <span className="hidden sm:inline">AI Assistant</span>
-            <kbd className="hidden rounded bg-accent/20 px-1 py-0.2 font-mono-face text-[9px] text-accent lg:inline-block">Ctrl K</kbd>
-          </button>
-          <Link
-            href={isLoggedIn ? (me.data?.role === 'ADMIN' ? '/admin' : me.data?.role === 'ORGANIZER' ? '/organizer' : '/dashboard') : '/login?redirect=/dashboard'}
-            className="hidden rounded-full p-2.5 text-muted-foreground hover:bg-muted hover:text-foreground sm:block"
-            title={isLoggedIn ? `Signed in as ${me.data?.name || me.data?.email} (${me.data?.role})` : 'Sign in to Attendee Dashboard'}
-            data-testid="link-dashboard"
-          >
-            <UserRound size={18} />
-          </Link>
-          <Link
-            href={isLoggedIn ? (isOrganiser ? '/organizer/events/create' : '/organizer') : '/register?role=organiser&redirect=/organizer/events/create'}
-            className="hidden rounded-full border border-foreground/15 px-4 py-2 text-sm font-semibold hover:border-accent hover:text-accent lg:block"
-            data-testid="link-organizer-portal"
-          >
-            List an event
-          </Link>
-
-          {/* Authentication & User Controls: Grouped near Sign out */}
-          {isLoggedIn ? (
-            <div className="flex items-center gap-2">
-              {isAdmin && (
-                <>
-                  <Link
-                    href="/admin"
-                    className={cx(
-                      'button-press flex items-center gap-1.5 rounded-full border border-foreground/15 px-2.5 py-1.5 text-xs font-semibold hover:border-accent hover:text-accent sm:px-3',
-                      location.startsWith('/admin') ? 'border-accent bg-accent/15 text-accent font-bold' : 'text-foreground'
-                    )}
-                    data-testid="link-header-admin"
-                    title="Open Administrator Console"
-                    aria-label="Admin console"
-                  >
-                    <ShieldCheck size={14} className="text-accent" />
-                    <span className="hidden sm:inline">Admin</span>
-                  </Link>
-                  <Link
-                    href="/admin/settings"
-                    className={cx(
-                      'button-press hidden items-center justify-center rounded-full border border-foreground/15 p-2 text-xs font-semibold hover:border-accent hover:text-accent sm:flex',
-                      location.startsWith('/admin/settings') ? 'border-accent bg-accent/15 text-accent' : 'text-muted-foreground'
-                    )}
-                    title="Providers & API keys"
-                    aria-label="Providers & API keys"
-                    data-testid="link-header-settings"
-                  >
-                    <Settings2 size={15} />
-                  </Link>
-                </>
-              )}
-
-              {isMultiRole && (
-                location.startsWith('/organizer') ? (
-                  <Link
-                    href="/dashboard"
-                    className="hidden sm:inline-flex items-center gap-1 rounded-full border border-accent/40 bg-accent/10 px-2.5 py-1 text-xs font-semibold text-accent hover:bg-accent hover:text-accent-foreground"
-                    data-testid="button-switch-to-attendee"
-                  >
-                    Attendee Hub
-                  </Link>
-                ) : location.startsWith('/dashboard') ? (
-                  <Link
-                    href="/organizer"
-                    className="hidden sm:inline-flex items-center gap-1 rounded-full border border-accent/40 bg-accent/10 px-2.5 py-1 text-xs font-semibold text-accent hover:bg-accent hover:text-accent-foreground"
-                    data-testid="button-switch-to-organizer"
-                  >
-                    Organiser Desk
-                  </Link>
-                ) : null
-              )}
-
-              <span className="hidden items-center gap-1.5 rounded-full bg-accent/10 border border-accent/25 px-2.5 py-1 text-xs font-semibold text-accent xl:inline-flex">
-                <span className="max-w-[110px] truncate">{me.data?.name || me.data?.email?.split('@')[0]}</span>
-                <span className="rounded-full bg-accent text-accent-foreground px-1.5 py-0.2 text-[9px] font-bold">
-                  {me.data?.role === 'ADMIN' ? 'Admin' : me.data?.role === 'ORGANIZER' ? 'Organizer' : 'Attendee'}
-                </span>
-              </span>
-              <button
-                type="button"
-                onClick={() => logout.mutate()}
-                disabled={logout.isPending}
-                className="button-press whitespace-nowrap rounded-full bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground hover:bg-accent disabled:opacity-50 sm:px-4 sm:text-sm"
-                data-testid="link-logout"
-              >
-                {logout.isPending ? 'Signing out…' : 'Sign out'}
-              </button>
-            </div>
+            <kbd className="hidden rounded bg-accent/20 px-1 py-0.2 font-mono-face text-[9px] text-accent 2xl:inline-block">Ctrl K</kbd>
+          </button>}
+          {/* Signed in: every account option lives in the profile menu. */}
+          {isLoggedIn && type ? (
+            <AccountMenu type={type} name={me.data?.name} email={me.data?.email} />
           ) : (
-            <Link href="/login" className="button-press rounded-full bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-accent" data-testid="link-login">
-              Sign in
-            </Link>
+            <>
+              <Link
+                href="/register?role=organiser&redirect=/organizer/events/create"
+                className="hidden rounded-full border border-foreground/15 px-4 py-2 text-sm font-semibold hover:border-accent hover:text-accent xl:block"
+                data-testid="link-organizer-portal"
+              >
+                List an event
+              </Link>
+              <Link href="/login" className="button-press rounded-full bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-accent" data-testid="link-login">
+                Sign in
+              </Link>
+            </>
           )}
 
           <button className="rounded-full p-2 md:hidden" onClick={() => setOpen(!open)} aria-label="Open navigation" data-testid="button-toggle-menu">
@@ -1000,23 +1008,27 @@ function Header() {
               Admin console
             </Link>
           )}
-          <Link
-            href={isLoggedIn ? (isOrganiser ? '/organizer/events/create' : '/organizer') : '/register?role=organiser&redirect=/organizer/events/create'}
-            onClick={() => setOpen(false)}
-            className="block border-b border-foreground/10 py-3 text-sm font-semibold text-accent"
-            data-testid="link-mobile-organizer"
-          >
-            List an event
-          </Link>
-          <Link href="/dashboard" onClick={() => setOpen(false)} className="block border-b border-foreground/10 py-3 text-sm font-semibold" data-testid="link-mobile-dashboard">
-            Attendee dashboard
-          </Link>
+          {showListEvent && (
+            <Link
+              href={isOrganiser || isAdmin ? '/organizer/events/create' : '/register?role=organiser&redirect=/organizer/events/create'}
+              onClick={() => setOpen(false)}
+              className="block border-b border-foreground/10 py-3 text-sm font-semibold text-accent"
+              data-testid="link-mobile-organizer"
+            >
+              List an event
+            </Link>
+          )}
+          {isLoggedIn && !isAdmin && (
+            <Link href={homeHref} onClick={() => setOpen(false)} className="block border-b border-foreground/10 py-3 text-sm font-semibold" data-testid="link-mobile-dashboard">
+              {homeLabel}
+            </Link>
+          )}
           {isLoggedIn ? (
             <div className="pt-3">
               <div className="flex items-center justify-between py-2 text-xs text-muted-foreground">
                 <span className="truncate">Signed in: <strong>{me.data?.email}</strong></span>
                 <span className="rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-bold text-accent">
-                  {me.data?.role === 'ADMIN' ? 'Admin' : me.data?.role === 'ORGANIZER' ? 'Organizer' : 'Attendee'}
+                  {type && ACCOUNT_LABEL[type]}
                 </span>
               </div>
               <button
@@ -1049,6 +1061,11 @@ function Header() {
 }
 
 function Footer() {
+  const { type } = useAccount();
+  const yours =
+    type === 'organiser'
+      ? [['Organiser dashboard', '/organizer'], ['My events', '/organizer/events'], ['Create an event', '/organizer/events/create'], ['Organiser profile', '/organizer/profile']]
+      : [['Dashboard', '/dashboard'], ['Discover events', '/dashboard/discover'], ['Saved events', '/dashboard/saved-events'], ['Registrations & Pass', '/dashboard/registrations'], ['My profile', '/dashboard/profile']];
   return (
     <footer className="mt-20 border-t border-foreground/10 bg-primary text-primary-foreground">
       <div className="mx-auto grid max-w-[1440px] gap-10 px-5 py-14 lg:grid-cols-[1.4fr_1fr_1fr_1fr] lg:px-10">
@@ -1058,8 +1075,8 @@ function Footer() {
           <p className="mt-8 font-mono-face text-[10px] uppercase tracking-[.2em] text-primary-foreground/45">Made for curious people</p>
         </div>
         <FooterCol title="Discover" links={[['Explore events', '/events'], ['Sectors', '/categories'], ['Cities', '/cities']]} />
-        <FooterCol title="Connect" links={[['Organizers', '/organizers'], ['Venues', '/venues'], ['For organizers', '/organizer']]} />
-        <FooterCol title="Your 100 TIMES" links={[['Dashboard', '/dashboard'], ['My Schedule', '/dashboard/schedule'], ['Networking Hub', '/dashboard/networking'], ['Registrations & Pass', '/dashboard/registrations']]} />
+        <FooterCol title="Connect" links={[['Organizers', '/organizers'], ['Venues', '/venues'], ...(type === 'attendee' ? [] : [['For organizers', '/organizer']])]} />
+        <FooterCol title="Your 100 TIMES" links={yours} />
       </div>
       <div className="mx-auto flex max-w-[1440px] flex-wrap justify-between items-center gap-3 border-t border-primary-foreground/15 px-5 py-5 text-xs text-primary-foreground/45 lg:px-10">
         <span>© 2026 100 TIMES</span>
@@ -1202,6 +1219,9 @@ function SaveButton({ event, compact = false }: { event: EventCard; compact?: bo
   const save = useSaveEvent();
   const unsave = useUnsaveEvent();
   const [, setLocation] = useLocation();
+  const { type } = useAccount();
+  // Saving is an attendee feature; organiser accounts don't get the button.
+  if (type === 'organiser') return null;
 
   const toggle = () => {
     const hasToken = typeof window !== 'undefined' && Boolean(localStorage.getItem('100-times-auth-token'));
@@ -1461,12 +1481,54 @@ function HomePage() {
   );
 }
 
+// Explore date filter. `dateFrom`/`dateTo` match any event running on a day in
+// the range (see GET /api/events); dates are the visitor's local calendar days.
+type ExploreParams = ListEventsParams & { dateFrom?: string; dateTo?: string };
+type DatePreset = 'any' | 'today' | 'weekend' | 'week' | 'month' | 'quarter' | 'custom';
+
+const DATE_PRESETS: [DatePreset, string][] = [
+  ['any', 'Any date'],
+  ['today', 'Today'],
+  ['weekend', 'This weekend'],
+  ['week', 'Next 7 days'],
+  ['month', 'This month'],
+  ['quarter', 'Next 3 months'],
+  ['custom', 'Pick dates…'],
+];
+
+function localIso(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function presetRange(preset: DatePreset): { dateFrom?: string; dateTo?: string } {
+  const today = new Date();
+  const plus = (days: number) => new Date(today.getFullYear(), today.getMonth(), today.getDate() + days);
+  switch (preset) {
+    case 'today':
+      return { dateFrom: localIso(today), dateTo: localIso(today) };
+    case 'weekend': {
+      const day = today.getDay(); // 0 = Sunday, 6 = Saturday
+      if (day === 0) return { dateFrom: localIso(today), dateTo: localIso(today) };
+      return { dateFrom: localIso(day === 6 ? today : plus(6 - day)), dateTo: localIso(plus(7 - day)) };
+    }
+    case 'week':
+      return { dateFrom: localIso(today), dateTo: localIso(plus(6)) };
+    case 'month':
+      return { dateFrom: localIso(today), dateTo: localIso(new Date(today.getFullYear(), today.getMonth() + 1, 0)) };
+    case 'quarter':
+      return { dateFrom: localIso(today), dateTo: localIso(plus(90)) };
+    default:
+      return { dateFrom: undefined, dateTo: undefined };
+  }
+}
+
 function EventsPage() {
   const hasToken = typeof window !== 'undefined' && Boolean(localStorage.getItem('100-times-auth-token'));
-  const [filters, setFilters] = useState<ListEventsParams>({ page: 1, pageSize: 8, sort: 'soonest', format: 'all' });
+  const [filters, setFilters] = useState<ExploreParams>({ page: 1, pageSize: 8, sort: 'soonest', format: 'all' });
+  const [datePreset, setDatePreset] = useState<DatePreset>('any');
   const [term, setTerm] = useState('');
   const params = useMemo(() => ({ ...filters, q: term || undefined }), [filters, term]);
-  const query = useListEvents(params);
+  const query = useListEvents(params as ListEventsParams);
   const categoriesQuery = useListCategories();
   const rawEvents = query.data?.items ?? [];
   const events = useMemo(() => {
@@ -1594,8 +1656,55 @@ function EventsPage() {
               data-testid="input-filter-city"
             />
           </label>
+          <label className="mt-4 block text-xs font-semibold text-muted-foreground">
+            Date
+            <select
+              value={datePreset}
+              onChange={(e) => {
+                const preset = e.target.value as DatePreset;
+                setDatePreset(preset);
+                // "Pick dates…" keeps the current range so the inputs below start from it.
+                if (preset !== 'custom') setFilters((f) => ({ ...f, ...presetRange(preset), page: 1 }));
+              }}
+              className="mt-2 w-full rounded-lg border border-foreground/15 bg-background px-3 py-2.5 text-sm"
+              data-testid="select-filter-date"
+            >
+              {DATE_PRESETS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
+          </label>
+          {datePreset === 'custom' && (
+            <div className="mt-2 grid gap-2">
+              <label className="block text-[11px] font-semibold text-muted-foreground">
+                From
+                <input
+                  type="date"
+                  value={filters.dateFrom ?? ''}
+                  max={filters.dateTo || undefined}
+                  onChange={(e) => setFilters((f) => ({ ...f, dateFrom: e.target.value || undefined, page: 1 }))}
+                  className="mt-1 w-full rounded-lg border border-foreground/15 bg-background px-3 py-2 text-sm outline-none focus:border-accent"
+                  data-testid="input-filter-date-from"
+                />
+              </label>
+              <label className="block text-[11px] font-semibold text-muted-foreground">
+                To
+                <input
+                  type="date"
+                  value={filters.dateTo ?? ''}
+                  min={filters.dateFrom || undefined}
+                  onChange={(e) => setFilters((f) => ({ ...f, dateTo: e.target.value || undefined, page: 1 }))}
+                  className="mt-1 w-full rounded-lg border border-foreground/15 bg-background px-3 py-2 text-sm outline-none focus:border-accent"
+                  data-testid="input-filter-date-to"
+                />
+              </label>
+            </div>
+          )}
+          {datePreset !== 'any' && datePreset !== 'custom' && filters.dateFrom && (
+            <p className="mt-2 text-[11px] text-muted-foreground" data-testid="text-filter-date-range">
+              {filters.dateFrom === filters.dateTo ? filters.dateFrom : `${filters.dateFrom} → ${filters.dateTo}`}
+            </p>
+          )}
           <button
-            onClick={() => { setFilters({ page: 1, pageSize: 8, sort: 'soonest', format: 'all', country: undefined }); setTerm(''); }}
+            onClick={() => { setFilters({ page: 1, pageSize: 8, sort: 'soonest', format: 'all', country: undefined }); setDatePreset('any'); setTerm(''); }}
             className="mt-6 text-xs font-semibold text-accent hover:underline"
             data-testid="button-clear-filters"
           >
@@ -1677,7 +1786,7 @@ function EventsPage() {
 
 function EventDetailPage() {
   const { slug = '' } = useParams<{ slug: string }>();
-  const hasToken = typeof window !== 'undefined' && Boolean(localStorage.getItem('100-times-auth-token'));
+  const { hasToken, type } = useAccount();
   const query = useGetEvent(slug, { query: { queryKey: getGetEventQueryKey(slug) } });
   if (query.isLoading) return <LoadingState label="Opening the event" />;
   if (query.isError || !query.data) return <ErrorState retry={() => query.refetch()} title="We could not find that event." />;
@@ -1696,16 +1805,22 @@ function EventDetailPage() {
             <p className="font-mono-face text-xs uppercase tracking-[.16em] text-accent">{event.category} / {event.eventType}</p>
             <h1 className="mt-4 font-display text-5xl font-extrabold leading-[.92] tracking-[-.07em] sm:text-7xl">{event.title}</h1>
             <p className="mt-5 text-lg leading-7 text-muted-foreground">{event.description}</p>
-            <div className="mt-8 flex flex-wrap gap-3">
-              <Link
-                href={hasToken ? `/events/${event.slug}/register` : `/register?role=attendee&redirect=/events/${event.slug}/register`}
-                className="button-press inline-flex items-center gap-2 rounded-full bg-accent px-5 py-3 text-sm font-semibold text-accent-foreground hover:bg-primary hover:text-primary-foreground"
-                data-testid="link-register-event"
-              >
-                Register now <ArrowRight size={16} />
-              </Link>
-              <SaveButton event={event} />
-            </div>
+            {type === 'organiser' ? (
+              <p className="mt-8 rounded-2xl border border-foreground/10 bg-muted/40 p-4 text-xs text-muted-foreground" data-testid="text-organiser-cannot-register">
+                You're signed in with an organiser account. Registering for events is done from an attendee account.
+              </p>
+            ) : (
+              <div className="mt-8 flex flex-wrap gap-3">
+                <Link
+                  href={hasToken ? `/events/${event.slug}/register` : `/register?role=attendee&redirect=/events/${event.slug}/register`}
+                  className="button-press inline-flex items-center gap-2 rounded-full bg-accent px-5 py-3 text-sm font-semibold text-accent-foreground hover:bg-primary hover:text-primary-foreground"
+                  data-testid="link-register-event"
+                >
+                  Register now <ArrowRight size={16} />
+                </Link>
+                <SaveButton event={event} />
+              </div>
+            )}
 
             {!hasToken && (
               <div className="mt-6 rounded-2xl border border-accent/25 bg-accent/5 p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-xs">
@@ -1910,27 +2025,30 @@ function RegisterPage() {
   const mutation = useRegisterForEvent();
   const hasToken = typeof window !== 'undefined' && Boolean(localStorage.getItem('100-times-auth-token'));
   const me = useMe(hasToken);
+  const attendeeProfile = useAttendeeProfile(hasToken && Boolean(me.data));
   const [createdPass, setCreatedPass] = useState<RegistrationPass | null>(null);
   const [showPassModal, setShowPassModal] = useState(false);
   const [error, setError] = useState('');
   const [form, setForm] = useState<RegistrationInput>({ firstName: '', lastName: '', email: '', phone: '', company: '', jobTitle: '', country: '', ticketType: 'Standard' });
   const update = (key: keyof RegistrationInput, value: string) => setForm((f) => ({ ...f, [key]: value }));
 
-  // Auto-fill authenticated user data
+  // Auto-fill from the signed-in attendee's account and attendee profile
   useEffect(() => {
     if (me.data) {
       const parts = (me.data.name || '').split(' ');
+      const details = attendeeProfile.data;
       setForm((f) => ({
         ...f,
         firstName: f.firstName || parts[0] || '',
         lastName: f.lastName || parts.slice(1).join(' ') || '',
         email: f.email || me.data?.email || '',
-        company: f.company || me.data?.company || '',
-        jobTitle: f.jobTitle || me.data?.jobTitle || '',
-        country: f.country || me.data?.country || '',
+        phone: f.phone || details?.phone || '',
+        company: f.company || details?.company || '',
+        jobTitle: f.jobTitle || details?.jobTitle || '',
+        country: f.country || details?.country || '',
       }));
     }
-  }, [me.data]);
+  }, [me.data, attendeeProfile.data]);
 
   if (eventQuery.isLoading) return <LoadingState label="Preparing registration" />;
   if (eventQuery.isError || !eventQuery.data) return <ErrorState title="That event is no longer available." />;
@@ -2420,16 +2538,11 @@ function AuthPage({ mode: initialMode }: { mode: 'login' | 'register' | 'forgot'
             localStorage.setItem('100-times-auth-token', session.token);
             window.dispatchEvent(new Event('auth-change'));
             qc.invalidateQueries({ queryKey: keys.me });
+            // Attendees land on the attendee dashboard and organisers on the organiser
+            // dashboard; a ?redirect= is only followed when that account may open it.
+            const account = accountTypeOf(session.user as Me);
             const redirect = queryParams.get('redirect');
-            if (redirect) {
-              setLocation(redirect);
-            } else if (session.user?.role === 'ADMIN' || roleType === 'admin') {
-              setLocation('/admin');
-            } else if (session.user?.role === 'ORGANIZER' || roleType === 'organiser') {
-              setLocation('/organizer');
-            } else {
-              setLocation('/dashboard');
-            }
+            setLocation(redirect && redirect.startsWith('/') && canOpenPath(account, redirect) ? redirect : homePathFor(account));
           },
           onError: (err: any) => {
             setIsSubmitting(false);
@@ -2464,6 +2577,7 @@ function AuthPage({ mode: initialMode }: { mode: 'login' | 'register' | 'forgot'
           password: form.password,
           country: form.country?.trim() || null,
           company: roleType === 'organiser' ? form.company.trim() || undefined : undefined,
+          accountType: roleType === 'organiser' ? 'organiser' : 'attendee',
         }),
       });
 
@@ -2494,11 +2608,11 @@ function AuthPage({ mode: initialMode }: { mode: 'login' | 'register' | 'forgot'
         }
         await qc.invalidateQueries({ queryKey: keys.me });
         const redirect = queryParams.get('redirect');
-        setLocation(redirect || '/organizer');
+        setLocation(redirect && canOpenPath('organiser', redirect) ? redirect : '/organizer');
       } else {
         await qc.invalidateQueries({ queryKey: keys.me });
         const redirect = queryParams.get('redirect');
-        setLocation(redirect || '/dashboard');
+        setLocation(redirect && canOpenPath('attendee', redirect) ? redirect : '/dashboard');
       }
     } catch (regErr: any) {
       setIsSubmitting(false);
@@ -2918,8 +3032,10 @@ function AuthPage({ mode: initialMode }: { mode: 'login' | 'register' | 'forgot'
 
 function DashboardNav() {
   const me = useMe();
+  const [location] = useLocation();
   const links = [
     ['Overview', '/dashboard', LayoutDashboard],
+    ['Discover events', '/dashboard/discover', Search],
     ['Preferences', '/dashboard/preferences', ListFilter],
     ['Match My Events', '/dashboard/recommendations', Sparkles],
     ['Event Assistant', '/dashboard/assistant', MessageSquare],
@@ -2928,18 +3044,18 @@ function DashboardNav() {
     ['My Schedule', '/dashboard/schedule', CalendarDays],
     ['Networking', '/dashboard/networking', Users],
     ['Notifications', '/dashboard/notifications', Bell],
-    ['Settings', '/dashboard/settings', Settings2],
+    ['My profile', '/dashboard/profile', UserRound],
     ...(me.data?.role === 'ADMIN' ? ([['Admin Console', '/admin', ShieldCheck]] as const) : []),
   ] as const;
 
   return (
     <aside className="rounded-2xl border border-foreground/10 bg-card p-3 lg:h-fit lg:sticky lg:top-24">
-      <p className="px-3 py-3 font-mono-face text-[10px] uppercase tracking-[.16em] text-muted-foreground">Your 100 TIMES</p>
+      <p className="px-3 py-3 font-mono-face text-[10px] uppercase tracking-[.16em] text-muted-foreground">Attendee · Your 100 TIMES</p>
       {links.map(([label, href, Icon]) => (
         <Link
           href={href}
           key={href}
-          className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold hover:bg-muted"
+          className={cx('flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold hover:bg-muted', location === href && 'bg-muted text-accent')}
           data-testid={`link-dashboard-${label.toLowerCase().replaceAll(' ', '-')}`}
         >
           <Icon size={16} className="text-accent" />
@@ -3305,91 +3421,77 @@ function RegistrationsTab({
 }
 
 function SettingsPanel() {
-  const [saved, setSaved] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const updateMutation = useUpdateProfile();
-
-  const me = useMe();
-  const [form, setForm] = useState({ name: '', jobTitle: '', company: '', bio: '', country: '' });
-  useEffect(() => {
-    if (me.data) {
-      const profile = me.data;
-      setForm({
-        name: profile.name ?? '',
-        jobTitle: profile.jobTitle ?? '',
-        company: profile.company ?? '',
-        bio: profile.bio ?? '',
-        country: profile.country ?? '',
-      });
-    }
-  }, [me.data]);
-
-  const handleSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    if (!me.data) return; // never save before the real profile has loaded (would blank fields)
-    updateMutation.mutate(form, {
-      onSuccess: () => {
-        setSaved(true);
-        window.setTimeout(() => setSaved(false), 2000);
-      },
-    });
-  };
-
   return (
-    <div className="max-w-xl rounded-2xl border border-foreground/10 bg-card p-6 sm:p-8">
-      <h2 className="font-display text-2xl font-bold">Attendee Profile & Settings</h2>
-      <p className="mt-2 text-sm text-muted-foreground">
-        Keep your details current so your digital badge, lanyard pass, and attendee networking profile look sharp.
-      </p>
-      <form onSubmit={handleSubmit} className="mt-7 space-y-5">
-        <Field label="Full name" value={form.name} onChange={(v) => setForm((f) => ({ ...f, name: v }))} required testId="input-settings-name" />
-        <Field label="Job title" value={form.jobTitle} onChange={(v) => setForm((f) => ({ ...f, jobTitle: v }))} testId="input-settings-job-title" />
-        <Field label="Company / Studio" value={form.company} onChange={(v) => setForm((f) => ({ ...f, company: v }))} testId="input-settings-company" />
-        <label className="block text-xs font-semibold text-muted-foreground">
-          Bio / What you are building
-          <textarea
-            value={form.bio}
-            onChange={(e) => setForm((f) => ({ ...f, bio: e.target.value }))}
-            className="mt-2 min-h-20 w-full rounded-lg border border-foreground/15 bg-background px-3 py-2.5 text-xs outline-none focus:border-accent"
-            data-testid="input-settings-bio"
-          />
-        </label>
-        <Field label="Country" value={form.country} onChange={(v) => setForm((f) => ({ ...f, country: v }))} testId="input-settings-country" />
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-          {updateMutation.isError && (
-            <p className="w-full text-xs text-destructive">
-              Could not save: {updateMutation.error instanceof Error ? updateMutation.error.message : 'Request failed'}
+    <>
+      <ProfilePanel
+        footer={
+          <div className="space-y-3 rounded-2xl border border-rose-500/20 bg-card p-6">
+            <h3 className="font-display text-base font-bold text-rose-500">Danger Zone</h3>
+            <p className="text-xs text-muted-foreground">
+              Permanently remove your 100 TIMES account, personal profile, and associated event data.
             </p>
-          )}
-          <button
-            type="submit"
-            disabled={updateMutation.isPending || !me.data}
-            className="button-press rounded-full bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground hover:bg-accent disabled:opacity-60"
-            data-testid="button-save-settings"
-          >
-            {updateMutation.isPending ? 'Saving...' : saved ? '✓ Saved' : 'Save preferences'}
-          </button>
-        </div>
-      </form>
+            <button
+              type="button"
+              onClick={() => setShowDeleteModal(true)}
+              className="rounded-full border border-rose-500/30 bg-rose-500/10 px-4 py-2 text-xs font-bold text-rose-500 hover:bg-rose-500 hover:text-white transition"
+              data-testid="button-open-delete-account"
+            >
+              Delete Account
+            </button>
+          </div>
+        }
+      />
+      <DeleteAccountModal isOpen={showDeleteModal} onClose={() => setShowDeleteModal(false)} />
+    </>
+  );
+}
 
-      {/* Danger Zone: Delete Account */}
-      <div className="mt-10 pt-6 border-t border-foreground/10 space-y-3">
-        <h3 className="font-display text-base font-bold text-rose-500">Danger Zone</h3>
-        <p className="text-xs text-muted-foreground">
-          Permanently remove your 100 TIMES account, personal profile, and associated event data.
-        </p>
-        <button
-          type="button"
-          onClick={() => setShowDeleteModal(true)}
-          className="rounded-full border border-rose-500/30 bg-rose-500/10 px-4 py-2 text-xs font-bold text-rose-500 hover:bg-rose-500 hover:text-white transition"
-          data-testid="button-open-delete-account"
-        >
-          Delete Account
+// ---------------------------------------------------------------------------
+// Role gates: attendee and organiser accounts are separate. The server refuses
+// the other account type's endpoints; these keep the interface consistent with
+// that when someone types the other area's URL.
+// ---------------------------------------------------------------------------
+
+function RoleGate({ allow, children }: { allow: AccountType[]; children: ReactNode }) {
+  const { hasToken, signedIn, type, resolving, me } = useAccount();
+  const logout = useLogout();
+  // Signed-out visitors get each page's own sign-in prompt.
+  if (!hasToken || (!resolving && !signedIn)) return <>{children}</>;
+  if (resolving || !type) return <LoadingState label="Checking your account" />;
+  if (allow.includes(type)) return <>{children}</>;
+
+  const organiserArea = allow.includes('organiser');
+  return (
+    <div className="page-enter mx-auto max-w-xl px-5 py-28 text-center" data-testid="role-gate-blocked">
+      <p className="font-mono-face text-xs uppercase tracking-[.18em] text-accent">{organiserArea ? 'Organiser area' : 'Attendee area'}</p>
+      <h1 className="mt-4 font-display text-4xl font-extrabold tracking-[-.06em]">
+        This page is for {organiserArea ? 'organiser' : 'attendee'} accounts.
+      </h1>
+      <p className="mt-4 text-sm leading-6 text-muted-foreground">
+        You're signed in as <strong>{me.data?.email}</strong> with {type === 'organiser' ? 'an organiser' : 'an attendee'} account.{' '}
+        {organiserArea
+          ? 'Listing and managing events needs a separate organiser account.'
+          : 'Saved events, registrations, recommendations and networking belong to attendee accounts.'}
+      </p>
+      <div className="mt-8 flex flex-wrap justify-center gap-3">
+        <Link href={homePathFor(type)} className="rounded-full bg-primary px-6 py-3 text-sm font-bold text-primary-foreground hover:bg-accent" data-testid="link-role-gate-home">
+          {type === 'organiser' ? 'Go to organiser dashboard' : 'Go to my dashboard'}
+        </Link>
+        <button type="button" onClick={() => logout.mutate()} className="rounded-full border border-foreground/15 px-6 py-3 text-sm font-semibold hover:border-accent hover:text-accent">
+          Sign in with another account
         </button>
       </div>
-      <DeleteAccountModal isOpen={showDeleteModal} onClose={() => setShowDeleteModal(false)} />
     </div>
   );
+}
+
+function AttendeeArea({ tab }: { tab: string }) {
+  return <RoleGate allow={['attendee', 'admin']}><DashboardPage tab={tab} /></RoleGate>;
+}
+
+function OrganiserArea({ tab }: { tab: string }) {
+  return <RoleGate allow={['organiser', 'admin']}><OrganizerStudioPage initialTab={tab} /></RoleGate>;
 }
 
 function DashboardPage({ tab = 'overview' }: { tab?: string }) {
@@ -3438,7 +3540,8 @@ function DashboardPage({ tab = 'overview' }: { tab?: string }) {
     preferences: 'What you want to find.',
     assistant: 'Ask for events.',
     notifications: 'Keep in the loop.',
-    settings: 'Your attendee profile.',
+    discover: 'Find your next event.',
+    profile: 'Your attendee profile.',
   };
 
   return (
@@ -3455,6 +3558,7 @@ function DashboardPage({ tab = 'overview' }: { tab?: string }) {
         <DashboardNav />
         <div>
           {tab === 'overview' && <AttendeeOverview />}
+          {tab === 'discover' && <DiscoverPanel />}
           {tab === 'preferences' && <PreferencesPanel />}
           {tab === 'assistant' && <AssistantPanel />}
           {tab === 'schedule' && <ScheduleTab />}
@@ -3468,7 +3572,7 @@ function DashboardPage({ tab = 'overview' }: { tab?: string }) {
             </>
           )}
           {tab === 'notifications' && <NotificationsPanel />}
-          {tab === 'settings' && <SettingsPanel />}
+          {tab === 'profile' && <SettingsPanel />}
         </div>
       </div>
       <DigitalPassModal reg={selectedPass} open={Boolean(selectedPass)} onClose={() => setSelectedPass(null)} />
@@ -4170,7 +4274,7 @@ function Router() {
       <Switch>
         <Route path="/" component={HomePage} />
         <Route path="/events" component={EventsPage} />
-        <Route path="/events/:slug/register" component={RegisterPage} />
+        <Route path="/events/:slug/register" component={() => <RoleGate allow={['attendee', 'admin']}><RegisterPage /></RoleGate>} />
         <Route path="/events/:slug" component={EventDetailPage} />
         <Route path="/categories" component={() => <DirectoryListPage kind="categories" />} />
         <Route path="/categories/:slug" component={() => <DirectoryDetailPage kind="category" />} />
@@ -4186,23 +4290,25 @@ function Router() {
         <Route path="/forgot-password" component={() => <AuthPage mode="forgot" />} />
 
         {/* Attendee Experience Dashboard Routes */}
-        <Route path="/dashboard" component={() => <DashboardPage tab="overview" />} />
-        <Route path="/dashboard/schedule" component={() => <DashboardPage tab="schedule" />} />
-        <Route path="/dashboard/networking" component={() => <DashboardPage tab="networking" />} />
-        <Route path="/dashboard/registrations" component={() => <DashboardPage tab="registrations" />} />
-        <Route path="/dashboard/saved-events" component={() => <DashboardPage tab="saved-events" />} />
-        <Route path="/dashboard/recommendations" component={() => <DashboardPage tab="recommendations" />} />
-        <Route path="/dashboard/preferences" component={() => <DashboardPage tab="preferences" />} />
-        <Route path="/dashboard/assistant" component={() => <DashboardPage tab="assistant" />} />
-        <Route path="/dashboard/notifications" component={() => <DashboardPage tab="notifications" />} />
-        <Route path="/dashboard/settings" component={() => <DashboardPage tab="settings" />} />
+        <Route path="/dashboard" component={() => <AttendeeArea tab="overview" />} />
+        <Route path="/dashboard/discover" component={() => <AttendeeArea tab="discover" />} />
+        <Route path="/dashboard/profile" component={() => <AttendeeArea tab="profile" />} />
+        <Route path="/dashboard/schedule" component={() => <AttendeeArea tab="schedule" />} />
+        <Route path="/dashboard/networking" component={() => <AttendeeArea tab="networking" />} />
+        <Route path="/dashboard/registrations" component={() => <AttendeeArea tab="registrations" />} />
+        <Route path="/dashboard/saved-events" component={() => <AttendeeArea tab="saved-events" />} />
+        <Route path="/dashboard/recommendations" component={() => <AttendeeArea tab="recommendations" />} />
+        <Route path="/dashboard/preferences" component={() => <AttendeeArea tab="preferences" />} />
+        <Route path="/dashboard/assistant" component={() => <AttendeeArea tab="assistant" />} />
+        <Route path="/dashboard/notifications" component={() => <AttendeeArea tab="notifications" />} />
+        <Route path="/dashboard/settings" component={() => <Redirect to="/dashboard/profile" replace />} />
 
         {/* Organizer Desk */}
-        <Route path="/organizer" component={() => <OrganizerStudioPage initialTab="overview" />} />
-        <Route path="/organizer/events" component={() => <OrganizerStudioPage initialTab="events" />} />
-        <Route path="/organizer/events/create" component={() => <OrganizerStudioPage initialTab="create" />} />
-        <Route path="/organizer/analytics" component={() => <OrganizerStudioPage initialTab="analytics" />} />
-        <Route path="/organizer/profile" component={() => <OrganizerStudioPage initialTab="profile" />} />
+        <Route path="/organizer" component={() => <OrganiserArea tab="overview" />} />
+        <Route path="/organizer/events" component={() => <OrganiserArea tab="events" />} />
+        <Route path="/organizer/events/create" component={() => <OrganiserArea tab="create" />} />
+        <Route path="/organizer/analytics" component={() => <OrganiserArea tab="analytics" />} />
+        <Route path="/organizer/profile" component={() => <OrganiserArea tab="profile" />} />
 
         {/* Admin Console — Organizer Discovery, Outreach, Trust Agent 3, Attendee Agent & n8n Automations */}
         <Route path="/admin" component={() => <OpsLayout><OpsDashboardPage /></OpsLayout>} />
@@ -4216,7 +4322,7 @@ function Router() {
         <Route path="/admin/community-promotion" component={() => <Redirect to="/admin/automations" />} />
         <Route path="/admin/social-promotions" component={() => <OpsLayout><SocialPromotionsPage /></OpsLayout>} />
         <Route path="/admin/trust-review" component={() => <OpsLayout><TrustReviewPage /></OpsLayout>} />
-        <Route path="/admin/attendee-agent" component={() => <OpsLayout><AttendeeAgentPage /></OpsLayout>} />
+        <Route path="/admin/attendee-agent" component={() => <Redirect to="/admin/automations" />} />
         <Route path="/admin/workflows" component={() => <OpsLayout><WorkflowsLogsPage mode="workflows" /></OpsLayout>} />
         <Route path="/admin/audit-logs" component={() => <OpsLayout><WorkflowsLogsPage mode="audit" /></OpsLayout>} />
         <Route path="/admin/acquisition" component={() => <Redirect to="/admin" />} />

@@ -16,6 +16,7 @@ export interface Me {
   email: string;
   role: 'USER' | 'ORGANIZER' | 'ADMIN';
   roles?: string[];
+  accountType?: 'attendee' | 'organiser' | 'admin';
   emailVerified?: boolean;
   // Profile fields returned by GET /api/auth/me (UserOut).
   country?: string | null;

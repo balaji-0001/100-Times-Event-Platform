@@ -127,8 +127,11 @@ export function DashboardPage() {
   // Only surface failures that actually just happened — picking the highest-id failed run
   // across all history kept resurfacing a month-old, long-superseded failure forever.
   const RECENT_FAILURE_WINDOW_MS = 24 * 60 * 60 * 1000;
+  // A run cut short by a backend restart isn't a failure of the agent: it stays in run
+  // history with that reason, but isn't raised here.
+  const INTERRUPTED_BY_RESTART = 'Interrupted by a server restart';
   const recentFailures = runs
-    .filter((r) => r.status === 'failed' && Date.now() - (parseDate(r.startedAt)?.getTime() ?? 0) < RECENT_FAILURE_WINDOW_MS)
+    .filter((r) => r.status === 'failed' && r.error !== INTERRUPTED_BY_RESTART && Date.now() - (parseDate(r.startedAt)?.getTime() ?? 0) < RECENT_FAILURE_WINDOW_MS)
     .sort((a, b) => b.id - a.id);
 
   const attention: Attention[] = [];
@@ -142,11 +145,7 @@ export function DashboardPage() {
       ? { id, tone: 'danger', text: `Discovery run #${r.id} failed (${fmtDateTime(r.startedAt)}): ${r.error ?? 'no error recorded'}`, href: `/admin/discover/runs/${r.id}`, action: 'Open report' }
       : { id, tone: 'danger', text: `Outreach batch #${r.id} failed (${fmtDateTime(r.startedAt)}): ${r.error ?? 'no error recorded'}`, href: '/admin/discover/runs?agent=outreach', action: 'View batches' });
   }
-  const failingSources = (catalog.data?.sources ?? []).filter((s) => s.implemented && s.enabled_by_admin && s.health.status === 'failed');
-  if (failingSources.length) {
-    const names = failingSources.slice(0, 3).map((s) => s.name).join(', ');
-    attention.push({ id: 'sources', tone: 'warn', text: `${failingSources.length} source${failingSources.length === 1 ? '' : 's'} failed in their last run or check: ${names}${failingSources.length > 3 ? ` +${failingSources.length - 3} more` : ''}.`, href: '/admin/discover/configuration#sources', action: 'Check sources' });
-  }
+  // Per-source health is shown on the configuration page, not as a dashboard alert.
   // Last call FAILED / RATE_LIMITED, or paused by the circuit breaker (SKIPPED isn't a failure).
   const failingProviders = (catalog.data?.providers ?? []).filter((p) => p.configured && (p.cooling_down_seconds > 0 || p.last_call.status === 'FAILED' || p.last_call.status === 'RATE_LIMITED'));
   if (failingProviders.length) {
@@ -169,7 +168,7 @@ export function DashboardPage() {
         items={attention}
         checks={[
           { ok: 'no failed runs in the last 24 hours', known: Boolean(discoveryRuns.data && outreachRuns.data), unknown: discoveryRuns.isLoading || outreachRuns.isLoading ? 'loading run history' : 'run history could not be loaded' },
-          { ok: 'no failing sources or search providers', known: Boolean(catalog.data), unknown: catalog.isLoading ? 'loading source health' : 'source health could not be loaded' },
+          { ok: 'no failing search providers', known: Boolean(catalog.data), unknown: catalog.isLoading ? 'loading search provider status' : 'search provider status could not be loaded' },
           { ok: 'e-mail sending is configured', known: Boolean(stats.data), unknown: stats.isLoading ? 'loading e-mail status' : 'e-mail status could not be loaded' },
         ]}
         onDismiss={(id) => setDismissed((prev) => [...prev, id])}

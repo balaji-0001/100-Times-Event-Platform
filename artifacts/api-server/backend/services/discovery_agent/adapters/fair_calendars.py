@@ -10,11 +10,6 @@ as plain markup (no schema.org data), checked 2026-10-27:
   organizer. The international list covers its fairs in India, the UAE, Asia.
 - CMT Events (cmtevents.com/main.aspx, robots.txt allows it): conference
   cards with "27-28 Oct, 2026 - Mexico City, MEXICO" and the event page link.
-- Koelnmesse (/current-dates/all-trade-fairs/): `.exh_holder .item` cards
-  with a begin-date attribute, "27.10. - 30.10.2026, Cologne" and the fair's
-  website. Its robots.txt allows general visitors to this page but blocks
-  named AI crawlers (GPTBot, ClaudeBot …); this rule-based reader is not one of
-  them, and the source stays unticked by default — enabling it is the admin's call.
 
 Each keeps upcoming fairs in the run's countries (all when none selected).
 """
@@ -227,37 +222,6 @@ class MesseDuesseldorfAdapter(_CalendarAdapter):
                 "listing_url": page_url,
                 "description": subtitle.get_text(" ", strip=True) if subtitle else None,
                 "organizer": organizer.group(1).strip() if organizer else "Messe Düsseldorf",
-            })
-        return rows
-
-
-class KoelnmesseAdapter(_CalendarAdapter):
-    PAGES = ("https://www.koelnmesse.com/current-dates/all-trade-fairs/",)
-
-    def __init__(self, source_id: str = "koelnmesse", name: str = "Koelnmesse", website_url: str = "https://www.koelnmesse.com/", category: str = "International Exhibition Organizer", config: dict[str, Any] | None = None) -> None:
-        super().__init__(source_id, name, website_url, category, config)
-
-    def parse(self, html: str, page_url: str) -> list[dict[str, Any]]:
-        rows = []
-        for item in BeautifulSoup(html, "html.parser").select(".exh_holder .item"):
-            name = item.select_one(".sort_fairname")
-            when = item.select_one(".date")
-            when_text = when.get_text(" ", strip=True) if when else ""
-            city = when_text.rpartition(",")[2].strip() if "," in when_text else None
-            link = next((a["href"] for a in item.select("a[href]") if a["href"].startswith("http") and "ical" not in a["href"].lower()), None)
-            paragraphs = [p.get_text(" ", strip=True) for p in item.find_all("p") if not p.get("class")]
-            labels = [el.get_text(" ", strip=True) for el in item.select(".inner_category, .inner_branche")]
-            description = next((p for p in paragraphs if p and p != (name.get_text(" ", strip=True) if name else "") and when_text not in p), None)
-            rows.append({
-                "name": name.get_text(" ", strip=True) if name else None,
-                "start": _day(item.get("data-begin-date")),
-                "city": city,
-                "country": "Germany" if (city or "").lower() in ("cologne", "köln") else _country_of_city(city),
-                "url": link,
-                "source_type": "official_event_site" if link else "event_directory",
-                "description": " ".join(filter(None, [description, f"(Koelnmesse sectors: {', '.join(labels)})" if labels else None])) or None,
-                "organizer": "Koelnmesse",
-                "organizer_url": "https://www.koelnmesse.com/",
             })
         return rows
 

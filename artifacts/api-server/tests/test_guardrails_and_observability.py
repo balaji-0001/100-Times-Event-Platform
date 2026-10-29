@@ -99,7 +99,8 @@ def test_observability_endpoints(client: TestClient, db_session):
     resp_agents = client.get("/api/admin/observability/agents", headers=headers)
     assert resp_agents.status_code == 200
     agents = resp_agents.json()
-    assert len(agents) >= 4
+    # Only real agents: social promotion and attendee reminders are automations.
+    assert [a["id"] for a in agents] == ["discovery", "trust", "outreach"]
 
     # 3. Traces
     resp_traces = client.get("/api/admin/observability/traces", headers=headers)

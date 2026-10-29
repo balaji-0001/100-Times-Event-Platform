@@ -65,7 +65,7 @@ class SearchToolAdapter(BaseSourceAdapter):
         candidates: list[ExtractedEventCandidate] = []
         city = (config.cities[0] if config.cities else "")
         target_country = config.country or (config.countries[0] if config.countries else "Worldwide")
-        categories = config.categories or ["Technology", "Construction"]
+        categories = [c for c in (config.categories or []) if c != "Technology"] or ["Construction"]
         time_hint = _date_hint_for_config(config)
 
         # Build smart queries covering selected sectors, synonyms, locations, and date ranges

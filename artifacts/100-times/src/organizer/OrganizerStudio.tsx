@@ -31,6 +31,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { Link, useLocation } from 'wouter';
+import { DescriptionAssistant } from './DescriptionAssistant';
 import { EventPictureField } from './EventPictureField';
 
 const ORGANIZER_LIFECYCLE_STAGES = [
@@ -813,6 +814,27 @@ function MultiStepEventWizard({
                   data-testid="input-event-description"
                 />
               </label>
+              <DescriptionAssistant
+                fields={{
+                  title: form.title,
+                  eventType: form.eventType,
+                  sector: categories.find((c) => c.slug === form.category)?.name,
+                  format: form.format,
+                  startDate: form.startDate,
+                  endDate: form.endDate,
+                  startTime: form.startTime,
+                  city: form.city,
+                  country: form.country,
+                  venue: form.fullAddress,
+                  organizerName: form.organizerName,
+                  organizationName: form.organizationName,
+                  // Blank or 0 is submitted as a free event (see buildPayload).
+                  price: Number(form.price.trim()) > 0 ? `${form.price.trim()} (currency not specified)` : 'Free',
+                  targetAudience: form.targetAudience,
+                }}
+                currentDescription={form.description}
+                onUse={(text) => setForm((f) => ({ ...f, description: text }))}
+              />
             </div>
 
             <label className="block text-xs font-semibold text-muted-foreground">

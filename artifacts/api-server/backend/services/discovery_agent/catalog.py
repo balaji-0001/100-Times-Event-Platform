@@ -33,8 +33,8 @@ _ALL_TOKENS = {"all", "all_sources", "all_operational"}
 _LEGACY_WEB_TOKENS = {"google_search", "bing_search", "search_research_tool"}
 
 # Public listing sites read through their own city pages.
-AGGREGATOR_IDS = ("eventbrite", "meetup", "allevents", "skillboxes")
-_AGGREGATOR_HOSTS = (("allevents.in", "allevents"), ("eventbrite.", "eventbrite"), ("meetup.com", "meetup"), ("skillboxes.com", "skillboxes"))
+AGGREGATOR_IDS = ("eventbrite", "meetup", "allevents")
+_AGGREGATOR_HOSTS = (("allevents.in", "allevents"), ("eventbrite.", "eventbrite"), ("meetup.com", "meetup"))
 
 CHANNELS = (
     {"id": "web", "token": WEB_TOKEN, "name": "General Web Search",
@@ -172,7 +172,7 @@ def plan_sources(requested: set[str], countries: list[str] | None, disabled: set
             else:
                 plan.aggregators.append(sid)
 
-    priority = ["dev_events", "wikicfp", "dwtc_events", "excel_london", "javits_center", "mccormick_place", "messe_frankfurt_venue", "india_expo_centre", "gtr_events", "ieee_events", "acm", "rx_global", "informa_markets", "terrapinn", "messe_frankfurt_org", "dmg_events", "dwtc_org", "us_ita", "indian_trade_portal"]
+    priority = ["wikicfp", "dwtc_events", "excel_london", "javits_center", "mccormick_place", "messe_frankfurt_venue", "india_expo_centre", "gtr_events", "ieee_events", "rx_global", "informa_markets", "terrapinn", "messe_frankfurt_org", "dmg_events", "dwtc_org", "us_ita", "indian_trade_portal"]
     plan.adapters = [s for s in priority if s in plan.adapters] + sorted(s for s in plan.adapters if s not in priority)
     return plan
 

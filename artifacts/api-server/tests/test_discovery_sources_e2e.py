@@ -70,8 +70,8 @@ def test_catalog_lists_every_channel_provider_and_source_with_real_states(client
     assert "retired" in providers["bing_search"]["unavailable_reason"]
 
     sources = {s["id"]: s for s in data["sources"]}
-    assert {"dev_events", "wikicfp", "dwtc_events", "rx_global"} <= {sid for sid, s in sources.items() if s["channel"] == "directories"}
-    assert {"eventbrite", "meetup", "allevents", "skillboxes"} <= {sid for sid, s in sources.items() if s["channel"] == "aggregators"}
+    assert {"clocate", "wikicfp", "dwtc_events", "rx_global"} <= {sid for sid, s in sources.items() if s["channel"] == "directories"}
+    assert {"eventbrite", "meetup", "allevents"} <= {sid for sid, s in sources.items() if s["channel"] == "aggregators"}
     # Placeholder API adapters are listed as what they are, never as active sources.
     assert sources["eventbrite_api"]["implemented"] is False and sources["eventbrite_api"]["health"]["status"] == "not_implemented"
     assert sources["ticketmaster_api"]["configured"] is False
@@ -276,18 +276,18 @@ def test_placeholder_api_adapter_never_reports_success_even_with_a_key(monkeypat
 
 
 def test_only_ticked_sources_run_inside_an_enabled_channel():
-    plan = catalog.plan_sources({"global_adapters", "dev_events", "consumer_aggregators", "meetup"}, ["India"])
-    assert plan.adapters == ["dev_events"] and plan.aggregators == ["meetup"]
+    plan = catalog.plan_sources({"global_adapters", "clocate", "consumer_aggregators", "meetup"}, ["India"])
+    assert plan.adapters == ["clocate"] and plan.aggregators == ["meetup"]
 
 
 def test_a_disabled_channel_runs_none_of_its_sources_even_if_ticked():
-    plan = catalog.plan_sources({"web", "dev_events", "wikicfp", "allevents"}, ["India"])
+    plan = catalog.plan_sources({"web", "clocate", "wikicfp", "allevents"}, ["India"])
     assert plan.adapters == [] and plan.aggregators == [] and plan.channels == {"web": True, "directories": False, "aggregators": False}
 
 
 def test_channel_token_alone_means_its_default_sources():
     plan = catalog.plan_sources({"global_adapters"}, [])
-    assert "dev_events" in plan.adapters and "eventbrite_api" not in plan.adapters
+    assert "clocate" in plan.adapters and "eventbrite_api" not in plan.adapters
 
 
 # ---------------------------------------------------------------------------
@@ -298,7 +298,7 @@ def test_channel_token_alone_means_its_default_sources():
 def _run_config(**overrides):
     values = dict(
         cities=["Pune"], countries=["India"], country="India", categories=["Construction"],
-        sources=["web", "global_adapters", "dev_events", "wikicfp", "eventseye", "consumer_aggregators", "allevents"],
+        sources=["web", "global_adapters", "clocate", "wikicfp", "eventseye", "consumer_aggregators", "allevents"],
         listing_urls=["https://allevents.in/{city}"], search_depth=2, sources_per_query=2, daily_limit=500,
         require_organizer_email=True, reject_no_organizer=True, min_confidence_score=0, target_valid_events=None,
     )
@@ -318,7 +318,7 @@ def _wire_run(monkeypatch, db_session=None):
         return []
 
     _stub(monkeypatch, "exa_search", exa)
-    dev, cfp, eye = (adapter_manager.get_adapter(s) for s in ("dev_events", "wikicfp", "eventseye"))
+    dev, cfp, eye = (adapter_manager.get_adapter(s) for s in ("clocate", "wikicfp", "eventseye"))
     monkeypatch.setattr(dev, "discover", lambda config, limit=25: [_candidate(1), _candidate(2), _candidate(1)])  # #1 twice
 
     def cfp_down(config, limit=25):
@@ -339,8 +339,8 @@ def test_a_run_records_every_selected_source_and_saves_verified_results(db_sessi
     rows = {r["id"]: r for r in report["sources"]}
 
     # Directories: success with candidates / failure with the reason / success with zero results.
-    assert rows["dev_events"]["status"] == "succeeded" and rows["dev_events"]["candidates"] == 3
-    assert rows["dev_events"]["verified"] == 2 and rows["dev_events"]["duplicates"] == 1
+    assert rows["clocate"]["status"] == "succeeded" and rows["clocate"]["candidates"] == 3
+    assert rows["clocate"]["verified"] == 2 and rows["clocate"]["duplicates"] == 1
     assert rows["wikicfp"]["status"] == "failed" and "HTTP 403" in rows["wikicfp"]["errors"][0]
     assert rows["eventseye"]["status"] == "succeeded" and rows["eventseye"]["candidates"] == 0
     # Aggregator page read OK but listed nothing.
@@ -363,7 +363,7 @@ def test_a_run_records_every_selected_source_and_saves_verified_results(db_sessi
     assert db_session.query(DiscoveredEvent).filter_by(verification_status="VERIFIED").count() == 3
     # Real outcomes are stored as source health for the settings page.
     assert catalog.health_of(db_session.get(EventDiscoverySource, "wikicfp"))["status"] == "failed"
-    assert catalog.health_of(db_session.get(EventDiscoverySource, "dev_events"))["status"] == "ok"
+    assert catalog.health_of(db_session.get(EventDiscoverySource, "clocate"))["status"] == "ok"
     assert catalog.health_of(db_session.get(EventDiscoverySource, "eventseye"))["status"] == "no_events"
 
 
@@ -372,10 +372,10 @@ def test_admin_disabled_source_is_skipped_with_the_reason(db_session, monkeypatc
 
     _wire_run(monkeypatch)
     seed_or_sync_source_registry(db_session)
-    db_session.get(EventDiscoverySource, "dev_events").is_enabled = False
+    db_session.get(EventDiscoverySource, "clocate").is_enabled = False
     db_session.commit()
     summary = orchestrator.run_discovery_agent(db_session, _run_config())
-    row = next(r for r in summary.sources["sources"] if r["id"] == "dev_events")
+    row = next(r for r in summary.sources["sources"] if r["id"] == "clocate")
     assert row["status"] == "skipped" and "Source Registry" in row["reason"] and row["jobs"] == 0
 
 
@@ -433,13 +433,13 @@ def test_ticketmaster_key_is_never_returned_by_the_api(client, db_session, monke
 def test_queued_reads_take_turns_across_sources(db_session, monkeypatch):
     from backend.services.discovery_agent.types import RunSummary
 
-    monkeypatch.setattr(orchestrator, "_select_adapter_ids", lambda requested, countries=None: ["dev_events"])
+    monkeypatch.setattr(orchestrator, "_select_adapter_ids", lambda requested, countries=None: ["clocate"])
     run = AgentRun(agent_type="discovery", status="running", config_snapshot={}, summary={})
     db_session.add(run)
     db_session.commit()
-    cfg = _run_config(cities=["Pune", "Mumbai", "Delhi"], sources=["global_adapters", "dev_events", "consumer_aggregators", "eventbrite", "meetup"],
+    cfg = _run_config(cities=["Pune", "Mumbai", "Delhi"], sources=["global_adapters", "clocate", "consumer_aggregators", "eventbrite", "meetup"],
                       listing_urls=["https://www.eventbrite.com/d/{country}--{city}/events/", "https://www.meetup.com/find/?location={city}"])
     pipe = orchestrator._DiscoveryPipeline(db_session, run, cfg, RunSummary(), ["Construction"], 0)
     pipe.plan()
     first_three = [origin for _, origin, _ in list(pipe.source_jobs)[:3]]
-    assert sorted(first_three) == ["dev_events", "eventbrite", "meetup"]  # one each before any repeats
+    assert sorted(first_three) == ["clocate", "eventbrite", "meetup"]  # one each before any repeats

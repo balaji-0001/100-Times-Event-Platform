@@ -15,6 +15,7 @@ from backend.core.security import create_access_token, hash_password, verify_pas
 from backend.db import get_db
 from backend.dependencies import get_current_user
 from backend.models import (
+    AttendeeProfile,
     AuditLog,
     EmailVerificationToken,
     Event,
@@ -86,10 +87,13 @@ def register(payload: UserInput, response: Response, db: Session = Depends(get_d
     if db.scalar(select(User).where(User.email == email)):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="An account with this email already exists")
 
-    # Security requirement: Never grant organiser or admin privileges merely because
-    # a user selects a role during registration. All accounts initialize as USER (attendee).
-    # Organiser status is granted via formal onboarding or admin review.
-    role = "USER"
+    # Attendee and organiser accounts are separate and the type is fixed at sign-up
+    # (`accountType`); a raw `role` in the payload is ignored and ADMIN is never
+    # self-assigned. An organiser account can list events, which still go through
+    # trust review and an admin before anything is published.
+    is_organiser = payload.account_type == "organiser"
+    role = "ORGANIZER" if is_organiser else "USER"
+    company = (payload.company or "").strip() or None
 
     user = User(
         name=payload.name.strip(),
@@ -97,13 +101,19 @@ def register(payload: UserInput, response: Response, db: Session = Depends(get_d
         password_hash=hash_password(payload.password),
         country=payload.country,
         role=role,
-        roles_list=["attendee"],
+        roles_list=["organiser"] if is_organiser else ["attendee"],
         email_verified=False,
-        company=payload.company,
+        company=company if is_organiser else None,
     )
     db.add(user)
     try:
         db.flush()
+        if is_organiser:
+            from backend.routes.platform_ops import _ensure_organizer_and_profile
+
+            _ensure_organizer_and_profile(db, user)
+        else:
+            db.add(AttendeeProfile(user_id=user.id, country=payload.country, company=company))
 
         # Generate single-use expiring email verification token (24 hours)
         raw_verification_token = secrets.token_urlsafe(32)
@@ -142,7 +152,7 @@ def register(payload: UserInput, response: Response, db: Session = Depends(get_d
             action="USER_SIGNUP",
             entity="User",
             entity_id=user.id,
-            metadata={"role": role, "company": payload.company, "email_verified": False},
+            metadata={"role": role, "account_type": payload.account_type, "company": company, "email_verified": False},
         )
         db.commit()
         db.refresh(user)

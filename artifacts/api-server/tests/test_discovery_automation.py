@@ -74,9 +74,9 @@ def test_blocked_search_raises(monkeypatch, status, body):
 
 # --- Best-effort text reader -------------------------------------------------------
 
-_PLAIN_EVENT_PAGE = f"""<html><head><title>Bengaluru Tech Summit {NEXT_YEAR} | BTS</title>
-<meta property="og:title" content="Bengaluru Tech Summit {NEXT_YEAR}"></head><body>
-<h1>Bengaluru Tech Summit {NEXT_YEAR}</h1>
+_PLAIN_EVENT_PAGE = f"""<html><head><title>Bengaluru Healthcare Summit {NEXT_YEAR} | BTS</title>
+<meta property="og:title" content="Bengaluru Healthcare Summit {NEXT_YEAR}"></head><body>
+<h1>Bengaluru Healthcare Summit {NEXT_YEAR}</h1>
 <p>Held on 1 January 2020 for the first time.</p>
 <p>Dates: 18-20 November {NEXT_YEAR}</p>
 <p>Venue: Bangalore International Exhibition Centre (BIEC), Tumkur Road</p>
@@ -91,7 +91,7 @@ def test_best_effort_reads_title_first_upcoming_date_and_venue():
     event = text_extractor.extract_best_effort(_source(), _PLAIN_EVENT_PAGE, cities=["Bengaluru", "Mumbai"])
 
     assert event is not None
-    assert event.name == f"Bengaluru Tech Summit {NEXT_YEAR}"
+    assert event.name == f"Bengaluru Healthcare Summit {NEXT_YEAR}"
     assert event.date == f"{NEXT_YEAR}-11-18"  # the past 2020 date is skipped
     assert event.venue == "Bangalore International Exhibition Centre (BIEC), Tumkur Road"
     assert event.city == "Bengaluru"
@@ -171,7 +171,7 @@ def test_page_without_structured_data_or_event_links_falls_back_to_best_effort(m
 
 
 def _config(**overrides) -> DiscoveryConfig:
-    values = dict(cities=["Bengaluru"], states=[], categories=["Technology"], search_depth=2, sources_per_query=3,
+    values = dict(cities=["Bengaluru"], states=[], categories=["Healthcare"], search_depth=2, sources_per_query=3,
                   daily_limit=200, confidence_threshold=60, listing_urls=[], events_per_listing=10, require_organizer_email=False)
     values.update(overrides)
     return DiscoveryConfig(**values)
@@ -200,10 +200,10 @@ def test_run_searches_the_web_and_stores_events_without_ai(db_session, monkeypat
 
 
 def test_blocked_search_keeps_listing_results_and_reports_it(db_session, monkeypatch):
-    # The run is scoped to Technology, so the listed event has to be a technology one
+    # The run is scoped to Healthcare, so the listed event has to be a healthcare one
     # ("Startup Mixer" reads as Finance and would be set aside as off-sector).
     listing = "https://allevents.in/bangalore"
-    event_node = {"@type": "Event", "name": "AI Developer Mixer", "url": "https://allevents.in/bangalore/ai-developer-mixer/1", "startDate": f"{NEXT_YEAR}-03-01",
+    event_node = {"@type": "Event", "name": "Hospital Doctors Mixer", "url": "https://allevents.in/bangalore/hospital-doctors-mixer/1", "startDate": f"{NEXT_YEAR}-03-01",
                   "location": {"name": "WeWork Galaxy", "address": {"addressLocality": "Bengaluru"}}}
     _serve(monkeypatch, {listing: "<html><head>" + _ld(event_node) + "</head></html>"})
     _no_organizer(monkeypatch)

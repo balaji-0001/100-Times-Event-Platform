@@ -1,8 +1,9 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'wouter';
-import { CalendarSearch, ChevronRight, Compass, Database, LayoutDashboard, Mail, Search, Settings2, SlidersHorizontal, Sparkles, X } from 'lucide-react';
+import { CalendarSearch, ChevronRight, Compass, Database, LayoutDashboard, Mail, Search, Settings2, SlidersHorizontal, Sparkles, X, Zap } from 'lucide-react';
 import { useDebounce, cx, Kicker, LoadingState, StatusBadge, Badge } from './ui';
 import { useDiscoveredEvents, useDiscoveredOrganizers, useMe, useOutreachMessages } from './api';
+import { accountTypeOf, homePathFor } from '@/lib/account';
 
 const TOKEN_KEY = '100-times-auth-token';
 
@@ -47,7 +48,7 @@ function RequireAdmin({ children }: { children: ReactNode }) {
           You are signed in as <strong>{me.data?.email}</strong>. This operational console is restricted to verified administrators.
         </p>
         <div className="mt-6 flex flex-wrap justify-center gap-3">
-          <Link href="/dashboard" className="rounded-full bg-primary px-6 py-3 text-sm font-bold text-primary-foreground hover:bg-accent">
+          <Link href={homePathFor(accountTypeOf(me.data))} className="rounded-full bg-primary px-6 py-3 text-sm font-bold text-primary-foreground hover:bg-accent">
             Return to Dashboard
           </Link>
           <Link
@@ -120,10 +121,13 @@ const NAV: NavGroup[] = [
   },
   {
     title: 'Agents', icon: Sparkles, items: [
-      { label: 'Social promotion', href: '/admin/social-promotions' },
       { label: 'Trust agent', href: '/admin/trust-review' },
-      { label: 'Attendee agent', href: '/admin/attendee-agent' },
-      { label: 'Automations', href: '/admin/automations' },
+    ],
+  },
+  {
+    title: 'Automations', icon: Zap, items: [
+      { label: 'All automations', href: '/admin/automations' },
+      { label: 'Social promotion', href: '/admin/social-promotions' },
     ],
   },
   {

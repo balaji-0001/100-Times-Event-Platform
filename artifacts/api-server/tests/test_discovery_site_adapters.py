@@ -136,7 +136,7 @@ def test_informa_feed_gives_official_sites_sector_labels_and_informa_as_organize
     assert "HTTP 503" in str(exc.value)
 
 
-# --- Expolya / Messe Düsseldorf / Koelnmesse calendars ------------------------
+# --- Expolya / Messe Düsseldorf calendars ------------------------------------
 
 EXPOLYA = f"""<div class="ann-list">
 <a class="salon-card" data-secteurs="Construction &amp; Architecture" data-pays="AE" data-date="{NEXT}-11-23" href="/expo/big-5-global">
@@ -154,23 +154,11 @@ DUESSELDORF = f"""<ul class="dim-list">
  <a href="https://www.metec-india.com">Website</a><a href="https://db.messe-duesseldorf.com/kati-cgi/kati/x.ics">iCal</a></li>
 </ul>"""
 
-KOELN = f"""<div class="exh_holder">
-<div class="item dubai" data-begin-date="{NEXT}-11-03 00:00:00"><div class="inner">
- <strong class="label sort_category inner_category">Food and Food Technology</strong>
- <div class="img_holder"><a href="https://www.ism-middleeast.com/"><img alt="ISM"></a></div>
- <p><strong class="sort_fairname">ISM Middle East</strong><br><span class="date">03.11. - 05.11.{NEXT}, Dubai</span></p>
- <p>The leading trade fair for sweets and snacks in the Middle East</p>
- <p class="bot"><a href="https://www.koelnmesse.de/ical-generator/x">Calendar entry</a></p></div></div>
-</div>"""
-
-
 @pytest.mark.parametrize("sid, html, config, expected", [
     ("expolya", EXPOLYA, DiscoveryConfig(countries=["United Arab Emirates"]),
      [("Big 5 Global", f"{NEXT}-11-23", "Dubai", "United Arab Emirates", "https://expolya.com/expo/big-5-global")]),
     ("messe_duesseldorf", DUESSELDORF, DiscoveryConfig(countries=["India"]),
      [("METEC India", f"{NEXT}-11-30", "Mumbai", "India", "https://www.metec-india.com")]),
-    ("koelnmesse", KOELN, DiscoveryConfig(countries=["United Arab Emirates"]),
-     [("ISM Middle East", f"{NEXT}-11-03", "Dubai", "United Arab Emirates", "https://www.ism-middleeast.com/")]),
 ])
 def test_fair_calendar_readers(monkeypatch, sid, html, config, expected):
     adapter = adapter_manager.get_adapter(sid)

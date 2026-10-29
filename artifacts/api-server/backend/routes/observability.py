@@ -128,8 +128,8 @@ def observability_agents(
         {"id": "discovery", "name": "Event Discovery Agent", "category": "Ingestion"},
         {"id": "trust", "name": "Trust & Safety Agent", "category": "Verification"},
         {"id": "outreach", "name": "Organizer Outreach Agent", "category": "Acquisition"},
-        {"id": "attendee", "name": "AI Concierge & Matcher", "category": "Attendee"},
-        {"id": "promotions", "name": "Social Promotions Agent", "category": "Distribution"},
+        # Social promotion and attendee reminders are automations, not agents:
+        # they're listed on the Automations page.
     ]
 
     out = []
@@ -330,6 +330,109 @@ def observability_errors(
     return items[:limit]
 
 
+def _search_provider_usage(db: Session) -> dict[str, Any]:
+    """Web search providers (Exa, Brave, SearXNG, …) as used by discovery runs.
+
+    Totals come only from what each run recorded in its source report
+    (`agent_runs.summary.sources`): calls, successes, failures, results and the
+    cost the provider itself reported. A provider that doesn't report a price
+    (e.g. Brave) has `costUsd: null` — no estimate is made."""
+    from backend.services.discovery_agent.search_providers.engine import search_engine
+
+    totals: dict[str, dict[str, Any]] = {}
+    runs_counted = 0
+    for run in db.scalars(select(AgentRun).where(AgentRun.agent_type == "discovery").order_by(AgentRun.id)).all():
+        rows = ((run.summary or {}).get("sources") or {}).get("sources") or []
+        if not rows:
+            continue
+        runs_counted += 1
+        for row in rows:
+            if row.get("kind") != "search_provider" or not row.get("calls"):
+                continue
+            t = totals.setdefault(row["id"], {
+                "runs": 0, "calls": 0, "successes": 0, "failures": 0, "rateLimited": 0, "results": 0,
+                "costUsd": None, "lastUsedAt": None,
+            })
+            t["runs"] += 1
+            t["calls"] += row.get("calls") or 0
+            t["successes"] += row.get("jobs_ok") or 0
+            t["failures"] += row.get("jobs_failed") or 0
+            t["rateLimited"] += row.get("rate_limited") or 0
+            t["results"] += row.get("results") or 0
+            if row.get("cost_usd") is not None:
+                t["costUsd"] = round((t["costUsd"] or 0) + float(row["cost_usd"]), 4)
+            used_at = row.get("finished_at")
+            if not isinstance(used_at, str):
+                used_at = (run.completed_at or run.started_at).isoformat()
+            if not t["lastUsedAt"] or used_at > t["lastUsedAt"]:
+                t["lastUsedAt"] = used_at
+
+    providers = []
+    for pid, provider in search_engine.providers.items():
+        usage = totals.pop(pid, None)
+        providers.append({
+            "id": pid,
+            "name": provider.display_name or provider.provider_name,
+            "isFree": bool(provider.is_free),
+            "configured": bool(provider.is_configured()),
+            "unavailableReason": provider.unavailable_reason(),
+            **(usage or {"runs": 0, "calls": 0, "successes": 0, "failures": 0, "rateLimited": 0, "results": 0, "costUsd": None, "lastUsedAt": None}),
+        })
+    # Usage recorded for a provider no longer registered is still real usage.
+    for pid, usage in totals.items():
+        providers.append({"id": pid, "name": pid, "isFree": False, "configured": False, "unavailableReason": "No longer available", **usage})
+    return {"runsCounted": runs_counted, "providers": providers}
+
+
+def _legacy_run_usage(summary: dict[str, Any]) -> dict[str, Any]:
+    """A run saved before per-run usage tracking: only its search-provider
+    rows exist (in the usage block's shape here; `reprice` prices them).
+    Queries and AI tokens weren't recorded, so they stay unknown."""
+    rows = [r for r in ((summary.get("sources") or {}).get("sources") or []) if r.get("kind") == "search_provider"]
+    return {
+        "queries": None,
+        "ai_models": None,
+        "valid_events": summary.get("verified_events") or 0,
+        "search_providers": [{
+            "id": r["id"], "name": r.get("name") or r["id"], "calls": r.get("calls") or 0, "successes": r.get("jobs_ok") or 0,
+            "failures": r.get("jobs_failed") or 0, "rate_limited": r.get("rate_limited") or 0, "results": r.get("results") or 0,
+            "cost_usd": r.get("cost_usd"), "cost_basis": "reported_by_provider" if r.get("cost_usd") is not None else "unknown",
+        } for r in rows],
+    }
+
+
+def _discovery_run_usage(db: Session, limit: int = 50) -> dict[str, Any]:
+    """Each discovery run's own usage and estimated cost, newest first, from
+    what the run stored in `agent_runs.summary["usage"]`. Runs saved before
+    this tracking existed show their search-provider calls only (`tracked: false`)."""
+    from backend.services.discovery_agent import run_usage
+    from backend.services.discovery_agent.search_providers.engine import search_engine
+
+    runs = db.scalars(
+        select(AgentRun).where(AgentRun.agent_type == "discovery").order_by(desc(AgentRun.id)).limit(limit)
+    ).all()
+    history = []
+    for run in runs:
+        summary = run.summary or {}
+        usage = summary.get("usage") or None
+        tracked = bool(usage)
+        if not tracked:
+            if not ((summary.get("sources") or {}).get("sources")):
+                continue  # nothing was recorded for this run (e.g. it failed before searching)
+            usage = _legacy_run_usage(summary)
+        usage = run_usage.reprice(usage, search_engine.providers)  # stored counts, today's prices
+        history.append({
+            "runId": run.id,
+            "status": run.status,
+            "startedAt": run.started_at.isoformat() if run.started_at else None,
+            "completedAt": run.completed_at.isoformat() if run.completed_at else None,
+            "tracked": tracked,
+            "validEvents": summary.get("verified_events") or 0,
+            **usage,
+        })
+    return {"latest": history[0] if history else None, "history": history}
+
+
 @router.get("/ai-usage")
 def observability_ai_usage(
     db: Session = Depends(get_db),
@@ -339,17 +442,24 @@ def observability_ai_usage(
     # Only what executions actually recorded: no per-run estimates, no assumed models.
     model_breakdown: dict[str, dict[str, Any]] = {}
     for m in db.scalars(select(AgentExecutionMetric).limit(5000)).all():
-        b = model_breakdown.setdefault(m.model_name or "unknown model", {"calls": 0, "promptTokens": 0, "completionTokens": 0, "totalTokens": 0, "costUsd": 0.0})
-        b["calls"] += 1
+        if (m.model_name or "").startswith("none ("):
+            continue  # a run that called no AI model (its search cost is under web search providers)
+        meta = m.meta_json or {}
+        b = model_breakdown.setdefault(m.model_name or "unknown model", {"calls": 0, "promptTokens": 0, "completionTokens": 0, "totalTokens": 0, "costUsd": 0.0, "costComplete": True})
+        b["calls"] += int(meta.get("calls") or 1)  # a discovery run stores one row per model with its call count
         b["promptTokens"] += m.prompt_tokens or 0
         b["completionTokens"] += m.completion_tokens or 0
         b["totalTokens"] += m.total_tokens or 0
         b["costUsd"] = round(b["costUsd"] + float(m.estimated_cost or 0), 5)
+        if meta.get("cost_known") is False:
+            b["costComplete"] = False
 
     filtered_models = {k: v for k, v in model_breakdown.items() if v["calls"] > 0}
 
     return {
         "models": filtered_models,
+        "searchProviders": _search_provider_usage(db),
+        "discoveryRuns": _discovery_run_usage(db),
         "currency": "USD",
         "lastUpdated": datetime.now(timezone.utc).isoformat(),
     }

@@ -25,7 +25,9 @@ keys never appear in any error message, return value, or log line.
 import copy
 import json
 import logging
+import threading
 import time
+from collections import deque
 from typing import Any
 from urllib.parse import urlparse
 
@@ -50,6 +52,56 @@ _PROVIDER_KEY_ENV = {PROVIDER_GEMINI: "GEMINI_API_KEY", PROVIDER_ANTHROPIC: "ANT
 class AIClientError(Exception):
     """Raised when the AI provider is not configured, or a call fails
     unrecoverably (auth error, network error, malformed model output)."""
+
+
+# Token usage of the requests made on this thread, exactly as each provider
+# reported it. A caller that wants to attribute usage (e.g. a discovery run's
+# search engine) calls `drain_usage()` before and after its work; bounded so
+# threads whose callers never drain don't grow it.
+_usage_local = threading.local()
+
+
+def _usage_buffer() -> deque:
+    buf = getattr(_usage_local, "calls", None)
+    if buf is None:
+        buf = _usage_local.calls = deque(maxlen=50)
+    return buf
+
+
+def _note_usage(provider: str, model: str, *, ok: bool, prompt: int = 0, completion: int = 0, total: int | None = None) -> None:
+    _usage_buffer().append({
+        "provider": provider,
+        "model": model,
+        "ok": ok,
+        "prompt_tokens": int(prompt or 0),
+        "completion_tokens": int(completion or 0),
+        "total_tokens": int(total if total is not None else (prompt or 0) + (completion or 0)),
+    })
+
+
+def drain_usage() -> list[dict[str, Any]]:
+    """Every request recorded on this thread since the last drain, then clears."""
+    buf = _usage_buffer()
+    calls = list(buf)
+    buf.clear()
+    return calls
+
+
+def _note_anthropic_usage(model: str, response: Any) -> None:
+    usage = getattr(response, "usage", None)
+    prompt = sum(getattr(usage, f, None) or 0 for f in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
+    _note_usage(PROVIDER_ANTHROPIC, getattr(response, "model", None) or model, ok=True, prompt=prompt,
+                completion=getattr(usage, "output_tokens", None) or 0)
+
+
+def _note_gemini_usage(model: str, response: Any) -> None:
+    meta = getattr(response, "usage_metadata", None)
+    # Billed input includes the search results grounding fed back to the model;
+    # billed output includes thinking tokens.
+    prompt = (getattr(meta, "prompt_token_count", None) or 0) + (getattr(meta, "tool_use_prompt_token_count", None) or 0)
+    completion = (getattr(meta, "candidates_token_count", None) or 0) + (getattr(meta, "thoughts_token_count", None) or 0)
+    _note_usage(PROVIDER_GEMINI, getattr(response, "model_version", None) or model, ok=True, prompt=prompt, completion=completion,
+                total=getattr(meta, "total_token_count", None))
 
 
 def not_configured_message(settings: Settings | None = None) -> str:
@@ -127,6 +179,17 @@ class AnthropicAIClient(AIClient):
             self._client = Anthropic(api_key=get_settings().anthropic_api_key)
         return self._client
 
+    def _create(self, **kwargs: Any) -> Any:
+        """One Messages API request; records its token usage for attribution."""
+        client = self._get_client()
+        try:
+            response = client.messages.create(model=self.model, **kwargs)
+        except AnthropicAPIError as exc:
+            _note_usage(PROVIDER_ANTHROPIC, self.model, ok=False)
+            raise AIClientError(f"Anthropic API call failed: {exc}") from exc
+        _note_anthropic_usage(self.model, response)
+        return response
+
     def generate_structured(
         self,
         system: str,
@@ -139,18 +202,13 @@ class AnthropicAIClient(AIClient):
         """Forces the model to respond via a single tool call matching
         `input_schema`, and returns that call's parsed input directly —
         far more reliable than asking the model to emit raw JSON text."""
-        client = self._get_client()
-        try:
-            response = client.messages.create(
-                model=self.model,
-                max_tokens=max_tokens,
-                system=system,
-                messages=[{"role": "user", "content": user}],
-                tools=[{"name": tool_name, "description": tool_description, "input_schema": input_schema}],
-                tool_choice={"type": "tool", "name": tool_name},
-            )
-        except AnthropicAPIError as exc:
-            raise AIClientError(f"Anthropic API call failed: {exc}") from exc
+        response = self._create(
+            max_tokens=max_tokens,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+            tools=[{"name": tool_name, "description": tool_description, "input_schema": input_schema}],
+            tool_choice={"type": "tool", "name": tool_name},
+        )
 
         for block in response.content:
             if block.type == "tool_use" and block.name == tool_name:
@@ -174,19 +232,14 @@ class AnthropicAIClient(AIClient):
         `web_search_tool_result` blocks the API returned, never invented.
         An empty `citations` list is a legitimate, honest outcome (the model
         found nothing useful), not a failure."""
-        client = self._get_client()
-        try:
-            response = client.messages.create(
-                model=self.model,
-                max_tokens=max_tokens,
-                system=system,
-                messages=[{"role": "user", "content": user}],
-                tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": max_uses}],
-            )
-        except AnthropicAPIError as exc:
-            raise AIClientError(f"Anthropic API call failed: {exc}") from exc
+        response = self._create(
+            max_tokens=max_tokens,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+            tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": max_uses}],
+        )
 
-        text = "".join(block.text for block in response.content if block.type == "text").strip()
+        text ="".join(block.text for block in response.content if block.type == "text").strip()
 
         citations: list[dict[str, str]] = []
         seen_urls: set[str] = set()
@@ -206,17 +259,7 @@ class AnthropicAIClient(AIClient):
         return {"text": text, "citations": citations}
 
     def generate_text(self, system: str, user: str, max_tokens: int = 512) -> str:
-        client = self._get_client()
-        try:
-            response = client.messages.create(
-                model=self.model,
-                max_tokens=max_tokens,
-                system=system,
-                messages=[{"role": "user", "content": user}],
-            )
-        except AnthropicAPIError as exc:
-            raise AIClientError(f"Anthropic API call failed: {exc}") from exc
-
+        response = self._create(max_tokens=max_tokens, system=system, messages=[{"role": "user", "content": user}])
         return "".join(block.text for block in response.content if block.type == "text").strip()
 
     def ping(self) -> dict[str, Any]:
@@ -375,11 +418,15 @@ class GeminiAIClient(AIClient):
     def _generate(self, contents: str, config: genai_types.GenerateContentConfig) -> genai_types.GenerateContentResponse:
         client = self._get_client()
         try:
-            return client.models.generate_content(model=self.model, contents=contents, config=config)
+            response = client.models.generate_content(model=self.model, contents=contents, config=config)
         except genai_errors.APIError as exc:
+            _note_usage(PROVIDER_GEMINI, self.model, ok=False)
             raise AIClientError(f"Gemini API call failed: {_describe_gemini_error(exc)}") from exc
         except httpx.HTTPError as exc:  # transport-level failure — still an honest AI failure to callers
+            _note_usage(PROVIDER_GEMINI, self.model, ok=False)
             raise AIClientError(f"Gemini API call failed: {type(exc).__name__}") from exc
+        _note_gemini_usage(self.model, response)
+        return response
 
     @staticmethod
     def _text_of(response: genai_types.GenerateContentResponse) -> str:

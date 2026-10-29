@@ -40,18 +40,28 @@ class User(Base):
     reviews: Mapped[list["Review"]] = relationship(back_populates="user")
     notifications: Mapped[list["Notification"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     schedule_items: Mapped[list["ScheduleItem"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    attendee_profile: Mapped["AttendeeProfile | None"] = relationship(back_populates="user", uselist=False, cascade="all, delete-orphan")
 
     @property
     def roles(self) -> list[str]:
-        assigned = set(self.roles_list or [])
+        # An account is EITHER an attendee or an organiser, decided only by `role`.
+        # `roles_list` is legacy data (older onboarding wrote "attendee" into it for
+        # organisers) and never grants anything. Admins can open every area.
         primary = (self.role or "USER").upper()
         if primary == "ADMIN":
-            assigned.update(["admin", "organiser", "organizer", "attendee", "user"])
-        elif primary in ("ORGANIZER", "ORGANISER"):
-            assigned.update(["organiser", "organizer", "attendee", "user"])
-        else:
-            assigned.update(["attendee", "user"])
-        return sorted(list(assigned))
+            return ["admin", "attendee", "organiser", "organizer", "user"]
+        if primary in ("ORGANIZER", "ORGANISER"):
+            return ["organiser", "organizer"]
+        return ["attendee", "user"]
+
+    @property
+    def account_type(self) -> str:
+        primary = (self.role or "USER").upper()
+        if primary == "ADMIN":
+            return "admin"
+        if primary in ("ORGANIZER", "ORGANISER"):
+            return "organiser"
+        return "attendee"
 
     def has_role(self, *target_roles: str) -> bool:
         user_roles = {r.lower() for r in self.roles}
@@ -1162,6 +1172,27 @@ class PlatformPromotionSetting(Base):
     custom_prompt_template: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class AttendeeProfile(Base):
+    """Personal details of an attendee account, kept apart from organiser data
+    (`organizer_profiles` / `organizers`). Name and e-mail stay on `users`
+    because they are the sign-in identity; everything an attendee shows to
+    other attendees (job title, company, bio, …) lives here."""
+
+    __tablename__ = "attendee_profiles"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    phone: Mapped[str | None] = mapped_column(String(40))
+    city: Mapped[str | None] = mapped_column(Text)
+    country: Mapped[str | None] = mapped_column(Text)
+    job_title: Mapped[str | None] = mapped_column(Text)
+    company: Mapped[str | None] = mapped_column(Text)
+    bio: Mapped[str | None] = mapped_column(Text)
+    linkedin_url: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    user: Mapped["User"] = relationship(back_populates="attendee_profile")
 
 
 class AttendeePreference(Base):

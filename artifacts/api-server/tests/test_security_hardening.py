@@ -94,13 +94,13 @@ def test_event_mutation_idor_blocked(db_session, seeded_catalog):
 def test_proxy_attendee_has_unusable_unique_hash(db_session, seeded_catalog):
     """Verifies proxy registrations generate a unique, unusable hash, preventing credential bleeding."""
     event = seeded_catalog["event"]
-    organizer_user = User(
-        name="Organizer Host",
+    host_user = User(
+        name="Attendee Host",
         email="host@example.com",
-        role="ORGANIZER",
+        role="USER",  # only attendee accounts register for events
         password_hash=hash_password("SuperSecretPass123!"),
     )
-    db_session.add(organizer_user)
+    db_session.add(host_user)
     db_session.flush()
 
     app = FastAPI()
@@ -108,14 +108,14 @@ def test_proxy_attendee_has_unusable_unique_hash(db_session, seeded_catalog):
     app.dependency_overrides[get_db] = lambda: db_session
 
     client = TestClient(app)
-    token = create_access_token(organizer_user.id, "ORGANIZER")
+    token = create_access_token(host_user.id, "USER")
     headers = {"Authorization": f"Bearer {token}"}
 
     # 1. Host registers first
     host_payload = {
-        "firstName": "Organizer",
+        "firstName": "Attendee",
         "lastName": "Host",
-        "email": organizer_user.email,
+        "email": host_user.email,
         "ticketType": "Standard",
     }
     resp1 = client.post(f"/api/events/{event.id}/register", json=host_payload, headers=headers)
@@ -133,8 +133,8 @@ def test_proxy_attendee_has_unusable_unique_hash(db_session, seeded_catalog):
 
     created_guest = db_session.scalar(select(User).where(User.email == "guest_attendee@testcorp.com"))
     assert created_guest is not None
-    # Must NOT copy organizer password hash
-    assert created_guest.password_hash != organizer_user.password_hash
+    # Must NOT copy the host's password hash
+    assert created_guest.password_hash != host_user.password_hash
     # Must NOT be a fixed static string
     assert created_guest.password_hash.startswith("!unusable_")
     # Verify it cannot be authenticated against any password

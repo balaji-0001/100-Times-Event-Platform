@@ -60,6 +60,19 @@ class InstagramPublisher(PlatformPublisher):
             return {"allowed": False, "message": conn.get("message")}
         return {"allowed": True, "message": f"Authorized to publish to Instagram Account {target}."}
 
+    def permalink(self, media_id: str) -> str | None:
+        """The post's public link, as Instagram gives it. A post's URL uses its
+        shortcode (instagram.com/p/<shortcode>/), not the numeric media id the
+        publish call returns, so the link can't be built from the id."""
+        try:
+            resp = httpx.get(f"{_GRAPH_API_BASE}/{media_id}", params={"fields": "permalink", "access_token": self.access_token}, timeout=10)
+            if resp.status_code == 200:
+                link = resp.json().get("permalink")
+                return link if isinstance(link, str) and link.startswith("https://") else None
+        except (httpx.HTTPError, ValueError):
+            pass
+        return None
+
     def publish_reply(self, text: str, target_ref: str) -> PublishResult:
         return PublishResult(success=False, platform=self.platform, published_url=None, message="Instagram comment replies not supported; media feed publishing supported.")
 
@@ -77,7 +90,7 @@ class InstagramPublisher(PlatformPublisher):
             return PublishResult(
                 success=True,
                 platform=self.platform,
-                published_url=f"https://www.instagram.com/p/{simulated_id}",
+                published_url=None,  # nothing was posted, so there is no Instagram page to link to
                 message="[DRY-RUN] Instagram post simulated successfully. Media container not created.",
                 post_id=simulated_id,
             )
@@ -123,12 +136,13 @@ class InstagramPublisher(PlatformPublisher):
                 return PublishResult(success=False, platform=self.platform, published_url=None, message=f"Instagram media publish failed: {err}")
 
             media_id = p_resp.json().get("id", creation_id)
-            published_url = f"https://www.instagram.com/p/{media_id}"
+            published_url = self.permalink(media_id)
             return PublishResult(
                 success=True,
                 platform=self.platform,
                 published_url=published_url,
-                message="Published successfully to Instagram via Meta Graph API.",
+                message="Published successfully to Instagram via Meta Graph API."
+                + ("" if published_url else " Instagram didn't return the post's link yet."),
                 post_id=media_id,
             )
         except httpx.HTTPError as exc:

@@ -1,6 +1,7 @@
 """Attendee Agent API — `/api/attendee/*`.
 
-Every attendee endpoint requires a signed-in user and only ever reads or
+Every attendee endpoint requires a signed-in ATTENDEE account (organiser
+accounts get 403; admins pass) and only ever reads or
 writes that user's own rows (preferences, activity, notifications); the
 `/attendee/admin/*` endpoints require ADMIN. Event data always comes from
 `services/attendee_agent/catalog.py` (verified, de-duplicated, real).
@@ -8,6 +9,7 @@ writes that user's own rows (preferences, activity, notifications); the
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -20,7 +22,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from backend.db import get_db
-from backend.dependencies import get_current_user, require_roles
+from backend.dependencies import require_attendee, require_roles
 from backend.models import (
     AttendeeEventActivity,
     AttendeeIntent,
@@ -40,6 +42,7 @@ from backend.services.attendee_agent.auto_toggle import (
 from backend.services.attendee_agent.catalog import DISCOVERED, PLATFORM, CatalogEvent, get_event_for_viewer, get_events, load_catalog
 from backend.services.attendee_agent.matching import EVENT_TYPE_ALIASES, TOPIC_SYNONYMS, WEIGHTS, Preferences, rank, score_event
 from backend.services.attendee_agent.notifier import run_attendee_notifications
+from backend.services.attendee_agent.profile import get_or_create_attendee_profile, profile_out
 from backend.services.attendee_agent.serialize import event_out
 from backend.services.audit import record_audit_log
 from backend.services.discovery_agent.categorizer import CATEGORIES
@@ -203,7 +206,7 @@ def _serialize_many(db: Session, user: User, items: list[CatalogEvent], prefs: P
 
 
 @router.get("/preferences")
-def get_preferences(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict[str, Any]:
+def get_preferences(db: Session = Depends(get_db), user: User = Depends(require_attendee)) -> dict[str, Any]:
     return _prefs_out(db.get(AttendeePreference, user.id))
 
 
@@ -211,7 +214,7 @@ def get_preferences(db: Session = Depends(get_db), user: User = Depends(get_curr
 def save_preferences(
     payload: PreferencesIn,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_attendee),
 ) -> dict[str, Any]:
     row = db.get(AttendeePreference, user.id)
     if row is None:
@@ -241,7 +244,7 @@ def save_preferences(
 
 
 @router.get("/options")
-def get_options(db: Session = Depends(get_db), _: User = Depends(get_current_user)) -> dict[str, Any]:
+def get_options(db: Session = Depends(get_db), _: User = Depends(require_attendee)) -> dict[str, Any]:
     """Choices for the preferences form, with how many verified upcoming
     events each one currently has — counted from the real catalog."""
     from backend.services.social_agent.outreach.senders import provider_status
@@ -271,6 +274,142 @@ def get_options(db: Session = Depends(get_db), _: User = Depends(get_current_use
 
 
 # ---------------------------------------------------------------------------
+# Attendee profile (personal details — separate from organiser profiles)
+# ---------------------------------------------------------------------------
+
+
+class ProfileIn(CamelModel):
+    name: str = Field(min_length=2, max_length=120)
+    phone: str | None = Field(default=None, max_length=40)
+    city: str | None = Field(default=None, max_length=80)
+    country: str | None = Field(default=None, max_length=80)
+    job_title: str | None = Field(default=None, max_length=120)
+    company: str | None = Field(default=None, max_length=120)
+    bio: str | None = Field(default=None, max_length=500)
+    linkedin_url: str | None = Field(default=None, max_length=300)
+
+    @field_validator("name", "phone", "city", "country", "job_title", "company", "bio", "linkedin_url")
+    @classmethod
+    def _strip(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+    @field_validator("phone")
+    @classmethod
+    def _valid_phone(cls, value: str | None) -> str | None:
+        if value and (not _PHONE_RE.fullmatch(value) or sum(c.isdigit() for c in value) < 6):
+            raise ValueError("Enter a phone number using digits, spaces, +, - or brackets")
+        return value
+
+    @field_validator("country")
+    @classmethod
+    def _valid_country(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value.lower() not in _COUNTRY_NAMES:
+            raise ValueError(f"Unknown country: {value}")
+        return _COUNTRY_NAMES[value.lower()]
+
+    @field_validator("linkedin_url")
+    @classmethod
+    def _valid_linkedin(cls, value: str | None) -> str | None:
+        if value and not _LINKEDIN_RE.match(value):
+            raise ValueError("LinkedIn URL must start with https://www.linkedin.com/")
+        return value
+
+
+_PHONE_RE = re.compile(r"[+\d][\d\s\-()]{5,39}")
+_LINKEDIN_RE = re.compile(r"^https://([a-z]{2,3}\.)?linkedin\.com/", re.IGNORECASE)
+
+
+@router.get("/profile")
+def get_profile(db: Session = Depends(get_db), user: User = Depends(require_attendee)) -> dict[str, Any]:
+    profile = get_or_create_attendee_profile(db, user)
+    db.commit()
+    return profile_out(user, profile)
+
+
+@router.put("/profile")
+def put_profile(payload: ProfileIn, db: Session = Depends(get_db), user: User = Depends(require_attendee)) -> dict[str, Any]:
+    profile = get_or_create_attendee_profile(db, user)
+    user.name = payload.name
+    profile.phone = payload.phone
+    profile.city = payload.city
+    profile.country = payload.country
+    profile.job_title = payload.job_title
+    profile.company = payload.company
+    profile.bio = payload.bio
+    profile.linkedin_url = payload.linkedin_url
+    profile.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(profile)
+    return profile_out(user, profile)
+
+
+# ---------------------------------------------------------------------------
+# Discover: search & filter the verified catalog
+# ---------------------------------------------------------------------------
+
+
+@router.get("/events")
+def search_events(
+    q: str | None = Query(None, max_length=120),
+    sector: str | None = Query(None, max_length=80),
+    country: str | None = Query(None, max_length=80),
+    mode: Literal["online", "offline", "hybrid"] | None = None,
+    free: bool = False,
+    date_from: date | None = Query(None, alias="dateFrom"),
+    date_to: date | None = Query(None, alias="dateTo"),
+    sort: Literal["soonest", "match"] = "soonest",
+    page: int = Query(1, ge=1),
+    page_size: int = Query(24, ge=1, le=60, alias="pageSize"),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_attendee),
+) -> dict[str, Any]:
+    """The same verified, upcoming catalog Match My Events ranks, filtered by
+    what the attendee picks. Only facts the source published are filtered on:
+    an event whose mode or price was not published never matches those filters."""
+    catalog = load_catalog(db)
+    terms = [t for t in (q or "").lower().split() if t]
+    sector_l = (sector or "").strip().lower()
+    country_l = (country or "").strip().lower()
+
+    def keep(e: CatalogEvent) -> bool:
+        if terms and not all(t in f"{e.search_text} {(e.city or '').lower()} {(e.country or '').lower()} {(e.organizer.get('name') or '').lower()}" for t in terms):
+            return False
+        if sector_l and (e.sector or "").lower() != sector_l:
+            return False
+        if country_l and (e.country or "").lower() != country_l:
+            return False
+        if mode and e.attendance_mode != mode:
+            return False
+        if free and e.is_free is not True:
+            return False
+        if date_from and (e.end_date or e.start_date) < date_from:
+            return False
+        if date_to and e.start_date > date_to:
+            return False
+        return True
+
+    hits = [e for e in catalog if keep(e)]
+    prefs = _prefs(db, user)
+    if sort == "match" and not prefs.is_empty():
+        hits = [e for e, _ in rank(hits, prefs)]
+    else:
+        hits.sort(key=lambda e: (e.start_date, e.title.lower()))
+    start = (page - 1) * page_size
+    return {
+        "catalogSize": len(catalog),
+        "total": len(hits),
+        "page": page,
+        "pageSize": page_size,
+        "hasPreferences": not prefs.is_empty(),
+        "results": _serialize_many(db, user, hits[start : start + page_size], prefs),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Matching & recommendations
 # ---------------------------------------------------------------------------
 
@@ -279,7 +418,7 @@ def get_options(db: Session = Depends(get_db), _: User = Depends(get_current_use
 def match_my_events(
     payload: MatchIn | None = None,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_attendee),
 ) -> dict[str, Any]:
     payload = payload or MatchIn()
     prefs = _prefs(db, user)
@@ -321,7 +460,7 @@ def _recommendations(db: Session, user: User, prefs: Preferences, catalog: list[
 def recommendations(
     limit: int = Query(6, ge=1, le=50),
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_attendee),
 ) -> dict[str, Any]:
     prefs = _prefs(db, user)
     catalog = load_catalog(db)
@@ -334,7 +473,7 @@ def recommendations(
 
 
 @router.get("/events/{kind}/{event_id}")
-def event_detail(kind: EventKind, event_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict[str, Any]:
+def event_detail(kind: EventKind, event_id: int, db: Session = Depends(get_db), user: User = Depends(require_attendee)) -> dict[str, Any]:
     item = _load(db, kind, event_id, user)
     tracking.record_view(db, user.id, item)
     db.commit()
@@ -344,7 +483,7 @@ def event_detail(kind: EventKind, event_id: int, db: Session = Depends(get_db), 
 
 
 @router.post("/events/{kind}/{event_id}/save")
-def save_event(kind: EventKind, event_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict[str, Any]:
+def save_event(kind: EventKind, event_id: int, db: Session = Depends(get_db), user: User = Depends(require_attendee)) -> dict[str, Any]:
     item = _load(db, kind, event_id, user)
     if not item.eligible:
         raise HTTPException(status_code=400, detail=f"This event can't be saved: {item.ineligible_reason}")
@@ -354,7 +493,7 @@ def save_event(kind: EventKind, event_id: int, db: Session = Depends(get_db), us
 
 
 @router.delete("/events/{kind}/{event_id}/save")
-def unsave_event(kind: EventKind, event_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict[str, Any]:
+def unsave_event(kind: EventKind, event_id: int, db: Session = Depends(get_db), user: User = Depends(require_attendee)) -> dict[str, Any]:
     item = _load(db, kind, event_id, user)
     tracking.set_saved(db, user.id, item, False)
     db.commit()
@@ -362,7 +501,7 @@ def unsave_event(kind: EventKind, event_id: int, db: Session = Depends(get_db), 
 
 
 @router.post("/events/{kind}/{event_id}/registration-opened")
-def registration_opened(kind: EventKind, event_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict[str, Any]:
+def registration_opened(kind: EventKind, event_id: int, db: Session = Depends(get_db), user: User = Depends(require_attendee)) -> dict[str, Any]:
     """Records that the attendee opened the official registration page.
     This does NOT mark them registered."""
     item = _load(db, kind, event_id, user)
@@ -378,7 +517,7 @@ def set_registration(
     event_id: int,
     payload: RegistrationIn,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_attendee),
 ) -> dict[str, Any]:
     item = _load(db, kind, event_id, user)
     if kind == PLATFORM:
@@ -413,7 +552,7 @@ def _ts(value: datetime | None) -> float:
 
 
 @router.get("/dashboard")
-def dashboard(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict[str, Any]:
+def dashboard(db: Session = Depends(get_db), user: User = Depends(require_attendee)) -> dict[str, Any]:
     today = date.today()
     prefs = _prefs(db, user)
     catalog = load_catalog(db, today)
@@ -487,7 +626,7 @@ def dashboard(db: Session = Depends(get_db), user: User = Depends(get_current_us
 
 
 @router.post("/assistant")
-def ask_assistant(payload: AssistantIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict[str, Any]:
+def ask_assistant(payload: AssistantIn, db: Session = Depends(get_db), user: User = Depends(require_attendee)) -> dict[str, Any]:
     result = assistant.answer(db, user, payload.message.strip())
     db.commit()
     return result
@@ -497,7 +636,7 @@ def ask_assistant(payload: AssistantIn, db: Session = Depends(get_db), user: Use
 def list_notifications(
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_attendee),
 ) -> dict[str, Any]:
     rows = db.scalars(
         select(Notification).where(Notification.user_id == user.id).order_by(desc(Notification.created_at)).limit(limit)
@@ -521,7 +660,7 @@ def list_notifications(
 
 
 @router.post("/notifications/{notification_id}/read")
-def mark_read(notification_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict[str, bool]:
+def mark_read(notification_id: int, db: Session = Depends(get_db), user: User = Depends(require_attendee)) -> dict[str, bool]:
     note = db.get(Notification, notification_id)
     if note is None or note.user_id != user.id:
         raise HTTPException(status_code=404, detail="Notification not found")
@@ -531,7 +670,7 @@ def mark_read(notification_id: int, db: Session = Depends(get_db), user: User = 
 
 
 @router.post("/notifications/read-all")
-def mark_all_read(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict[str, int]:
+def mark_all_read(db: Session = Depends(get_db), user: User = Depends(require_attendee)) -> dict[str, int]:
     rows = db.scalars(select(Notification).where(Notification.user_id == user.id, Notification.is_read.is_(False))).all()
     for n in rows:
         n.is_read = True

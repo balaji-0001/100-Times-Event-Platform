@@ -62,7 +62,6 @@ SECTOR_INDUSTRIES: dict[str, tuple[str, ...]] = {
 # Worldwide runs (no country selected) for sectors without an industry list
 # above use EventsEye's broader theme pages (slugs from its homepage, 2026-10-27).
 SECTOR_THEMES: dict[str, tuple[str, ...]] = {
-    "Technology": ("ict-information-communications-technologies", "industrial-data-computing"),
     "Telecommunications": ("ict-information-communications-technologies",),
     "Finance": ("banks-insurance-investors",),
     "Healthcare": ("healthcare-pharmaceuticals",),

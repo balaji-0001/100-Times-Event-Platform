@@ -79,7 +79,7 @@ class FacebookPublisher(PlatformPublisher):
             return PublishResult(
                 success=True,
                 platform=self.platform,
-                published_url=f"https://facebook.com/{target}/posts/{simulated_id}",
+                published_url=None,  # nothing was posted, so there is no Facebook page to link to
                 message="[DRY-RUN] Facebook Page post simulated successfully. Graph API was not called.",
                 post_id=simulated_id,
             )

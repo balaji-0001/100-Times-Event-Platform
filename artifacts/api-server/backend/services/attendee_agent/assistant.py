@@ -29,8 +29,8 @@ from backend.services.attendee_agent.serialize import event_out
 from backend.services.social_agent import ai_client as ai_client_module
 
 EXAMPLE_QUESTIONS = [
-    "Find 10 AI conferences in India",
-    "Show free technology events worldwide next month",
+    "Find 10 construction conferences in India",
+    "Show free pharmaceutical events worldwide next month",
     "Find healthcare exhibitions in the USA",
     "Recommend events matching my profile",
     "Find online workshops this weekend",

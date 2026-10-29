@@ -4,6 +4,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { customFetch } from '@workspace/api-client-react';
+import { keys } from '@/ops/api';
 
 export type EventKind = 'platform' | 'discovered';
 export type RegistrationStatus =
@@ -190,6 +191,8 @@ export const attendeeKeys = {
   matches: ['attendee', 'matches'] as const,
   event: (kind: EventKind, id: number) => ['attendee', 'event', kind, id] as const,
   notifications: ['attendee', 'notifications'] as const,
+  profile: ['attendee', 'profile'] as const,
+  search: ['attendee', 'search'] as const,
   adminOverview: ['attendee', 'admin', 'overview'] as const,
 };
 
@@ -308,5 +311,79 @@ export function useRunAttendeeNotifications() {
   return useMutation({
     mutationFn: () => customFetch<Record<string, unknown>>('/api/attendee/admin/notifications/run', { method: 'POST' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: attendeeKeys.adminOverview }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Attendee profile (`attendee_profiles`) and Discover search
+// ---------------------------------------------------------------------------
+
+export interface AttendeeProfileData {
+  userId: number;
+  accountType: 'attendee' | 'admin';
+  name: string;
+  email: string;
+  emailVerified: boolean;
+  memberSince: string | null;
+  phone: string | null;
+  city: string | null;
+  country: string | null;
+  jobTitle: string | null;
+  company: string | null;
+  bio: string | null;
+  linkedinUrl: string | null;
+  updatedAt: string | null;
+}
+
+export type AttendeeProfileInput = Pick<AttendeeProfileData, 'name' | 'phone' | 'city' | 'country' | 'jobTitle' | 'company' | 'bio' | 'linkedinUrl'>;
+
+export function useAttendeeProfile(enabled = true) {
+  return useQuery({ queryKey: attendeeKeys.profile, queryFn: () => customFetch<AttendeeProfileData>('/api/attendee/profile'), enabled });
+}
+
+export function useSaveAttendeeProfile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: AttendeeProfileInput) =>
+      customFetch<AttendeeProfileData>('/api/attendee/profile', { ...json(body), method: 'PUT' }),
+    onSuccess: (data) => {
+      qc.setQueryData(attendeeKeys.profile, data);
+      qc.invalidateQueries({ queryKey: keys.me });
+    },
+  });
+}
+
+export interface EventSearchParams {
+  q?: string;
+  sector?: string;
+  country?: string;
+  mode?: '' | 'online' | 'offline' | 'hybrid';
+  free?: boolean;
+  dateFrom?: string;
+  dateTo?: string;
+  sort?: 'soonest' | 'match';
+  page?: number;
+  pageSize?: number;
+}
+
+export interface EventSearchResponse {
+  catalogSize: number;
+  total: number;
+  page: number;
+  pageSize: number;
+  hasPreferences: boolean;
+  results: AttendeeEvent[];
+}
+
+export function useSearchEvents(params: EventSearchParams) {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== '' && value !== false) qs.set(key, String(value));
+  });
+  const query = qs.toString();
+  return useQuery({
+    queryKey: [...attendeeKeys.search, query],
+    queryFn: () => customFetch<EventSearchResponse>(`/api/attendee/events${query ? `?${query}` : ''}`),
+    placeholderData: (previous) => previous,
   });
 }

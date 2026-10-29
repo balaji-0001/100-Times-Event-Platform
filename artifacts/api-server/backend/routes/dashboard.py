@@ -7,7 +7,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from backend.db import get_db
-from backend.dependencies import get_current_user, require_roles
+from backend.dependencies import get_current_user, require_attendee, require_roles
 from backend.models import Category, City, Event, Notification, Organizer, Registration, Review, SavedEvent, ScheduleItem, User, Venue
 from backend.schemas import (
     AdminDashboard,
@@ -17,7 +17,6 @@ from backend.schemas import (
     EventInput,
     NotificationOut,
     OrganizerDashboard,
-    ProfileUpdateInput,
     RegistrationOut,
     ScheduleItemInput,
     ScheduleItemOut,
@@ -27,6 +26,7 @@ from backend.serializers import event_card
 from backend.routes.platform_ops import owned_organizer, owned_organizer_ids, unique_organizer_slug
 from backend.services import event_creation
 from backend.services.lifecycle import transition_event_state
+from backend.services.sectors import REMOVED_SECTOR_NOTE, REMOVED_SECTOR_SLUGS, is_removed_sector
 
 router = APIRouter(tags=["dashboards"])
 
@@ -67,7 +67,7 @@ def home(db: Session = Depends(get_db)) -> dict:
         select(Event).options(selectinload(Event.category), selectinload(Event.organizer), selectinload(Event.venue).selectinload(Venue.city))
         .where(Event.status == "published").order_by(Event.start_date).limit(4)
     ).all()
-    categories = db.scalars(select(Category).order_by(Category.name).limit(6)).all()
+    categories = db.scalars(select(Category).where(Category.slug.not_in(REMOVED_SECTOR_SLUGS)).order_by(Category.name).limit(6)).all()
     cities = db.scalars(select(City).order_by(City.name).limit(8)).all()
     from backend.serializers import category_out, city_out
     return {
@@ -84,7 +84,7 @@ def home(db: Session = Depends(get_db)) -> dict:
 
 
 @router.get("/dashboard", response_model=Dashboard)
-def dashboard(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> Dashboard:
+def dashboard(db: Session = Depends(get_db), user: User = Depends(require_attendee)) -> Dashboard:
     saved_rows = db.scalars(
         select(Event).join(SavedEvent, SavedEvent.event_id == Event.id)
         .options(selectinload(Event.category), selectinload(Event.organizer), selectinload(Event.venue).selectinload(Venue.city))
@@ -113,7 +113,7 @@ def dashboard(db: Session = Depends(get_db), user: User = Depends(get_current_us
 
 
 @router.get("/dashboard/saved-events", response_model=list[EventCard])
-def saved_events(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[EventCard]:
+def saved_events(db: Session = Depends(get_db), user: User = Depends(require_attendee)) -> list[EventCard]:
     rows = db.scalars(
         select(Event).join(SavedEvent, SavedEvent.event_id == Event.id)
         .options(selectinload(Event.category), selectinload(Event.organizer), selectinload(Event.venue).selectinload(Venue.city))
@@ -123,7 +123,7 @@ def saved_events(db: Session = Depends(get_db), user: User = Depends(get_current
 
 
 @router.get("/dashboard/registrations", response_model=list[RegistrationOut])
-def registrations(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[RegistrationOut]:
+def registrations(db: Session = Depends(get_db), user: User = Depends(require_attendee)) -> list[RegistrationOut]:
     rows = db.scalars(
         select(Registration)
         .options(selectinload(Registration.event).selectinload(Event.venue).selectinload(Venue.city))
@@ -134,7 +134,7 @@ def registrations(db: Session = Depends(get_db), user: User = Depends(get_curren
 
 
 @router.get("/dashboard/schedule", response_model=list[ScheduleItemOut])
-def list_schedule(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[ScheduleItemOut]:
+def list_schedule(db: Session = Depends(get_db), user: User = Depends(require_attendee)) -> list[ScheduleItemOut]:
     items = db.scalars(
         select(ScheduleItem)
         .options(selectinload(ScheduleItem.event))
@@ -158,7 +158,7 @@ def list_schedule(db: Session = Depends(get_db), user: User = Depends(get_curren
 
 
 @router.post("/dashboard/schedule", response_model=ScheduleItemOut, status_code=status.HTTP_201_CREATED)
-def add_schedule_item(payload: ScheduleItemInput, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> ScheduleItemOut:
+def add_schedule_item(payload: ScheduleItemInput, db: Session = Depends(get_db), user: User = Depends(require_attendee)) -> ScheduleItemOut:
     event = db.get(Event, payload.event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
@@ -205,30 +205,13 @@ def add_schedule_item(payload: ScheduleItemInput, db: Session = Depends(get_db),
 
 
 @router.delete("/dashboard/schedule/{schedule_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_schedule_item(schedule_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def delete_schedule_item(schedule_id: int, db: Session = Depends(get_db), user: User = Depends(require_attendee)):
     item = db.get(ScheduleItem, schedule_id)
     if not item or item.user_id != user.id:
         raise HTTPException(status_code=404, detail="Schedule item not found")
     db.delete(item)
     db.commit()
     return None
-
-
-@router.patch("/dashboard/profile", response_model=UserOut)
-def update_profile(payload: ProfileUpdateInput, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> UserOut:
-    if payload.name is not None:
-        user.name = payload.name.strip()
-    if payload.job_title is not None:
-        user.job_title = payload.job_title.strip() or None
-    if payload.company is not None:
-        user.company = payload.company.strip() or None
-    if payload.bio is not None:
-        user.bio = payload.bio.strip() or None
-    if payload.country is not None:
-        user.country = payload.country.strip() or None
-    db.commit()
-    db.refresh(user)
-    return UserOut.model_validate(user)
 
 
 @router.get("/dashboard/notifications", response_model=list[NotificationOut])
@@ -286,6 +269,8 @@ def organizer_events(db: Session = Depends(get_db), user: User = Depends(require
 def create_organizer_event(payload: EventInput, db: Session = Depends(get_db), user: User = Depends(require_roles("ORGANIZER", "ADMIN"))) -> EventCard:
     from backend.services.trust_agent import evaluate_event_trust
 
+    if is_removed_sector(payload.category):
+        raise HTTPException(status_code=422, detail=REMOVED_SECTOR_NOTE + " Pick another sector.")
     organizer = owned_organizer(db, user)
     if not organizer:
         organizer = Organizer(
@@ -382,7 +367,7 @@ def admin_dashboard(db: Session = Depends(get_db), user: User = Depends(require_
     def total(model) -> int:
         return int(db.scalar(select(func.count(model.id))) or 0)
 
-    categories = db.scalars(select(Category).order_by(Category.name).limit(5)).all()
+    categories = db.scalars(select(Category).where(Category.slug.not_in(REMOVED_SECTOR_SLUGS)).order_by(Category.name).limit(5)).all()
     # Growth = new users / new events created on each of the last 7 days (real created_at).
     return AdminDashboard(
         users=total(User),
@@ -433,10 +418,11 @@ def update_admin_event_status(
     event = db.get(Event, id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    event.status = payload.status
     if payload.status == "published":
-        event.lifecycle_state = "PUBLISHED"
-    elif payload.status == "draft":
+        # Same publish step as every other path, so social promotion runs too.
+        transition_event_state(db, event, "PUBLISHED", actor=user.email, actor_id=user.id, reason="Published by admin", force=True)
+    event.status = payload.status
+    if payload.status == "draft":
         event.lifecycle_state = "DRAFT"
     db.commit()
     db.refresh(event)

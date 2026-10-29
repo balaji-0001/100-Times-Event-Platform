@@ -16,13 +16,9 @@ from fastapi.responses import JSONResponse
 from backend.core.config import get_settings
 from backend.db import Base, engine, sync_schema_columns
 from backend.routes import (
-    acquisition,
-    ai,
     attendee,
     auth,
     automations,
-    community_discovery,
-    community_promotion,
     dashboard,
     directories,
     discovery,
@@ -246,16 +242,15 @@ app.include_router(events.router, prefix="/api")
 app.include_router(media.router, prefix="/api")
 app.include_router(directories.router, prefix="/api")
 app.include_router(networking.router, prefix="/api")
-app.include_router(ai.router, prefix="/api")
 app.include_router(attendee.router, prefix="/api")
-app.include_router(acquisition.router, prefix="/api")
+# Community listening (routes/acquisition.py: reading community posts, drafting
+# replies) belonged to the previous plan and is no longer served. Its module
+# stays only for helpers the outreach agent still imports.
 app.include_router(outreach.router, prefix="/api")
 app.include_router(discovery.router, prefix="/api")
 app.include_router(discovery_sources.router)
 app.include_router(workflow.router, prefix="/api")
 app.include_router(automations.router, prefix="/api")
-app.include_router(community_discovery.router, prefix="/api")
-app.include_router(community_promotion.router, prefix="/api")
 app.include_router(event_promotions.router, prefix="/api")
 app.include_router(platform_ops.router, prefix="/api")
 app.include_router(webhooks_n8n.router, prefix="/api")

@@ -164,20 +164,36 @@ export function EmptyState({ title = 'Nothing here yet.', body }: { title?: stri
 // Stats & badges
 // ---------------------------------------------------------------------------
 
+/** Font size for a stat value: up to 30px, shrinking with the card width (cqi) and the number of
+ *  characters so the value stays on one line. The display face's extra-bold glyphs are about
+ *  1.0em wide (measured), so a value of n characters needs about 1.05·n em. */
+function valueFontSize(value: ReactNode): string {
+  const chars = typeof value === 'string' || typeof value === 'number' ? Math.max(String(value).length, 3) : 6;
+  return `clamp(0.875rem, ${Math.floor(92 / chars)}cqi, 1.875rem)`;
+}
+
 /** A headline number. Pass `href` to make the whole card a link to the rows behind that number. */
 export function StatCard({ label, value, sub, tone, href }: { label: string; value: ReactNode; sub?: ReactNode; tone?: 'accent' | 'warn' | 'good' | 'danger'; href?: string }) {
   const toneClass = { accent: 'text-accent', warn: 'text-amber-600 dark:text-amber-300', good: 'text-emerald-600 dark:text-emerald-300', danger: 'text-red-600 dark:text-red-300' }[tone ?? 'accent'];
   const body = (
     <>
       <p className="font-mono-face text-[10px] uppercase tracking-[.14em] text-muted-foreground">{label}</p>
-      <p className={cx('mt-2 font-display text-3xl font-extrabold tracking-[-.04em]', toneClass)}>{value}</p>
-      {sub && <p className="mt-1 text-xs text-muted-foreground">{sub}</p>}
+      {/* Sized to the card's own width (container units) and the value's length, so a
+          number stays on one line inside even a narrow card. */}
+      <p
+        className={cx('mt-2 whitespace-nowrap font-display font-extrabold leading-none tracking-[-.04em] tabular-nums', toneClass)}
+        style={{ fontSize: valueFontSize(value) }}
+      >
+        {value}
+      </p>
+      {sub && <p className="mt-2 text-xs text-muted-foreground">{sub}</p>}
       {href && <p className="mt-2 font-mono-face text-[10px] uppercase tracking-wider text-accent">View details →</p>}
     </>
   );
-  const base = 'block rounded-2xl border border-foreground/10 bg-card p-5';
-  if (href) return <Link href={href} className={cx(base, 'button-press transition-colors hover:border-accent/60 hover:bg-muted/30')}>{body}</Link>;
-  return <div className={base}>{body}</div>;
+  const base = 'block min-w-0 rounded-2xl border border-foreground/10 bg-card p-5';
+  const container = { containerType: 'inline-size' } as const;
+  if (href) return <Link href={href} style={container} className={cx(base, 'button-press transition-colors hover:border-accent/60 hover:bg-muted/30')}>{body}</Link>;
+  return <div style={container} className={base}>{body}</div>;
 }
 
 const STATUS_STYLE: Record<OutreachStatus, string> = {

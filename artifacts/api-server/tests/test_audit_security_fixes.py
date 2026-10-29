@@ -166,6 +166,12 @@ def test_user_with_id_equal_to_an_organizer_id_cannot_take_it_over(db_session, t
     client = _client(db_session, platform_ops_routes.router, dashboard_routes.router)
     headers = _auth(w["attacker"])
 
+    # As an attendee account the attacker can't reach organiser endpoints at all...
+    assert client.get("/api/organizer/profile", headers=headers).status_code == 403
+    # ...so the takeover attempt needs an organiser account of their own.
+    w["attacker"].role = "ORGANIZER"
+    db_session.commit()
+
     profile = client.get("/api/organizer/profile", headers=headers)
     assert profile.status_code == 200
     body = profile.json()
@@ -248,7 +254,7 @@ def _onboard(client, user, **extra):
 
 
 def test_onboarding_does_not_mark_anything_verified(db_session):
-    user = _user(db_session, "Asha", "asha@example.com", email_verified=False)
+    user = _user(db_session, "Asha", "asha@example.com", role="ORGANIZER", email_verified=False)
     db_session.commit()
     client = _client(db_session, platform_ops_routes.router)
     body = _onboard(client, user).json()
@@ -259,7 +265,7 @@ def test_onboarding_does_not_mark_anything_verified(db_session):
 
 
 def test_onboarding_email_verified_only_for_the_verified_account_email(db_session):
-    user = _user(db_session, "Ravi", "ravi@example.com", email_verified=True)
+    user = _user(db_session, "Ravi", "ravi@example.com", role="ORGANIZER", email_verified=True)
     db_session.commit()
     client = _client(db_session, platform_ops_routes.router)
     assert _onboard(client, user).json()["emailVerified"] is True
@@ -269,7 +275,7 @@ def test_onboarding_email_verified_only_for_the_verified_account_email(db_sessio
 
 def test_onboarding_validates_discovered_organizer_link(db_session):
     db = db_session
-    user = _user(db, "Asha", "asha@example.com")
+    user = _user(db, "Asha", "asha@example.com", role="ORGANIZER")
     claimed = DiscoveredOrganizer(name="Claimed Org", email="c@org.test", website="https://c.test", source_url="https://c.test")
     free = DiscoveredOrganizer(name="Free Org", email="f@org.test", website="https://f.test", source_url="https://f.test")
     db.add_all([claimed, free])
@@ -545,8 +551,10 @@ def test_non_admin_cannot_fetch_drafts_or_rejected_events(db_session, attendee_a
     assert client.get(f"/api/attendee/events/platform/{published.id}").status_code == 200
     assert client.get(f"/api/attendee/events/discovered/{fine.id}").status_code == 200
 
+    # The owning organiser manages drafts in the organiser studio; the attendee
+    # API is closed to organiser accounts altogether.
     holder["user"] = owner
-    assert client.get(f"/api/attendee/events/platform/{draft.id}").status_code == 200
+    assert client.get(f"/api/attendee/events/platform/{draft.id}").status_code == 403
 
     holder["user"] = admin
     assert client.get(f"/api/attendee/events/platform/{draft.id}").status_code == 200
@@ -741,13 +749,15 @@ def test_attendee_directory_is_scoped_and_hides_role(db_session, seeded_catalog)
     shared = seeded_catalog["event"]
     other_event = _event(db, "Other Event", shared.organizer_id)
     me = _user(db, "Me", "me@example.com")
-    peer = _user(db, "Peer", "peer@example.com", role="ORGANIZER", company="PeerCo")
+    peer = _user(db, "Peer", "peer@example.com", company="PeerCo")
+    organiser = _user(db, "Host", "host@example.com", role="ORGANIZER")
     stranger = _user(db, "Stranger", "stranger@example.com")
     cancelled_peer = _user(db, "Gone", "gone@example.com")
     admin = _user(db, "Admin", "admin@example.com", role="ADMIN")
     db.add_all([
         Registration(event_id=shared.id, user_id=me.id, ticket_type="Standard", status="confirmed"),
         Registration(event_id=shared.id, user_id=peer.id, ticket_type="Standard", status="confirmed"),
+        Registration(event_id=shared.id, user_id=organiser.id, ticket_type="Standard", status="confirmed"),
         Registration(event_id=shared.id, user_id=cancelled_peer.id, ticket_type="Standard", status="cancelled"),
         Registration(event_id=other_event.id, user_id=stranger.id, ticket_type="Standard", status="confirmed"),
     ])
@@ -763,6 +773,8 @@ def test_attendee_directory_is_scoped_and_hides_role(db_session, seeded_catalog)
     admin_rows = client.get(f"/api/connections/attendees?eventId={other_event.id}", headers=_auth(admin)).json()
     assert [r["name"] for r in admin_rows] == ["Stranger"]
     assert client.get("/api/connections/attendees", headers=_auth(stranger)).json() == []
+    # Organiser accounts are neither listed (above: only "Peer") nor allowed in.
+    assert client.get("/api/connections/attendees", headers=_auth(organiser)).status_code == 403
 
 
 def test_admin_workflow_catalog_stays_visible_while_webhooks_are_off(monkeypatch):

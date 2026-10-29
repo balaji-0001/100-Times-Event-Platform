@@ -16,7 +16,7 @@ from backend.services.discovery_agent.adapters.api_adapters import (
 from backend.services.discovery_agent.adapters.base import BaseSourceAdapter
 from backend.services.discovery_agent.adapters.dmg_events import DmgEventsAdapter
 from backend.services.discovery_agent.adapters.eventseye import EventsEyeAdapter
-from backend.services.discovery_agent.adapters.fair_calendars import CmtEventsAdapter, ExpolyaAdapter, KoelnmesseAdapter, MesseDuesseldorfAdapter
+from backend.services.discovery_agent.adapters.fair_calendars import CmtEventsAdapter, ExpolyaAdapter, MesseDuesseldorfAdapter
 from backend.services.discovery_agent.adapters.ieee_vtools import IeeeVToolsAdapter
 from backend.services.discovery_agent.adapters.informa import InformaMarketsAdapter
 from backend.services.discovery_agent.adapters.tradefairdates import TradeFairDatesAdapter
@@ -30,7 +30,7 @@ from backend.services.discovery_agent.types import DiscoveryConfig, ExtractedEve
 logger = logging.getLogger("discovery_agent.adapters.manager")
 
 # Calendars with their own site-specific reader (see fair_calendars.py).
-_CALENDAR_ADAPTERS = {"expolya": ExpolyaAdapter, "messe_duesseldorf": MesseDuesseldorfAdapter, "koelnmesse": KoelnmesseAdapter, "cmt_events": CmtEventsAdapter}
+_CALENDAR_ADAPTERS = {"expolya": ExpolyaAdapter, "messe_duesseldorf": MesseDuesseldorfAdapter, "cmt_events": CmtEventsAdapter}
 
 
 class SourceAdapterManager:

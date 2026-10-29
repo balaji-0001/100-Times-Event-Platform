@@ -10,7 +10,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from backend.db import get_db
-from backend.dependencies import get_current_user, optional_current_user, require_roles
+from backend.dependencies import optional_current_user, require_attendee, require_organiser, require_roles
 from backend.models import (
     AttendeeFeedback,
     AttendeeIntent,
@@ -32,8 +32,11 @@ from backend.models import (
 from backend.routes.events import slugify
 from backend.serializers import event_card
 from backend.services import event_creation
+from backend.core.rate_limiter import SlidingWindowRateLimiter
 from backend.services.audit import record_audit_log
+from backend.services.event_writer import DescriptionUnavailable, write_description
 from backend.services.lifecycle import advance_organizer_stage, transition_event_state
+from backend.services.sectors import REMOVED_SECTOR_NOTE, is_removed_sector
 from backend.services.notifications import generate_calendar_links, send_templated_notification
 from backend.services.registration_automation import (
     cancel_event_workflow,
@@ -124,7 +127,7 @@ class RichEventInput(BaseModel):
 
 
 class TrustAdminDecisionInput(BaseModel):
-    decision: Literal["APPROVE", "REJECT", "REQUEST_CHANGES"]
+    decision: Literal["APPROVE", "PUBLISH", "REJECT", "REQUEST_CHANGES"]
     notes: str | None = None
 
 
@@ -238,10 +241,6 @@ def _ensure_organizer_and_profile(db: Session, user: User) -> tuple[Organizer, O
         db.add(profile)
         db.flush()
 
-    if user.role == "USER":
-        user.role = "ORGANIZER"
-        db.flush()
-
     return organizer, profile
 
 
@@ -310,7 +309,7 @@ def logout(response: Response) -> dict[str, Any]:
 @router.get("/organizer/profile")
 def get_organizer_profile(
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_organiser),
 ) -> dict[str, Any]:
     organizer, profile = _ensure_organizer_and_profile(db, user)
     db.commit()
@@ -340,7 +339,7 @@ def get_organizer_profile(
 def complete_organizer_onboarding(
     payload: OrganizerOnboardingInput,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_organiser),
 ) -> dict[str, Any]:
     organizer, profile = _ensure_organizer_and_profile(db, user)
 
@@ -408,11 +407,6 @@ def complete_organizer_onboarding(
         profile.discovered_organizer_id = claimed_discovered_id
 
     user.company = payload.organization_name.strip()
-    current_roles = set(user.roles_list or [])
-    current_roles.update(["attendee", "user", "organiser", "organizer"])
-    user.roles_list = sorted(list(current_roles))
-    if user.role == "USER":
-        user.role = "ORGANIZER"
 
     advance_organizer_stage(
         db,
@@ -460,6 +454,69 @@ def list_organizer_events_full(
     return [_serialize_rich_event(db, ev, user.id) for ev in rows]
 
 
+class DescriptionFieldsInput(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    title: str | None = Field(default=None, max_length=200)
+    event_type: str | None = Field(default=None, max_length=80, alias="eventType")
+    sector: str | None = Field(default=None, max_length=80)
+    format: str | None = Field(default=None, max_length=20)
+    start_date: str | None = Field(default=None, max_length=10, alias="startDate")
+    end_date: str | None = Field(default=None, max_length=10, alias="endDate")
+    start_time: str | None = Field(default=None, max_length=20, alias="startTime")
+    city: str | None = Field(default=None, max_length=120)
+    country: str | None = Field(default=None, max_length=120)
+    venue: str | None = Field(default=None, max_length=300)
+    organizer_name: str | None = Field(default=None, max_length=140, alias="organizerName")
+    organization_name: str | None = Field(default=None, max_length=160, alias="organizationName")
+    price: str | None = Field(default=None, max_length=40)
+    target_audience: str | None = Field(default=None, max_length=300, alias="targetAudience")
+
+
+class DescriptionTurn(BaseModel):
+    role: Literal["user", "assistant"]
+    text: str = Field(max_length=4000)
+
+
+class DescriptionRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    fields: DescriptionFieldsInput = Field(default_factory=DescriptionFieldsInput)
+    prompt: str | None = Field(default=None, max_length=1000)
+    current_description: str | None = Field(default=None, max_length=5000, alias="currentDescription")
+    history: list[DescriptionTurn] = Field(default_factory=list, max_length=10)
+
+
+# Each draft is one AI call: cap it per organiser.
+_description_limiter = SlidingWindowRateLimiter(max_requests=20, window_seconds=600)
+
+
+@router.post("/organizer/events/describe")
+def draft_event_description(payload: DescriptionRequest, user: User = Depends(require_organiser)) -> dict[str, Any]:
+    """Description assistant on the create-event form: drafts a description from
+    the form's own details and/or the organiser's instructions. Nothing is saved;
+    the organiser decides whether to use the draft."""
+    fields = payload.fields.model_dump()
+    if not (fields.get("title") or "").strip() and not (payload.prompt or "").strip():
+        raise HTTPException(status_code=422, detail="Add the event title, or tell the assistant what the event is about.")
+    allowed, retry_after = _description_limiter.is_allowed(f"user:{user.id}")
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many drafts in a short time. Try again in {retry_after} seconds.",
+            headers={"Retry-After": str(retry_after)},
+        )
+    try:
+        return write_description(
+            fields,
+            prompt=payload.prompt,
+            current=payload.current_description,
+            history=[t.model_dump() for t in payload.history],
+        )
+    except DescriptionUnavailable as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+
 @router.post("/organizer/events/full", status_code=status.HTTP_201_CREATED)
 def create_rich_organizer_event(
     payload: RichEventInput,
@@ -471,6 +528,8 @@ def create_rich_organizer_event(
         organizer.company_name = payload.organization_name.strip()
         profile.organization_name = payload.organization_name.strip()
 
+    if is_removed_sector(payload.category):
+        raise HTTPException(status_code=422, detail=REMOVED_SECTOR_NOTE + " Pick another sector.")
     fmt = "in-person" if payload.format in ("in-person", "offline", "hybrid") else "online"
     event = event_creation.create_event(
         db,
@@ -688,7 +747,7 @@ def record_event_attendance(
     event_id: int,
     payload: AttendanceInput,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_organiser),
 ) -> dict[str, Any]:
     event = db.get(Event, event_id)
     if not event:
@@ -705,7 +764,7 @@ def submit_organizer_followup(
     event_id: int,
     payload: OrganizerFollowupResponseInput,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_organiser),
 ) -> dict[str, Any]:
     event = db.get(Event, event_id)
     if not event:
@@ -742,7 +801,7 @@ def submit_event_feedback(
     event_id: int,
     payload: AttendeeFeedbackInput,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_attendee),
 ) -> dict[str, Any]:
     event = db.get(Event, event_id)
     if not event:
@@ -853,13 +912,17 @@ def decide_trust_review(
     review = db.get(TrustReview, review_id)
     if not review:
         raise HTTPException(status_code=404, detail="Trust review not found")
-    updated = admin_decide_trust_review(
-        db,
-        review,
-        decision=payload.decision,
-        admin_user_id=admin.id,
-        notes=payload.notes,
-    )
+    try:
+        updated = admin_decide_trust_review(
+            db,
+            review,
+            decision=payload.decision,
+            admin_user_id=admin.id,
+            notes=payload.notes,
+        )
+    except ValueError as exc:  # e.g. publishing an event that isn't approved yet
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.commit()
     return {"id": updated.id, "status": updated.status, "recommendedAction": updated.recommended_action}
 

@@ -6,8 +6,8 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from backend.db import get_db
-from backend.dependencies import get_current_user
-from backend.models import Connection, Event, Message, Notification, Organizer, Registration, User
+from backend.dependencies import require_attendee
+from backend.models import AttendeeProfile, Connection, Event, Message, Notification, Organizer, Registration, User
 from backend.schemas import (
     APIModel,
     ConnectionCreate,
@@ -17,12 +17,15 @@ from backend.schemas import (
     MessageOut,
 )
 
+# Networking is an attendee feature: only attendee accounts can use it and only
+# attendee accounts appear in it. Profile details come from `attendee_profiles`.
 router = APIRouter(prefix="/connections", tags=["networking"])
 
 
 def connection_to_out(conn: Connection, user_id: int) -> ConnectionOut:
     is_req = conn.requester_id == user_id
     peer = conn.addressee if is_req else conn.requester
+    details = peer.attendee_profile if peer else None
     return ConnectionOut(
         id=conn.id,
         requesterId=conn.requester_id,
@@ -31,15 +34,15 @@ def connection_to_out(conn: Connection, user_id: int) -> ConnectionOut:
         createdAt=conn.created_at,
         peerId=peer.id if peer else (conn.addressee_id if is_req else conn.requester_id),
         peerName=peer.name if peer else "Attendee",
-        peerCompany=peer.company if peer else None,
-        peerJobTitle=peer.job_title if peer else None,
-        peerBio=peer.bio if peer else None,
+        peerCompany=details.company if details else None,
+        peerJobTitle=details.job_title if details else None,
+        peerBio=details.bio if details else None,
         isRequester=is_req,
     )
 
 
 @router.get("", response_model=list[ConnectionOut])
-def list_connections(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[ConnectionOut]:
+def list_connections(db: Session = Depends(get_db), user: User = Depends(require_attendee)) -> list[ConnectionOut]:
     rows = db.scalars(
         select(Connection)
         .options(selectinload(Connection.requester), selectinload(Connection.addressee))
@@ -86,10 +89,15 @@ def list_attendees(
     q: str | None = None,
     eventId: int | None = Query(None, alias="eventId"),
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_attendee),
 ) -> list[AttendeeDirectoryOut]:
-    # Query users excluding self
-    query = select(User).options(selectinload(User.registrations)).where(User.id != user.id)
+    # Other attendee accounts only — organisers and admins are never listed.
+    query = (
+        select(User)
+        .outerjoin(AttendeeProfile, AttendeeProfile.user_id == User.id)
+        .options(selectinload(User.registrations), selectinload(User.attendee_profile))
+        .where(User.id != user.id, func.upper(User.role) == "USER")
+    )
 
     # Who may appear: attendees of events the caller attends or organizes
     # (admins see everyone). Another event's attendee list is not exposed.
@@ -110,9 +118,9 @@ def list_attendees(
         query = query.where(
             or_(
                 User.name.ilike(search_pattern),
-                User.company.ilike(search_pattern),
-                User.job_title.ilike(search_pattern),
-                User.bio.ilike(search_pattern),
+                AttendeeProfile.company.ilike(search_pattern),
+                AttendeeProfile.job_title.ilike(search_pattern),
+                AttendeeProfile.bio.ilike(search_pattern),
             )
         )
     users = db.scalars(query.order_by(User.name).limit(50)).all()
@@ -128,6 +136,7 @@ def list_attendees(
 
     results: list[AttendeeDirectoryOut] = []
     for u in users:
+        details = u.attendee_profile
         conn = conn_map.get(u.id)
         status_val = "none"
         conn_id = None
@@ -144,10 +153,10 @@ def list_attendees(
             AttendeeDirectoryOut(
                 id=u.id,
                 name=u.name,
-                jobTitle=u.job_title,
-                company=u.company,
-                bio=u.bio,
-                country=u.country,
+                jobTitle=details.job_title if details else None,
+                company=details.company if details else None,
+                bio=details.bio if details else None,
+                country=details.country if details else None,
                 registeredEventCount=len(u.registrations) if u.registrations else 0,
                 connectionStatus=status_val,
                 connectionId=conn_id,
@@ -157,11 +166,11 @@ def list_attendees(
 
 
 @router.post("", response_model=ConnectionOut, status_code=status.HTTP_201_CREATED)
-def request_connection(payload: ConnectionCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> ConnectionOut:
+def request_connection(payload: ConnectionCreate, db: Session = Depends(get_db), user: User = Depends(require_attendee)) -> ConnectionOut:
     if payload.addressee_id == user.id:
         raise HTTPException(status_code=400, detail="You cannot connect with yourself")
     target = db.get(User, payload.addressee_id)
-    if not target:
+    if not target or target.account_type != "attendee":
         raise HTTPException(status_code=404, detail="User not found")
     existing = db.scalar(
         select(Connection).where(
@@ -191,7 +200,7 @@ def request_connection(payload: ConnectionCreate, db: Session = Depends(get_db),
 
 
 @router.patch("/{connection_id}", response_model=ConnectionOut)
-def update_connection(connection_id: int, payload: ConnectionUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> ConnectionOut:
+def update_connection(connection_id: int, payload: ConnectionUpdate, db: Session = Depends(get_db), user: User = Depends(require_attendee)) -> ConnectionOut:
     connection = db.scalar(
         select(Connection)
         .options(selectinload(Connection.requester), selectinload(Connection.addressee))
@@ -208,7 +217,7 @@ def update_connection(connection_id: int, payload: ConnectionUpdate, db: Session
 
 
 @router.get("/messages/{peer_id}", response_model=list[MessageOut])
-def get_messages(peer_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[MessageOut]:
+def get_messages(peer_id: int, db: Session = Depends(get_db), user: User = Depends(require_attendee)) -> list[MessageOut]:
     peer = db.get(User, peer_id)
     if not peer:
         raise HTTPException(status_code=404, detail="User not found")
@@ -244,7 +253,7 @@ def get_messages(peer_id: int, db: Session = Depends(get_db), user: User = Depen
 
 
 @router.post("/messages", response_model=MessageOut, status_code=status.HTTP_201_CREATED)
-def send_message(payload: MessageCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> MessageOut:
+def send_message(payload: MessageCreate, db: Session = Depends(get_db), user: User = Depends(require_attendee)) -> MessageOut:
     if payload.recipient_id == user.id:
         raise HTTPException(status_code=400, detail="Cannot send message to yourself")
     recipient = db.get(User, payload.recipient_id)

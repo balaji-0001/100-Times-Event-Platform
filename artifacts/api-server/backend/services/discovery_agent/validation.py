@@ -14,6 +14,7 @@ from email_validator import EmailNotValidError, validate_email
 from backend.services.discovery_agent.email_verifier import is_valid_organizer_email
 from backend.services.discovery_agent.text_extractor import parse_written_date
 from backend.services.discovery_agent.types import ExtractedEventCandidate, OrganizerCandidate
+from backend.services.sectors import REMOVED_SECTOR_NOTE, is_removed_sector
 
 _DATE_FORMATS = ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%B %d, %Y", "%b %d, %Y", "%d %B %Y", "%d %b %Y")
 
@@ -277,7 +278,12 @@ def validate_event(
                     rejection_reason="OUT_OF_DATE_RANGE",
                 )
 
-    # 6. Category matching against supported categories
+    # 6. A sector 100 TIMES no longer lists (Technology) is rejected in every run,
+    # whichever sectors were selected.
+    if is_removed_sector(candidate.category):
+        return ValidationResult("REJECTED", [REMOVED_SECTOR_NOTE], 0, parsed_date, rejection_reason="UNSUPPORTED_CATEGORY")
+
+    # 6b. Category matching against supported categories
     category_unsupported = False
     if candidate.category:
         cat_clean = candidate.category.strip()

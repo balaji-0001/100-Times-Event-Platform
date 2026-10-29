@@ -103,6 +103,12 @@ class Settings(BaseSettings):
     # CSE) one discovery run may make, across discovery queries and organizer
     # lookups. Free providers (SearXNG, DuckDuckGo) are not counted.
     paid_search_calls_per_run: int = 60
+    # Usage cost pricing (JSON). Used only where a provider doesn't report its
+    # own cost; anything without a price shows as "Unknown", never as free.
+    #   SEARCH_PRICING_USD_PER_1000='{"brave_search": 5.0, "google_gemini": 14.0}'
+    #   AI_MODEL_PRICING_USD_PER_MTOK='{"gemini-3.5-flash-lite": [0.30, 2.50]}'  (input, output)
+    search_pricing_usd_per_1000: str = ""
+    ai_model_pricing_usd_per_mtok: str = ""
     # "Upcoming events" window the run wizard proposes by default (today .. today + N days).
     discovery_default_window_days: int = 365
 

@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from backend.db import get_db
-from backend.dependencies import get_current_user, optional_current_user
+from backend.dependencies import optional_current_user, require_attendee
 from backend.models import AcquisitionReferralEvent, Category, City, Event, Registration, Review, SavedEvent, User, Venue
 from backend.services.social_agent.attribution import attribute_registration
 from backend.schemas import (
@@ -52,6 +52,8 @@ def list_events(
     country: str | None = None,
     eventType: str | None = None,
     date: str | None = None,
+    dateFrom: str | None = None,
+    dateTo: str | None = None,
     format: str = Query("all", pattern="^(all|online|in-person)$"),
     sort: str = Query("soonest", pattern="^(soonest|popular|newest)$"),
     page: int = Query(1, ge=1),
@@ -123,6 +125,19 @@ def list_events(
             query = query.where(Event.start_date >= date_type.fromisoformat(date))
         except ValueError as exc:
             raise HTTPException(status_code=422, detail="date must be YYYY-MM-DD") from exc
+    # Date range: an event matches when it runs on any day inside the range
+    # (a 3-day expo that started yesterday still shows for "this week").
+    try:
+        range_from = date_type.fromisoformat(dateFrom) if dateFrom else None
+        range_to = date_type.fromisoformat(dateTo) if dateTo else None
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="dateFrom and dateTo must be YYYY-MM-DD") from exc
+    if range_from and range_to and range_to < range_from:
+        raise HTTPException(status_code=422, detail="dateTo must be on or after dateFrom")
+    if range_from:
+        query = query.where(func.coalesce(Event.end_date, Event.start_date) >= range_from)
+    if range_to:
+        query = query.where(Event.start_date <= range_to)
     if sort == "popular":
         query = query.order_by(desc(select(func.count(Registration.id)).where(Registration.event_id == Event.id).scalar_subquery()))
     elif sort == "newest":
@@ -196,7 +211,7 @@ def get_event(slug: str, db: Session = Depends(get_db), user: User | None = Depe
 
 
 @router.post("/{id}/save", response_model=ActionResult)
-def save_event(id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> ActionResult:
+def save_event(id: int, db: Session = Depends(get_db), user: User = Depends(require_attendee)) -> ActionResult:
     load_event(db, id)
     existing = db.scalar(select(SavedEvent).where(SavedEvent.user_id == user.id, SavedEvent.event_id == id))
     if not existing:
@@ -206,7 +221,7 @@ def save_event(id: int, db: Session = Depends(get_db), user: User = Depends(get_
 
 
 @router.delete("/{id}/save", response_model=ActionResult)
-def unsave_event(id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> ActionResult:
+def unsave_event(id: int, db: Session = Depends(get_db), user: User = Depends(require_attendee)) -> ActionResult:
     load_event(db, id)
     saved = db.scalar(select(SavedEvent).where(SavedEvent.user_id == user.id, SavedEvent.event_id == id))
     if saved:
@@ -223,8 +238,14 @@ def register_for_event(
     db: Session = Depends(get_db),
     user: User | None = Depends(optional_current_user),
 ) -> RegistrationOut:
+    from backend.services.attendee_agent.profile import get_or_create_attendee_profile
     from backend.services.registration_automation import automate_registration
 
+    if user is not None and user.account_type == "organiser":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Organiser accounts can't register for events. Sign in with an attendee account to register.",
+        )
     event = load_event(db, id)
     lifecycle = (event.lifecycle_state or "").upper()
     if lifecycle == "CANCELLED" or event.status == "cancelled":
@@ -252,6 +273,7 @@ def register_for_event(
         )
         db.add(new_user)
         db.flush()
+        get_or_create_attendee_profile(db, new_user)
         return new_user
 
     if not target_user:
@@ -293,12 +315,13 @@ def register_for_event(
     # Only the signed-in caller's own profile is updated from the form (a new
     # attendee account already got these values when it was created).
     if user is not None and target_user is user:
+        details = get_or_create_attendee_profile(db, user)
         if payload.company:
-            target_user.company = payload.company
+            details.company = payload.company
         if payload.job_title:
-            target_user.job_title = payload.job_title
+            details.job_title = payload.job_title
         if payload.country:
-            target_user.country = payload.country
+            details.country = payload.country
 
     try:
         auto_res = automate_registration(
@@ -367,7 +390,7 @@ def register_for_event(
 
 
 @router.post("/{id}/reviews", response_model=ReviewOut, status_code=status.HTTP_201_CREATED)
-def create_review(id: int, payload: ReviewInput, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> ReviewOut:
+def create_review(id: int, payload: ReviewInput, db: Session = Depends(get_db), user: User = Depends(require_attendee)) -> ReviewOut:
     load_event(db, id)
     if db.scalar(select(Review).where(Review.event_id == id, Review.user_id == user.id)):
         raise HTTPException(status_code=409, detail="You have already reviewed this event")

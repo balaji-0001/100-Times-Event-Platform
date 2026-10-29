@@ -151,17 +151,7 @@ SECTOR_SYNONYMS: dict[str, tuple[str, ...]] = {
         "Fleet Management",
         "Cold Chain",
     ),
-    "Technology": (
-        "Technology",
-        "Artificial Intelligence",
-        "Cloud Computing",
-        "Cybersecurity",
-        "Software Engineering",
-        "Data Science",
-        "Enterprise IT",
-        "DevOps",
-    ),
-    "Other": ("Business", "Trade", "Industry Expo", "Commercial Conference"),
+    "Other":("Business", "Trade", "Industry Expo", "Commercial Conference"),
 }
 
 # Broad source-type nudges directed toward professional trade and industry bodies.
@@ -245,8 +235,11 @@ def _plan(config: DiscoveryConfig) -> list[list[str]]:
     terms."""
     from backend.services.discovery_agent import geo_scope
 
+    from backend.services.sectors import is_removed_sector
+
     geo = geo_scope.resolve(config)
-    categories = list(config.categories or []) or ["events"]
+    # A removed sector (Technology) left in a saved selection is never searched.
+    categories = [c for c in (config.categories or []) if not is_removed_sector(c)] or ["events"]
     places: list[str | None] = list(geo.countries) or [None]
     enabled_sources = set(getattr(config, "sources", None) or [
         "web", "google_search", "bing_search", "linkedin", "facebook", "instagram", "twitter", "telegram", "reddit", "event_platforms"

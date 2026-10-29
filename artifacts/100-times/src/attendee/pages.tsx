@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type InputHTMLAttributes, type ReactNode } from 'react';
 import { Link } from 'wouter';
 import { Bell, CalendarClock, Heart, Loader2, Send, Sparkles, Ticket, Wand2, X } from 'lucide-react';
-import { Badge, Btn, EmptyState, ErrorState, LoadingState, Notice, Switch, cx, inputClass } from '@/ops/ui';
+import { Badge, Btn, EmptyState, ErrorState, LoadingState, Notice, Switch, cx, inputClass, useDebounce } from '@/ops/ui';
 import {
-  type AssistantResponse, type AttendeeEvent, type AttendeePreferences,
-  useAskAssistant, useAttendeeDashboard, useAttendeeNotifications, useAttendeeOptions, useAttendeePreferences,
-  useMarkNotificationRead, useMatchMyEvents, useSavePreferences,
+  type AssistantResponse, type AttendeeEvent, type AttendeePreferences, type AttendeeProfileInput, type EventSearchParams,
+  useAskAssistant, useAttendeeDashboard, useAttendeeNotifications, useAttendeeOptions, useAttendeePreferences, useAttendeeProfile,
+  useMarkNotificationRead, useMatchMyEvents, useSaveAttendeeProfile, useSavePreferences, useSearchEvents,
 } from './api';
 import { AttendeeEventCard, EventGrid, MatchPill, dateRange, errorText, fmtDay, useEventDrawer } from './components';
 
@@ -385,8 +385,8 @@ export function MatchesPanel() {
 type Turn = { role: 'user'; text: string } | { role: 'assistant'; data: AssistantResponse } | { role: 'error'; text: string };
 
 const STARTERS = [
-  'Find 10 AI conferences in India',
-  'Show free technology events worldwide next month',
+  'Find 10 construction conferences in India',
+  'Show free pharmaceutical events worldwide next month',
   'Find healthcare exhibitions in the USA',
   'Recommend events matching my profile',
   'Find online workshops this weekend',
@@ -503,4 +503,218 @@ export function NotificationsPanel() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Discover: search & filter every verified upcoming event
+// ---------------------------------------------------------------------------
 
+const EMPTY_FILTERS: EventSearchParams = { q: '', sector: '', country: '', mode: '', free: false, dateFrom: '', dateTo: '', sort: 'soonest' };
+
+export function DiscoverPanel() {
+  const optsQ = useAttendeeOptions();
+  const [filters, setFilters] = useState<EventSearchParams>(EMPTY_FILTERS);
+  const [page, setPage] = useState(1);
+  const q = useDebounce(filters.q ?? '', 300);
+  const search = useSearchEvents({ ...filters, q, page, pageSize: 24 });
+  const { open, drawer } = useEventDrawer();
+  const set = <K extends keyof EventSearchParams>(key: K, value: EventSearchParams[K]) => {
+    setFilters((f) => ({ ...f, [key]: value }));
+    setPage(1);
+  };
+  const data = search.data;
+  const pages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
+  const active = JSON.stringify(filters) !== JSON.stringify(EMPTY_FILTERS);
+
+  return (
+    <div className="space-y-5">
+      <div className="rounded-2xl border border-foreground/10 bg-card p-5" data-testid="discover-filters">
+        <input
+          value={filters.q}
+          onChange={(e) => set('q', e.target.value)}
+          placeholder="Search events, topics, cities or organisers"
+          className={cx(inputClass, 'py-3 text-sm')}
+          aria-label="Search events"
+          data-testid="input-discover-search"
+        />
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          <select value={filters.sector} onChange={(e) => set('sector', e.target.value)} className={inputClass} aria-label="Sector" data-testid="select-discover-sector">
+            <option value="">All sectors</option>
+            {(optsQ.data?.industries ?? []).filter((o) => o.count > 0).map((o) => <option key={o.value} value={o.value}>{o.value} ({o.count})</option>)}
+          </select>
+          <select value={filters.country} onChange={(e) => set('country', e.target.value)} className={inputClass} aria-label="Country" data-testid="select-discover-country">
+            <option value="">All countries</option>
+            {(optsQ.data?.countries ?? []).map((o) => <option key={o.value} value={o.value}>{o.value} ({o.count})</option>)}
+          </select>
+          <select value={filters.mode} onChange={(e) => set('mode', e.target.value as EventSearchParams['mode'])} className={inputClass} aria-label="Format">
+            <option value="">Any format</option>
+            <option value="offline">In person</option>
+            <option value="online">Online</option>
+            <option value="hybrid">Hybrid</option>
+          </select>
+          <select value={filters.sort} onChange={(e) => set('sort', e.target.value as EventSearchParams['sort'])} className={inputClass} aria-label="Sort">
+            <option value="soonest">Soonest first</option>
+            <option value="match">Best match for me</option>
+          </select>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
+          <label className="flex items-center gap-2">From <input type="date" value={filters.dateFrom} onChange={(e) => set('dateFrom', e.target.value)} className={cx(inputClass, 'w-auto')} /></label>
+          <label className="flex items-center gap-2">To <input type="date" value={filters.dateTo} onChange={(e) => set('dateTo', e.target.value)} className={cx(inputClass, 'w-auto')} /></label>
+          <label className="flex items-center gap-2"><Switch checked={Boolean(filters.free)} onChange={(v) => set('free', v)} /> Free only</label>
+          {active && <button type="button" onClick={() => { setFilters(EMPTY_FILTERS); setPage(1); }} className="font-semibold text-accent hover:underline">Clear filters</button>}
+        </div>
+      </div>
+
+      {filters.sort === 'match' && data && !data.hasPreferences && <PreferencesCta />}
+      {search.isError && <ErrorState error={search.error} retry={() => search.refetch()} />}
+      {search.isLoading && <LoadingState label="Searching events" />}
+      {data && (
+        <>
+          <p className="text-xs text-muted-foreground" data-testid="text-discover-count">
+            {data.total} of {data.catalogSize} verified upcoming events{active ? ' match your filters' : ''}{search.isFetching ? ' · updating…' : ''}
+          </p>
+          <EventGrid
+            events={data.results}
+            onOpen={open}
+            empty={<EmptyState title="No events match these filters." body="Try a wider date range, another country, or clear the filters." />}
+          />
+          {pages > 1 && (
+            <div className="flex items-center justify-center gap-3 text-xs">
+              <Btn type="button" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Previous</Btn>
+              <span>Page {page} of {pages}</span>
+              <Btn type="button" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>Next</Btn>
+            </div>
+          )}
+        </>
+      )}
+      {drawer}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// My profile — personal details (attendee_profiles), separate from organisers
+// ---------------------------------------------------------------------------
+
+const EMPTY_PROFILE: AttendeeProfileInput = { name: '', phone: '', city: '', country: '', jobTitle: '', company: '', bio: '', linkedinUrl: '' };
+
+function TextField({ label, value, onChange, testId, ...rest }: { label: string; value: string; onChange: (v: string) => void; testId: string } & Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>) {
+  return (
+    <label className="block text-xs font-semibold text-muted-foreground">
+      {label}
+      <input value={value} onChange={(e) => onChange(e.target.value)} className={cx(inputClass, 'mt-1.5 py-2.5')} data-testid={testId} {...rest} />
+    </label>
+  );
+}
+
+export function ProfilePanel({ footer }: { footer?: ReactNode }) {
+  const profileQ = useAttendeeProfile();
+  const prefsQ = useAttendeePreferences();
+  const optsQ = useAttendeeOptions();
+  const dashQ = useAttendeeDashboard();
+  const save = useSaveAttendeeProfile();
+  const [form, setForm] = useState<AttendeeProfileInput>(EMPTY_PROFILE);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  useEffect(() => {
+    const p = profileQ.data;
+    if (p) {
+      setForm({ name: p.name, phone: p.phone ?? '', city: p.city ?? '', country: p.country ?? '', jobTitle: p.jobTitle ?? '', company: p.company ?? '', bio: p.bio ?? '', linkedinUrl: p.linkedinUrl ?? '' });
+    }
+  }, [profileQ.data]);
+
+  if (profileQ.isLoading) return <LoadingState label="Loading your profile" />;
+  if (profileQ.isError || !profileQ.data) return <ErrorState error={profileQ.error} retry={() => profileQ.refetch()} />;
+  const profile = profileQ.data;
+  const prefs = prefsQ.data;
+  const set = (key: keyof AttendeeProfileInput) => (v: string) => setForm((f) => ({ ...f, [key]: v }));
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    const blankToNull = (v: string | null) => (v && v.trim() ? v.trim() : null);
+    save.mutate(
+      {
+        name: form.name.trim(),
+        phone: blankToNull(form.phone), city: blankToNull(form.city), country: blankToNull(form.country),
+        jobTitle: blankToNull(form.jobTitle), company: blankToNull(form.company), bio: blankToNull(form.bio), linkedinUrl: blankToNull(form.linkedinUrl),
+      },
+      { onSuccess: () => setSavedAt(Date.now()) },
+    );
+  };
+
+  const chips = (items: string[] | undefined, empty: string) =>
+    items && items.length ? (
+      <div className="mt-2 flex flex-wrap gap-1.5">{items.map((i) => <Badge key={i}>{i}</Badge>)}</div>
+    ) : <p className="mt-1 text-xs text-muted-foreground">{empty}</p>;
+
+  return (
+    <div className="grid gap-6 xl:grid-cols-[1.3fr_1fr]">
+      <form onSubmit={submit} className="space-y-4 rounded-2xl border border-foreground/10 bg-card p-6" data-testid="form-attendee-profile">
+        <div>
+          <h2 className="font-display text-2xl font-bold">Personal details</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Your attendee profile. Other attendees at the same events see your name, job title, company, country and bio in Networking — never your e-mail or phone.
+          </p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <TextField label="Full name" value={form.name} onChange={set('name')} required minLength={2} testId="input-profile-name" />
+          <label className="block text-xs font-semibold text-muted-foreground">
+            E-mail (sign-in)
+            <input value={profile.email} disabled className={cx(inputClass, 'mt-1.5 py-2.5 opacity-70')} />
+          </label>
+          <TextField label="Phone" value={form.phone ?? ''} onChange={set('phone')} type="tel" placeholder="+91 98765 43210" testId="input-profile-phone" />
+          <TextField label="City" value={form.city ?? ''} onChange={set('city')} testId="input-profile-city" />
+          <label className="block text-xs font-semibold text-muted-foreground">
+            Country
+            <input list="profile-country-list" value={form.country ?? ''} onChange={(e) => set('country')(e.target.value)} className={cx(inputClass, 'mt-1.5 py-2.5')} data-testid="input-profile-country" />
+            <datalist id="profile-country-list">{(optsQ.data?.allCountries ?? []).map((c) => <option key={c} value={c} />)}</datalist>
+          </label>
+          <TextField label="Job title" value={form.jobTitle ?? ''} onChange={set('jobTitle')} testId="input-profile-job-title" />
+          <TextField label="Company" value={form.company ?? ''} onChange={set('company')} testId="input-profile-company" />
+          <TextField label="LinkedIn" value={form.linkedinUrl ?? ''} onChange={set('linkedinUrl')} type="url" placeholder="https://www.linkedin.com/in/…" testId="input-profile-linkedin" />
+        </div>
+        <label className="block text-xs font-semibold text-muted-foreground">
+          About you
+          <textarea value={form.bio ?? ''} onChange={(e) => set('bio')(e.target.value)} maxLength={500} className={cx(inputClass, 'mt-1.5 min-h-24 py-2.5')} data-testid="input-profile-bio" />
+        </label>
+        {save.isError && <Notice tone="danger">{errorText(save.error)}</Notice>}
+        <div className="flex items-center gap-3">
+          <Btn type="submit" variant="primary" loading={save.isPending} data-testid="button-save-profile">Save profile</Btn>
+          {savedAt && !save.isPending && !save.isError && <span className="text-xs text-emerald-600" data-testid="text-profile-saved">Saved.</span>}
+        </div>
+      </form>
+
+      <div className="space-y-4">
+        <div className="rounded-2xl border border-foreground/10 bg-card p-6">
+          <div className="flex items-start justify-between gap-3">
+            <h2 className="font-display text-xl font-bold">Interests</h2>
+            <Link href="/dashboard/preferences" className="text-xs font-bold text-accent hover:underline">Edit →</Link>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">Used to match and recommend events to you.</p>
+          <p className="mt-4 text-xs font-bold">Topics</p>
+          {chips(prefs?.interests, 'None yet.')}
+          <p className="mt-3 text-xs font-bold">Preferred industries</p>
+          {chips(prefs?.industries, 'None yet.')}
+          <p className="mt-3 text-xs font-bold">Preferred countries</p>
+          {chips(prefs?.countries, 'None yet.')}
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Link href="/dashboard/saved-events" className="rounded-2xl border border-foreground/10 bg-card p-5 hover:border-accent/50">
+            <Heart size={16} className="text-accent" />
+            <p className="mt-3 font-display text-3xl font-bold">{dashQ.data?.counts.saved ?? '—'}</p>
+            <p className="text-xs text-muted-foreground">Saved events</p>
+          </Link>
+          <Link href="/dashboard/registrations" className="rounded-2xl border border-foreground/10 bg-card p-5 hover:border-accent/50">
+            <Ticket size={16} className="text-accent" />
+            <p className="mt-3 font-display text-3xl font-bold">{dashQ.data?.counts.registered ?? '—'}</p>
+            <p className="text-xs text-muted-foreground">Registrations</p>
+          </Link>
+        </div>
+        <div className="rounded-2xl border border-foreground/10 bg-card p-6 text-xs text-muted-foreground">
+          <p><span className="font-semibold text-foreground">Account type:</span> Attendee</p>
+          {profile.memberSince && <p className="mt-1"><span className="font-semibold text-foreground">Member since:</span> {fmtDay(profile.memberSince)}</p>}
+          <p className="mt-1"><span className="font-semibold text-foreground">E-mail verified:</span> {profile.emailVerified ? 'Yes' : 'Not yet'}</p>
+        </div>
+        {footer}
+      </div>
+    </div>
+  );
+}

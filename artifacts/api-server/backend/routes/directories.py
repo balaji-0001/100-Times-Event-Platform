@@ -18,6 +18,7 @@ from backend.schemas import (
     VenueOut,
 )
 from backend.serializers import category_out, city_out, event_card, organizer_out, review_out, venue_out
+from backend.services.sectors import REMOVED_SECTOR_SLUGS
 
 router = APIRouter(tags=["directories"])
 
@@ -33,17 +34,22 @@ def directory_events(db: Session, where, user_id: int | None) -> list:
     return [event_card(db, row, user_id) for row in rows]
 
 
+def offered_categories():
+    """Sectors the site offers: every category except removed ones (Technology)."""
+    return select(Category).where(Category.slug.not_in(REMOVED_SECTOR_SLUGS))
+
+
 @router.get("/categories", response_model=list[CategoryOut])
 def list_categories(db: Session = Depends(get_db)) -> list[CategoryOut]:
-    return [category_out(db, item) for item in db.scalars(select(Category).order_by(Category.name)).all()]
+    return [category_out(db, item) for item in db.scalars(offered_categories().order_by(Category.name)).all()]
 
 
 @router.get("/categories/{slug}", response_model=DirectoryDetail)
 def get_category(slug: str, db: Session = Depends(get_db), user: User | None = Depends(optional_current_user)) -> DirectoryDetail:
-    category = db.scalar(select(Category).where(Category.slug == slug))
+    category = db.scalar(offered_categories().where(Category.slug == slug))
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
-    related = db.scalars(select(Category).where(Category.id != category.id).order_by(Category.name).limit(3)).all()
+    related = db.scalars(offered_categories().where(Category.id != category.id).order_by(Category.name).limit(3)).all()
     return DirectoryDetail(name=category.name, slug=category.slug, description=category.description, events=directory_events(db, Event.category_id == category.id, user.id if user else None), related=[item.name for item in related])
 
 

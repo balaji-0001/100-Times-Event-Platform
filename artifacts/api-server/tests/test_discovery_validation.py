@@ -51,7 +51,7 @@ def test_validate_event_verified_when_confident_and_complete():
     future = (date.today() + timedelta(days=30)).isoformat()
     candidate = ExtractedEventCandidate(
         name="Pune Tech Summit", date=future, venue="Convention Centre", city="Pune",
-        category="Technology",
+        category="Healthcare",
         ticket_url="https://example.test/tickets", extraction_confidence=85,
         primary_source=CandidateSource(url="https://example.test/event", source_type="event_listing"),
     )
@@ -65,7 +65,7 @@ def test_validate_event_verified_when_confident_and_complete():
 def _complete_candidate(future: str) -> ExtractedEventCandidate:
     return ExtractedEventCandidate(
         name="Pune Tech Summit", date=future, venue="Convention Centre", city="Pune",
-        category="Technology",
+        category="Healthcare",
         ticket_url="https://example.test/tickets", extraction_confidence=85,
         primary_source=CandidateSource(url="https://example.test/event", source_type="event_listing"),
     )
@@ -153,7 +153,7 @@ def test_validate_event_skips_organizer_check_when_not_passed():
 
 def test_validate_event_needs_review_below_confidence_threshold():
     future = (date.today() + timedelta(days=30)).isoformat()
-    candidate = ExtractedEventCandidate(name="Low Confidence Event", date=future, category="Technology", extraction_confidence=20)
+    candidate = ExtractedEventCandidate(name="Low Confidence Event", date=future, category="Healthcare", extraction_confidence=20)
     organizer = OrganizerCandidate(found=True, email="hello@punetech.test")
     status, notes, confidence, parsed = validate_event(candidate, confidence_threshold=60, organizer=organizer)
     assert status == "NEEDS_REVIEW"
@@ -191,7 +191,7 @@ def test_validate_event_configurable_rejection_rules():
     # 3. Reject unmatched category
     unmatched_cand = _complete_candidate(future)
     unmatched_cand.category = "Unknown Sector"
-    res = validate_event(unmatched_cand, 60, organizer=organizer, reject_unmatched_category=True, supported_categories=["Technology", "Finance"])
+    res = validate_event(unmatched_cand, 60, organizer=organizer, reject_unmatched_category=True, supported_categories=["Healthcare", "Finance"])
     assert res.status == "REJECTED"
     assert res.rejection_reason == "UNMATCHED_CATEGORY"
 
@@ -228,6 +228,6 @@ def test_validate_event_configurable_rejection_rules():
     # 8. Fallback to Other sector when unmatched
     fallback_cand = _complete_candidate(future)
     fallback_cand.category = "Unknown Emerging Industry"
-    res = validate_event(fallback_cand, 60, organizer=organizer, fallback_to_other_sector=True, supported_categories=["Technology", "Finance"])
+    res = validate_event(fallback_cand, 60, organizer=organizer, fallback_to_other_sector=True, supported_categories=["Healthcare", "Finance"])
     assert res.status == "VERIFIED"
     assert fallback_cand.category == "Other"

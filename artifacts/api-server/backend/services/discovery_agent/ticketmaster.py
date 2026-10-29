@@ -50,9 +50,9 @@ CATEGORY_MAP = {
     "seminar": "Education",
     "trade show": "Manufacturing",
     "exhibition": "Construction",
-    "convention": "Technology",
-    "technology": "Telecommunications",
-    "tech": "Telecommunications",
+    "convention": "Other",
+    "technology": "Technology",  # removed sector: discovery rejects these
+    "tech": "Technology",
     "health": "Healthcare",
     "medical": "Healthcare",
     "pharma": "Pharmaceuticals",

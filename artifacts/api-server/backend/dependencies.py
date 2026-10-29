@@ -64,3 +64,9 @@ def require_roles(*roles: str) -> Callable:
         return user
 
     return dependency
+
+# Attendee and organiser accounts are separate (see `User.roles`): attendee-only
+# endpoints refuse organiser accounts and organiser-only endpoints refuse
+# attendee accounts. Admins pass both.
+require_attendee = require_roles("attendee")
+require_organiser = require_roles("ORGANIZER", "ADMIN")

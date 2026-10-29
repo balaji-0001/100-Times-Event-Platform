@@ -318,7 +318,12 @@ def test_admin_decide_trust_review(db_session, seeded_catalog):
         notes="Manually verified organizer credentials via phone.",
     )
 
+    # Approving clears the event; it goes live only when the admin publishes it.
     assert updated_review.status == "APPROVED"
+    assert event.status == "pending"
+    assert event.lifecycle_state == "APPROVED"
+
+    admin_decide_trust_review(db_session, review, decision="PUBLISH", admin_user_id=1)
     assert event.status == "published"
     assert event.lifecycle_state == "PUBLISHED"
 

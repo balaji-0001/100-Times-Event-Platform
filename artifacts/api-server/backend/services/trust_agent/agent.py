@@ -480,7 +480,7 @@ def admin_decide_trust_review(
     db: Session,
     review: TrustReview,
     *,
-    decision: Literal["APPROVE", "REJECT", "REQUEST_CHANGES"],
+    decision: Literal["APPROVE", "PUBLISH", "REJECT", "REQUEST_CHANGES"],
     admin_user_id: int,
     notes: str | None = None,
 ) -> TrustReview:
@@ -498,10 +498,17 @@ def admin_decide_trust_review(
 
     prev_status = review.status
     if decision == "APPROVE":
+        # Approving clears the event; publishing it is a separate admin step (PUBLISH).
         review.status = "APPROVED"
-        review.recommended_action = "AUTO_PUBLISH"
+        review.recommended_action = "PUBLISH"
         event.trust_status = "APPROVED"
         transition_event_state(db, event, "APPROVED", actor="admin", actor_id=admin_user_id, reason=notes, force=True)
+    elif decision == "PUBLISH":
+        if review.status != "APPROVED":
+            raise ValueError("Only an approved event can be published. Approve it first.")
+        if (event.lifecycle_state or "").upper() == "PUBLISHED":
+            raise ValueError("This event is already published.")
+        review.recommended_action = "PUBLISHED"
         transition_event_state(db, event, "PUBLISHED", actor="admin", actor_id=admin_user_id, reason=notes, force=True)
         if organizer:
             advance_organizer_stage(db, organizer, profile, "PUBLISHED", actor="admin", actor_id=admin_user_id, note=notes)

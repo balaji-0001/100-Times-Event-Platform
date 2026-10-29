@@ -12,7 +12,7 @@ from backend.services.discovery_agent.types import CandidateSource, DiscoveryCon
 def _fixed_candidate() -> ExtractedEventCandidate:
     source = CandidateSource(url="https://example.test/pune-tech-summit", source_type="event_listing", source_website="example.test")
     return ExtractedEventCandidate(
-        name="Pune Tech Summit",
+        name="Pune Healthcare Summit",
         date="2099-01-01",
         venue="Convention Centre",
         city="Pune",
@@ -31,7 +31,7 @@ def _fixed_organizer() -> OrganizerCandidate:
 
 
 def _config() -> DiscoveryConfig:
-    return DiscoveryConfig(cities=["Pune"], states=[], categories=["Technology"], search_depth=2, sources_per_query=1, daily_limit=200, confidence_threshold=60)
+    return DiscoveryConfig(cities=["Pune"], states=[], categories=["Healthcare"], search_depth=2, sources_per_query=1, daily_limit=200, confidence_threshold=60)
 
 
 def _patch_pipeline(monkeypatch):
@@ -77,9 +77,9 @@ def test_target_valid_events_rule_continues_until_target_reached(db_session, mon
         nonlocal candidate_counter
         candidate_counter += 1
         if candidate_counter % 2 == 1:
-            name = "Repeated Tech Dupe Event"
+            name = "Repeated Healthcare Dupe Event"
         else:
-            name = f"Unique Tech Event {candidate_counter}"
+            name = f"Unique Healthcare Event {candidate_counter}"
         source = CandidateSource(url=f"https://example.test/events/{candidate_counter}", source_type="event_listing", source_website="example.test")
         return [
             ExtractedEventCandidate(
@@ -102,7 +102,7 @@ def test_target_valid_events_rule_continues_until_target_reached(db_session, mon
 
     cfg = DiscoveryConfig(
         cities=["Bengaluru"],
-        categories=["Technology"],
+        categories=["Healthcare"],
         listing_urls=["https://example.test/page/{city}"],  # expanded by the patched builder above
         events_per_run=5,  # Raw cap is small (5), but target_valid_events is 10!
         target_valid_events=10,

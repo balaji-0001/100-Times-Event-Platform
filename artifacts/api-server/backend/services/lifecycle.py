@@ -57,9 +57,10 @@ def legacy_status_for_lifecycle(lifecycle_state: str) -> str:
     """Map rich lifecycle state to the 3-state legacy `Event.status` column
     ('draft', 'pending', 'published') used by existing marketplace cards."""
     state = (lifecycle_state or "DRAFT").upper()
-    if state in {"PUBLISHED", "REGISTRATION_OPEN", "REGISTRATION_CLOSED", "EVENT_STARTED", "EVENT_COMPLETED", "RESCHEDULED", "APPROVED"}:
+    if state in {"PUBLISHED", "REGISTRATION_OPEN", "REGISTRATION_CLOSED", "EVENT_STARTED", "EVENT_COMPLETED", "RESCHEDULED"}:
         return "published"
-    if state in {"SUBMITTED", "TRUST_CHECK", "NEEDS_REVIEW"}:
+    # APPROVED = cleared by trust review but not yet published by an admin: not public.
+    if state in {"SUBMITTED", "TRUST_CHECK", "NEEDS_REVIEW", "APPROVED"}:
         return "pending"
     return "draft"
 

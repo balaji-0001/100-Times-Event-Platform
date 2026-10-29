@@ -20,6 +20,7 @@ from backend.services.discovery_agent.search_providers.google import GoogleSearc
 from backend.services.discovery_agent.search_providers.google_gemini import GeminiGoogleSearchProvider
 from backend.services.discovery_agent.search_providers.searxng import SearXNGSearchProvider
 from backend.services.discovery_agent.search_providers.web_fallback import WebFallbackProvider
+from backend.services.social_agent import ai_client
 
 logger = logging.getLogger("discovery_agent.search_providers.engine")
 
@@ -45,6 +46,40 @@ class SearchRunStats:
         self.providers: dict[str, dict[str, Any]] = {}
         self.url_origin: dict[str, str] = {}
         self.log: list[dict[str, Any]] = []
+        # One search request from the pipeline = one query, however many
+        # providers answered it; a provider request = one call (see `providers`).
+        self.queries: Counter = Counter()
+        # AI model requests made by providers (Google via Gemini grounding),
+        # with the token counts the model API reported.
+        self.ai_models: dict[str, dict[str, Any]] = {}
+
+    def record_query(self, outcome: str) -> None:
+        """`outcome`: with_results | no_results | served_from_cache | no_provider
+        (not sent: no provider selected, or all cooling down / over the paid budget)."""
+        with self._lock:
+            self.queries["attempted"] += 1
+            self.queries[outcome] += 1
+
+    def record_ai_usage(self, provider_id: str, calls: list[dict[str, Any]]) -> None:
+        with self._lock:
+            for c in calls:
+                row = self.ai_models.setdefault(c["model"], {
+                    "provider": c["provider"], "calls": 0, "failed_calls": 0, "prompt_tokens": 0,
+                    "completion_tokens": 0, "total_tokens": 0, "used_by": Counter(),
+                })
+                row["calls"] += 1
+                row["failed_calls"] += 0 if c["ok"] else 1
+                row["prompt_tokens"] += c["prompt_tokens"]
+                row["completion_tokens"] += c["completion_tokens"]
+                row["total_tokens"] += c["total_tokens"]
+                row["used_by"][provider_id] += 1
+
+    def usage_snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "queries": dict(self.queries),
+                "ai_models": {m: {**row, "used_by": dict(row["used_by"])} for m, row in self.ai_models.items()},
+            }
 
     def _row(self, provider_id: str) -> dict[str, Any]:
         return self.providers.setdefault(provider_id, {
@@ -318,6 +353,8 @@ class MultiProviderSearchEngine:
 
         if not primary and fallback is None:
             logger.info("Search requested for %r but no selected search provider is available.", query)
+            if stats is not None:
+                stats.record_query("no_provider")
             return []
 
         cache_key = f"{query}|{country}|{date_range}|{sorted(p.provider_id for p in primary)}|{fallback and fallback.provider_id}"
@@ -330,11 +367,13 @@ class MultiProviderSearchEngine:
                             stats.note_urls(r.metadata["provider_id"], [r.url])
                     for pid in {r.metadata.get("provider_id") for r in cached[1]} - {None}:
                         stats.record_skip(pid, "served_from_cache")
+                    stats.record_query("served_from_cache")
                 return cached[1][:max_results]
 
         aggregated_results: list[SearchProviderResult] = []
         seen_urls: set[str] = set()
         merge_lock = threading.Lock()
+        sent_to: list[str] = []  # providers that actually received this query
 
         def _execute_provider(provider: BaseSearchProvider) -> list[SearchProviderResult]:
             if self._breaker_open(provider.provider_id):
@@ -352,9 +391,13 @@ class MultiProviderSearchEngine:
                 return []
 
             start_t = time.time()
+            sent_to.append(provider.provider_id)
+            ai_client.drain_usage()  # this thread's earlier, unattributed requests aren't this call's
             try:
                 res = provider.search(query=query, max_results=max_results, country=country, date_range=date_range)
                 latency = (time.time() - start_t) * 1000
+                if stats is not None:
+                    stats.record_ai_usage(provider.provider_id, ai_client.drain_usage())
                 log = ProviderExecutionLog(
                     provider_id=provider.provider_id,
                     provider_name=provider.provider_name,
@@ -387,7 +430,8 @@ class MultiProviderSearchEngine:
                 self._record_log(log)
                 if stats is not None:
                     stats.record_call(log, purpose, provider.consume_cost())
-                permanent = any(m.lower() in err_msg.lower() for m in self._PERMANENT_MARKERS)
+                    stats.record_ai_usage(provider.provider_id, ai_client.drain_usage())
+                permanent =any(m.lower() in err_msg.lower() for m in self._PERMANENT_MARKERS)
                 quota = any(m.lower() in err_msg.lower() for m in self._QUOTA_MARKERS)
                 self._breaker_record(provider.provider_id, ok=False, permanent=permanent, error=err_msg[:160], quota=quota and not permanent)
                 logger.warning("Search provider [%s] failed (%s) in %.1fms: %s", provider.provider_id, status, latency, err_msg[:200])
@@ -452,6 +496,9 @@ class MultiProviderSearchEngine:
         if aggregated_results:
             with self._cache_lock:
                 self._cache[cache_key] = (time.time(), aggregated_results)
+        if stats is not None:
+            # Every provider cooling down or over the paid budget: nothing was asked.
+            stats.record_query("with_results" if aggregated_results else ("no_results" if sent_to else "no_provider"))
 
         return aggregated_results[:max_results]
 

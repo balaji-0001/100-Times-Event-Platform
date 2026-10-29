@@ -180,10 +180,13 @@ class RunSummary:
     sources: dict[str, Any] = field(default_factory=dict)
     # This run's search calls (provider, query, status, results, latency, cost, purpose) — bounded.
     search_log: list[dict[str, Any]] = field(default_factory=list)
+    # Queries, provider calls, AI tokens and estimated costs of this run (see run_usage.py).
+    usage: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "sources": self.sources,
+            "usage": self.usage,
             "search_provider_logs": self.search_log,
             "verified_events": self.verified_events,
             "out_of_target_country": self.out_of_target_country,
