@@ -822,7 +822,7 @@ function Logo() {
   return (
     <Link href="/" className="flex items-center gap-2.5" data-testid="link-logo">
       <span className="grid h-9 w-9 place-items-center rounded-full bg-accent text-accent-foreground font-display text-lg font-bold">1</span>
-      <span className="font-display text-[1.1rem] font-extrabold tracking-[-.04em]">100 TIMES<span className="text-accent">.</span></span>
+      <span className="font-display text-[1.1rem] font-extrabold tracking-[-.04em]">100Times-Event platform<span className="text-accent">.</span></span>
     </Link>
   );
 }
@@ -1076,10 +1076,10 @@ function Footer() {
         </div>
         <FooterCol title="Discover" links={[['Explore events', '/events'], ['Sectors', '/categories'], ['Cities', '/cities']]} />
         <FooterCol title="Connect" links={[['Organizers', '/organizers'], ['Venues', '/venues'], ...(type === 'attendee' ? [] : [['For organizers', '/organizer']])]} />
-        <FooterCol title="Your 100 TIMES" links={yours} />
+        <FooterCol title="Your Account" links={yours} />
       </div>
       <div className="mx-auto flex max-w-[1440px] flex-wrap justify-between items-center gap-3 border-t border-primary-foreground/15 px-5 py-5 text-xs text-primary-foreground/45 lg:px-10">
-        <span>© 2026 100 TIMES</span>
+        <span>© 2026 100Times-Event platform</span>
         <div className="flex gap-5">
           <Link href="/privacy" className="hover:text-primary-foreground transition">Privacy Policy</Link>
           <Link href="/terms" className="hover:text-primary-foreground transition">Terms of Service</Link>
