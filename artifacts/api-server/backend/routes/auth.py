@@ -2,6 +2,7 @@ import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
+from typing import Any
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -56,9 +57,23 @@ def _dummy_password_hash() -> str:
     return hash_password(secrets.token_urlsafe(24))
 
 
-def _frontend_link(path: str, token: str) -> str:
-    """Absolute link into the web app for emails (PUBLIC_APP_URL setting)."""
-    base = (get_settings().public_app_url or "").strip().rstrip("/")
+def _frontend_link(path: str, token: str, request: Request | None = None) -> str:
+    """Absolute link into the web app for emails (PUBLIC_APP_URL setting or request origin)."""
+    origin = None
+    if request is not None:
+        raw_origin = request.headers.get("origin") or request.headers.get("referer")
+        if raw_origin:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(raw_origin)
+            if parsed.scheme and parsed.netloc:
+                origin = f"{parsed.scheme}://{parsed.netloc}"
+
+    configured = (get_settings().public_app_url or "").strip().rstrip("/")
+    if origin and (not configured or "localhost" in configured or "127.0.0.1" in configured):
+        base = origin
+    else:
+        base = configured or origin or "http://localhost:5174"
     return f"{base}{path}?{urlencode({'token': token})}"
 
 
@@ -79,7 +94,7 @@ def _set_auth_cookie(response: Response, token: str) -> None:
 
 
 @router.post("/register", response_model=SessionOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(rate_limit_auth)])
-def register(payload: UserInput, response: Response, db: Session = Depends(get_db)) -> SessionOut:
+def register(payload: UserInput, response: Response, request: Request, db: Session = Depends(get_db)) -> SessionOut:
     from backend.services.audit import record_audit_log
     from backend.services.notifications import send_templated_notification
 
@@ -136,7 +151,7 @@ def register(payload: UserInput, response: Response, db: Session = Depends(get_d
         )
 
         # Verification email notification
-        verification_link = _frontend_link("/verify-email", raw_verification_token)
+        verification_link = _frontend_link("/verify-email", raw_verification_token, request=request)
         send_templated_notification(
             db,
             template_key="email_verification",
@@ -199,7 +214,7 @@ def me(user: User = Depends(get_current_user)) -> UserOut:
 
 
 @router.post("/send-verification-email", dependencies=[Depends(rate_limit_auth)])
-def send_verification_email(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, str]:
+def send_verification_email(request: Request, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, str]:
     from backend.services.notifications import send_templated_notification
 
     if user.email_verified:
@@ -217,7 +232,7 @@ def send_verification_email(user: User = Depends(get_current_user), db: Session 
     db.add(record)
     db.commit()
 
-    verification_link = _frontend_link("/verify-email", raw_token)
+    verification_link = _frontend_link("/verify-email", raw_token, request=request)
     send_templated_notification(
         db,
         template_key="email_verification",
@@ -264,8 +279,9 @@ def verify_email(payload: VerifyEmailInput, db: Session = Depends(get_db)) -> di
 
 
 @router.post("/forgot-password", dependencies=[Depends(rate_limit_auth)])
-def forgot_password(payload: ForgotPasswordInput, db: Session = Depends(get_db)) -> dict[str, str]:
+def forgot_password(payload: ForgotPasswordInput, request: Request, db: Session = Depends(get_db)) -> dict[str, Any]:
     from backend.services.notifications import send_templated_notification
+    from backend.services.social_agent.outreach.senders import get_email_provider
 
     # Generic response returned unconditionally to prevent user account enumeration
     generic_msg = "If an account with this email exists, a password reset link has been sent."
@@ -273,7 +289,7 @@ def forgot_password(payload: ForgotPasswordInput, db: Session = Depends(get_db))
     email = payload.email.lower().strip()
     user = db.scalar(select(User).where(User.email == email))
     if not user:
-        return {"message": generic_msg}
+        return {"message": generic_msg, "reset_link": None, "smtp_configured": False}
 
     raw_token = secrets.token_urlsafe(32)
     token_hash = _hash_token(raw_token)
@@ -287,7 +303,7 @@ def forgot_password(payload: ForgotPasswordInput, db: Session = Depends(get_db))
     db.add(record)
     db.commit()
 
-    reset_link = _frontend_link("/reset-password", raw_token)
+    reset_link = _frontend_link("/reset-password", raw_token, request=request)
     send_templated_notification(
         db,
         template_key="password_reset",
@@ -295,7 +311,16 @@ def forgot_password(payload: ForgotPasswordInput, db: Session = Depends(get_db))
         recipient_email=user.email,
         context={"name": user.name, "email": user.email, "reset_link": reset_link},
     )
-    return {"message": generic_msg}
+
+    provider = get_email_provider()
+    # When SMTP is not configured (mock/demo mode), provide the link directly in the response
+    # so testing and demo users can immediately reset password without being blocked.
+    # When real SMTP is configured, provider.is_real is True, an actual email is sent, and reset_link is None.
+    return {
+        "message": generic_msg,
+        "reset_link": reset_link if not provider.is_real else None,
+        "smtp_configured": provider.is_real,
+    }
 
 
 @router.post("/reset-password", dependencies=[Depends(rate_limit_auth)])

@@ -2,7 +2,7 @@ import { type FormEvent, type ReactNode, useMemo, useState, useEffect, useRef } 
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle, ArrowDownRight, ArrowLeft, ArrowRight, Bell, CalendarDays, CalendarPlus, Check, ChevronDown,
-  Compass, Download, ExternalLink, Filter, Globe, Heart, LayoutDashboard,
+  Compass, Download, ExternalLink, Eye, EyeOff, Filter, Globe, Heart, KeyRound, LayoutDashboard,
   LineChart, ListFilter, Loader2, LockKeyhole, LogOut, MapPin, Menu, MessageSquare, Plus, Printer,
   QrCode, Search, Send, Settings2, ShieldCheck, Sparkles, Star, Ticket, Trash2,
   TrendingUp, UserCheck, UserPlus, UserRound, Users, X, Zap,
@@ -1483,7 +1483,7 @@ function HomePage() {
 
 // Explore date filter. `dateFrom`/`dateTo` match any event running on a day in
 // the range (see GET /api/events); dates are the visitor's local calendar days.
-type ExploreParams = ListEventsParams & { dateFrom?: string; dateTo?: string };
+type ExploreParams = ListEventsParams & { dateFrom?: string; dateTo?: string; country?: string };
 type DatePreset = 'any' | 'today' | 'weekend' | 'week' | 'month' | 'quarter' | 'custom';
 
 const DATE_PRESETS: [DatePreset, string][] = [
@@ -2219,18 +2219,42 @@ function Field({
   minLength?: number;
   testId: string;
 }) {
+  const [showPassword, setShowPassword] = useState(false);
+  const isPassword = type === 'password';
+  const effectiveType = isPassword ? (showPassword ? 'text' : 'password') : type;
+
   return (
     <label className="block text-xs font-semibold text-muted-foreground">
       {label}
-      <input
-        type={type}
-        required={required}
-        minLength={minLength}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="mt-2 w-full rounded-lg border border-foreground/15 bg-background px-3 py-3 text-sm outline-none focus:border-accent"
-        data-testid={testId}
-      />
+      <div className="relative mt-2">
+        <input
+          type={effectiveType}
+          required={required}
+          minLength={minLength}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className={`w-full rounded-lg border border-foreground/15 bg-background px-3 py-3 text-sm outline-none focus:border-accent ${
+            isPassword ? 'pr-10' : ''
+          }`}
+          data-testid={testId}
+        />
+        {isPassword && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              setShowPassword((prev) => !prev);
+            }}
+            tabIndex={-1}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors p-1"
+            title={showPassword ? 'Hide password' : 'View password'}
+            aria-label={showPassword ? 'Hide password' : 'View password'}
+            data-testid="toggle-view-password"
+          >
+            {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+          </button>
+        )}
+      </div>
     </label>
   );
 }
@@ -2448,6 +2472,8 @@ function AuthPage({ mode: initialMode }: { mode: 'login' | 'register' | 'forgot'
     country: '',
   });
   const [submitted, setSubmitted] = useState(false);
+  const [resetLink, setResetLink] = useState<string | null>(null);
+  const [smtpConfigured, setSmtpConfigured] = useState(true);
   const [error, setError] = useState('');
   const [isAccountNotFound, setIsAccountNotFound] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -2499,6 +2525,7 @@ function AuthPage({ mode: initialMode }: { mode: 'login' | 'register' | 'forgot'
     setCurrentMode(initialMode);
     setError('');
     setIsAccountNotFound(false);
+    setResetLink(null);
   }, [initialMode]);
 
   const isForgot = currentMode === 'forgot';
@@ -2511,10 +2538,16 @@ function AuthPage({ mode: initialMode }: { mode: 'login' | 'register' | 'forgot'
 
     if (isForgot) {
       try {
-        await customFetch('/api/auth/forgot-password', {
+        const res = await customFetch<{ message: string; reset_link?: string; smtp_configured?: boolean }>('/api/auth/forgot-password', {
           method: 'POST',
           body: JSON.stringify({ email: form.email.trim().toLowerCase() }),
         });
+        if (res?.reset_link) {
+          setResetLink(res.reset_link);
+        }
+        if (res?.smtp_configured !== undefined) {
+          setSmtpConfigured(res.smtp_configured);
+        }
       } catch {
         // generic response prevents user enumeration
       } finally {
@@ -2772,10 +2805,44 @@ function AuthPage({ mode: initialMode }: { mode: 'login' | 'register' | 'forgot'
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
                 If an account exists for {form.email}, you will receive a secure single-use password reset link shortly.
               </p>
+              {resetLink && (
+                <div className="mt-5 rounded-xl border border-accent/30 bg-accent/10 p-4 text-left">
+                  <div className="flex items-center gap-2 text-xs font-bold text-accent uppercase tracking-wider">
+                    <Sparkles size={14} />
+                    <span>Instant Password Reset Link</span>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {!smtpConfigured
+                      ? 'External SMTP email delivery is unconfigured. You can reset your password immediately using the direct link below:'
+                      : 'You can also use this direct reset link now:'}
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <a
+                      href={resetLink}
+                      className="inline-flex items-center gap-1.5 rounded-full bg-accent px-4 py-2 text-xs font-bold text-accent-foreground hover:opacity-90 transition"
+                      data-testid="link-direct-reset-password"
+                    >
+                      <KeyRound size={13} />
+                      Reset Password Now
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(resetLink);
+                        alert('Password reset link copied to clipboard!');
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-foreground/20 px-3 py-2 text-xs font-medium hover:bg-background transition"
+                    >
+                      Copy Link
+                    </button>
+                  </div>
+                </div>
+              )}
               <button
                 type="button"
                 onClick={() => {
                   setSubmitted(false);
+                  setResetLink(null);
                   setCurrentMode('login');
                 }}
                 className="mt-5 rounded-full bg-primary px-5 py-2 text-xs font-bold text-primary-foreground hover:bg-accent"
