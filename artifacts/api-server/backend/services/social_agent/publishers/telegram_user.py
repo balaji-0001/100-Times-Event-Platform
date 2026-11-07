@@ -15,10 +15,16 @@ Features:
 import re
 from typing import Any
 
-from telethon.sessions import StringSession
-from telethon.sync import TelegramClient
-from telethon.tl.functions.channels import JoinChannelRequest
-from telethon.tl.functions.messages import ImportChatInviteRequest
+try:
+    from telethon.sessions import StringSession
+    from telethon.sync import TelegramClient
+    from telethon.tl.functions.channels import JoinChannelRequest
+    from telethon.tl.functions.messages import ImportChatInviteRequest
+except ImportError:
+    StringSession = None
+    TelegramClient = None
+    JoinChannelRequest = None
+    ImportChatInviteRequest = None
 
 from backend.core.config import get_settings
 from backend.services.social_agent.publishers.base import PlatformPublisher
@@ -42,6 +48,8 @@ class TelegramUserPublisher(PlatformPublisher):
 
     @property
     def is_real(self) -> bool:
+        if TelegramClient is None or StringSession is None:
+            return False
         return bool(self.api_id and self.api_hash and self.session_string)
 
     def _get_client(self) -> TelegramClient | None:
