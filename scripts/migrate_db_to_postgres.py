@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from psycopg2.extras import Json
+from psycopg2.extras import Json, execute_values
 from sqlalchemy import MetaData, Table, create_engine, inspect, text
 from sqlalchemy.orm import Session
 
@@ -42,6 +42,40 @@ def normalize_mysql_url(url: str) -> str:
     if url.startswith("mysql://"):
         return url.replace("mysql://", "mysql+pymysql://", 1)
     return url
+
+
+def drop_all_foreign_keys(conn):
+    sql = text("""
+        SELECT tc.table_name, tc.constraint_name
+        FROM information_schema.table_constraints AS tc
+        WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = 'public';
+    """)
+    fks = conn.execute(sql).fetchall()
+    logger.info("Temporarily dropping %d foreign key constraints for fast data load...", len(fks))
+    for row in fks:
+        try:
+            conn.execute(text(f'ALTER TABLE "{row[0]}" DROP CONSTRAINT IF EXISTS "{row[1]}";'))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+
+
+def restore_model_foreign_keys(conn):
+    logger.info("Restoring foreign key constraints from models...")
+    for table in Base.metadata.sorted_tables:
+        for fk in table.foreign_key_constraints:
+            col_names = ", ".join(f'"{c.name}"' for c in fk.columns)
+            ref_col_names = ", ".join(f'"{elem.column.name}"' for elem in fk.elements)
+            constraint_name = fk.name or f"fk_{table.name}_{list(fk.columns)[0].name}_{fk.referred_table.name}"
+            try:
+                conn.execute(text(
+                    f'ALTER TABLE "{table.name}" ADD CONSTRAINT "{constraint_name}" '
+                    f'FOREIGN KEY ({col_names}) REFERENCES "{fk.referred_table.name}" ({ref_col_names});'
+                ))
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                logger.warning("Notice on re-adding FK %s on %s: %s", constraint_name, table.name, e)
 
 
 def migrate(source_url: str, target_url: str, create_schema: bool = True) -> None:
@@ -86,29 +120,22 @@ def migrate(source_url: str, target_url: str, create_schema: bool = True) -> Non
     logger.info("Found %d common tables to migrate in topological dependency order.", len(common_tables))
 
     with tgt_engine.connect() as tgt_conn:
-        has_replica_role = False
-        try:
-            tgt_conn.execute(text("SET session_replication_role = 'replica';"))
-            tgt_conn.commit()
-            has_replica_role = True
-            logger.info("Superuser mode: session_replication_role set to 'replica'.")
-        except Exception:
-            logger.info("Managed Cloud DB: using strict topological dependency order for foreign keys.")
+        drop_all_foreign_keys(tgt_conn)
 
-        # Truncate/delete target tables up front (children before parents)
+        # Clear target tables up front
         logger.info("Clearing target tables up front...")
-        all_tables_csv = ", ".join(f'"{t}"' for t in reversed(common_tables))
+        all_tables_csv = ", ".join(f'"{t}"' for t in common_tables)
         try:
-            tgt_conn.execute(text(f"TRUNCATE TABLE {all_tables_csv} CASCADE;"))
+            tgt_conn.execute(text(f"TRUNCATE TABLE {all_tables_csv};"))
             tgt_conn.commit()
-        except Exception as e:
-            logger.info("TRUNCATE CASCADE not permitted; deleting rows from child tables first...")
-            for t in reversed(common_tables):
+        except Exception:
+            tgt_conn.rollback()
+            for t in common_tables:
                 try:
                     tgt_conn.execute(text(f'DELETE FROM "{t}";'))
                     tgt_conn.commit()
                 except Exception:
-                    pass
+                    tgt_conn.rollback()
 
         total_migrated_rows = 0
 
@@ -126,8 +153,7 @@ def migrate(source_url: str, target_url: str, create_schema: bool = True) -> Non
             matching_cols = [c for c in src_cols if c in tgt_cols]
 
             cols_str = ", ".join(f'"{c}"' for c in matching_cols)
-            placeholders = ", ".join(f":{c}" for c in matching_cols)
-            insert_stmt = text(f'INSERT INTO "{table_name}" ({cols_str}) VALUES ({placeholders})')
+            insert_query = f'INSERT INTO "{table_name}" ({cols_str}) VALUES %s'
 
             logger.info("Migrating table '%s' (%d rows)...", table_name, src_count)
 
@@ -143,7 +169,7 @@ def migrate(source_url: str, target_url: str, create_schema: bool = True) -> Non
 
                     for row in rows:
                         row_dict = dict(row._mapping)
-                        filtered = {}
+                        row_vals = []
                         for col in matching_cols:
                             val = row_dict.get(col)
                             target_type = str(tgt_cols[col]["type"]).upper()
@@ -169,25 +195,24 @@ def migrate(source_url: str, target_url: str, create_schema: bool = True) -> Non
                                 elif isinstance(val, (dict, list)):
                                     val = Json(val)
 
-                            filtered[col] = val
-                        rows_batch.append(filtered)
+                            row_vals.append(val)
+                        rows_batch.append(tuple(row_vals))
 
                     if rows_batch:
-                        tgt_conn.execute(insert_stmt, rows_batch)
-                        tgt_conn.commit()
-                        total_migrated_rows += len(rows_batch)
-                        rows_batch = []
+                        try:
+                            raw_conn = tgt_conn.connection.dbapi_connection
+                            raw_cursor = raw_conn.cursor()
+                            execute_values(raw_cursor, insert_query, rows_batch, page_size=len(rows_batch))
+                            raw_conn.commit()
+                            tgt_conn.commit()
+                            total_migrated_rows += len(rows_batch)
+                            rows_batch = []
+                        except Exception as e:
+                            tgt_conn.rollback()
+                            logger.error("Failed to insert into %s: %s", table_name, e)
+                            raise
 
             logger.info("Table '%s' migrated successfully.", table_name)
-
-        # Restore constraints if superuser
-        if has_replica_role:
-            logger.info("Restoring session_replication_role to 'origin'...")
-            try:
-                tgt_conn.execute(text("SET session_replication_role = 'origin';"))
-                tgt_conn.commit()
-            except Exception:
-                pass
 
         # Update all SERIAL sequences so auto-increment IDs work correctly
         logger.info("Updating PostgreSQL SERIAL sequences...")
@@ -208,6 +233,11 @@ def migrate(source_url: str, target_url: str, create_schema: bool = True) -> Non
         """)
         tgt_conn.execute(update_sequences_sql)
         tgt_conn.commit()
+        if hasattr(tgt_conn.connection, "dbapi_connection"):
+            tgt_conn.connection.dbapi_connection.commit()
+
+        # Restore all foreign key constraints from models
+        restore_model_foreign_keys(tgt_conn)
 
     logger.info("=======================================================")
     logger.info("Migration Completed Successfully!")

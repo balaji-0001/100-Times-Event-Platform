@@ -271,10 +271,13 @@ class Settings(BaseSettings):
             "mysql://",
             "mysql+pymysql://",
             "sqlite://",
+            "postgres://",
+            "postgresql://",
+            "postgresql+psycopg2://",
         )
         if not value.startswith(supported_prefixes):
             raise ValueError(
-                "DATABASE_URL must use MySQL (mysql:// or mysql+pymysql://) or SQLite (sqlite:///...)"
+                "DATABASE_URL must use PostgreSQL (postgres:// or postgresql://), MySQL (mysql:// or mysql+pymysql://), or SQLite (sqlite:///...)"
             )
         return value
 
