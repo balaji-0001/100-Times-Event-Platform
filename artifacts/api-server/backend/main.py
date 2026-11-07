@@ -183,7 +183,7 @@ def get_favicon_svg():
     return FileResponse(_FAVICON_SVG, media_type="image/svg+xml")
 
 
-@app.get("/docs", include_in_schema=False)
+@app.api_route("/docs", methods=["GET", "HEAD"], include_in_schema=False)
 def custom_swagger_ui_html():
     return get_swagger_ui_html(
         openapi_url=app.openapi_url,
@@ -192,7 +192,7 @@ def custom_swagger_ui_html():
     )
 
 
-@app.get("/redoc", include_in_schema=False)
+@app.api_route("/redoc", methods=["GET", "HEAD"], include_in_schema=False)
 def custom_redoc_html():
     return get_redoc_html(
         openapi_url=app.openapi_url,
@@ -201,7 +201,7 @@ def custom_redoc_html():
     )
 
 
-@app.get("/", include_in_schema=False, response_class=HTMLResponse)
+@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False, response_class=HTMLResponse)
 def backend_root():
     return """<!DOCTYPE html>
 <html lang="en">
@@ -231,7 +231,7 @@ async def unhandled_exception(_: Request, exc: Exception):
     return JSONResponse(status_code=500, content={"error": "Internal server error", "correlationId": cid})
 
 
-@app.get("/api/healthz", tags=["health"])
+@app.api_route("/api/healthz", methods=["GET", "HEAD"], tags=["health"])
 def health() -> dict[str, str]:
     return {"status": "ok"}
 
