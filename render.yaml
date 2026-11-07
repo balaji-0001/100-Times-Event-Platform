@@ -1,0 +1,61 @@
+# Render Blueprint Specification for 100 Times Event Platform
+# https://render.com/docs/blueprint-spec
+
+databases:
+  - name: 100times-db
+    databaseName: times100
+    user: times100_user
+    region: oregon
+    plan: free # Can be upgraded to starter ($7/mo) for persistent storage beyond 30 days
+    ipAllowList: [] # Allows access from anywhere or specify IPs
+
+services:
+  # Backend API (FastAPI + Uvicorn)
+  - type: web
+    name: 100times-api
+    env: python
+    region: oregon
+    plan: free # Can be upgraded to starter
+    branch: main
+    buildCommand: pip install -r artifacts/api-server/requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: 100times-db
+          property: connectionString
+      - key: AUTO_CREATE_SCHEMA
+        value: "true"
+      - key: SEED_DEMO_DATA
+        value: "false"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ENVIRONMENT
+        value: production
+      - key: CORS_ORIGINS
+        value: "*"
+      - key: AI_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false # Set in Render Dashboard secrets
+      - key: SEARXNG_URL
+        sync: false # Set if running a SearXNG service
+
+  # Frontend Web App (React + Vite)
+  - type: static
+    name: 100times-frontend
+    region: oregon
+    plan: free
+    branch: main
+    buildCommand: npm install -g pnpm@9 && pnpm install --frozen-lockfile && pnpm --filter @workspace/100-times run build
+    staticPublishPath: ./artifacts/100-times/dist/public
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_BASE_URL
+        fromService:
+          type: web
+          name: 100times-api
+          property: host

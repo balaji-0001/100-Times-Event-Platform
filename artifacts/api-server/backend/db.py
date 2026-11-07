@@ -17,13 +17,17 @@ def _engine_url() -> str:
         api_server_dir = Path(__file__).resolve().parent.parent
         db_file = api_server_dir / "100times-dev.db"
         return f"sqlite:///{db_file.as_posix()}"
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+psycopg2://", 1)
+    if url.startswith("postgresql://") and not url.startswith("postgresql+"):
+        return url.replace("postgresql://", "postgresql+psycopg2://", 1)
     if url.startswith("mysql://"):
         return url.replace("mysql://", "mysql+pymysql://", 1)
     return url
 
 
 def _engine_options() -> dict:
-    """Keep SQLite usable by FastAPI's worker threads without affecting MySQL."""
+    """Keep SQLite usable by FastAPI's worker threads without affecting MySQL/PostgreSQL."""
     url = _engine_url()
     if url.startswith("sqlite"):
         return {"connect_args": {"check_same_thread": False}}
@@ -31,6 +35,13 @@ def _engine_options() -> dict:
         return {
             "pool_pre_ping": True,
             "pool_recycle": 3600,
+        }
+    if url.startswith("postgresql"):
+        return {
+            "pool_pre_ping": True,
+            "pool_recycle": 1800,
+            "pool_size": 10,
+            "max_overflow": 20,
         }
     return {"pool_pre_ping": True}
 
@@ -111,6 +122,8 @@ def sync_schema_columns(target_engine=None) -> None:
         ],
     }
 
+    is_postgres = eng.dialect.name == "postgresql"
+
     with eng.begin() as conn:
         for table_name, cols in alterations.items():
             if table_name not in existing_tables:
@@ -119,7 +132,14 @@ def sync_schema_columns(target_engine=None) -> None:
             for col_name, col_def in cols:
                 if col_name not in existing_cols:
                     try:
-                        conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_def}"))
+                        col_sql = col_def
+                        if is_postgres:
+                            col_sql = (
+                                col_sql.replace("BOOLEAN DEFAULT 1", "BOOLEAN DEFAULT TRUE")
+                                .replace("BOOLEAN DEFAULT 0", "BOOLEAN DEFAULT FALSE")
+                                .replace("DATETIME", "TIMESTAMP")
+                            )
+                        conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_sql}"))
                     except Exception:
                         pass
 

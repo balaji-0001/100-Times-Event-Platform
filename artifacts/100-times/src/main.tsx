@@ -6,8 +6,13 @@ import { setAuthTokenGetter, setBaseUrl } from '@workspace/api-client-react';
 
 import './index.css';
 
-// Browser requests need an absolute API origin while Vite is on a separate port.
-setBaseUrl(import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000');
+// Browser requests need an absolute API origin while Vite is on a separate port or deployed on Render.
+const rawApiUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
+const apiBaseUrl =
+  rawApiUrl.startsWith('http://') || rawApiUrl.startsWith('https://')
+    ? rawApiUrl
+    : `https://${rawApiUrl}`;
+setBaseUrl(apiBaseUrl);
 setAuthTokenGetter(() => localStorage.getItem('100-times-auth-token'));
 
 createRoot(document.getElementById('root')!, {
