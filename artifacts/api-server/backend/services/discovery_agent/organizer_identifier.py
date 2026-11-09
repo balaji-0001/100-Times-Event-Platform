@@ -415,6 +415,9 @@ def _render_fallback(look: _Lookup, pages: list[tuple[str, bool]], platform_url:
     _MAX_RENDERS, and skipped while the browser workers are saturated."""
     from backend.services.social_agent import browser_fetch, web_fetch
 
+    if not browser_fetch.browser_fetch_enabled():
+        return
+
     event_url = look.candidate.url
     # The organizer's own pages first (likeliest to carry a contact), the event page last.
     for url, platform_page in pages[1:] + pages[:1]:

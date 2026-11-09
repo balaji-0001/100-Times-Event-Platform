@@ -44,18 +44,22 @@ _queued_renders = 0
 
 
 def browser_fetch_enabled() -> bool:
-    return get_settings().discovery_browser_fetch
+    return bool(get_settings().discovery_browser_fetch)
 
 
 def busy() -> bool:
     """True when every render worker is busy and as many renders again are
     waiting — callers with an optional render (the organizer lookup's
     fallback) should skip it rather than queue behind them."""
+    if not browser_fetch_enabled():
+        return False
     with _queue_lock:
         return _queued_renders >= 2 * _RENDER_WORKERS
 
 
 def render(url: str, for_contacts: bool = False) -> str | None:
+    if not browser_fetch_enabled():
+        return None
     global _queued_renders
     allow_dev = get_settings().environment.lower() != "production"
     try:

@@ -74,9 +74,9 @@ class DiscoveryConfig:
     # Execution budget & concurrency (network work runs in worker threads;
     # every DB write stays on the run's own thread).
     max_run_seconds: int = 900  # stop launching new work after this; report the shortfall
-    max_parallel_searches: int = 4  # concurrent search queries (providers also self rate-limit)
-    max_parallel_fetches: int = 8  # concurrent page reads (adapters, listings, result pages)
-    max_parallel_organizer_lookups: int = 8  # concurrent organizer/contact verifications
+    max_parallel_searches: int = 2  # concurrent search queries (providers also self rate-limit)
+    max_parallel_fetches: int = 3  # concurrent page reads (adapters, listings, result pages)
+    max_parallel_organizer_lookups: int = 3  # concurrent organizer/contact verifications
 
 
 @dataclass

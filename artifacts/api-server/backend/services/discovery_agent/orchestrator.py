@@ -29,6 +29,7 @@ dedup-checks before inserting, so a resumed or re-run pass never creates
 duplicate records.
 """
 
+import gc
 import logging
 import re
 import threading
@@ -177,6 +178,9 @@ def config_from_settings(settings: Settings, db: Session | None = None, include_
         blacklisted_keywords=auto_scope.get("blacklisted_keywords") or [],
         excluded_domains=auto_scope.get("excluded_domains") or [],
         search_providers=auto_scope.get("search_providers"),
+        max_parallel_searches=getattr(settings, "discovery_max_parallel_searches", 2),
+        max_parallel_fetches=getattr(settings, "discovery_max_parallel_fetches", 3),
+        max_parallel_organizer_lookups=getattr(settings, "discovery_max_parallel_organizer_lookups", 3),
     )
 
 
@@ -892,6 +896,10 @@ class _DiscoveryPipeline:
         if not force and now - self._last_flush < self._SUMMARY_FLUSH_SECONDS:
             return
         self._last_flush = now
+        try:
+            gc.collect()
+        except Exception:
+            pass
         self.summary.timings = self.timings()
         snapshot = self.search_stats.snapshot()
         self.report.merge_search_stats(snapshot)

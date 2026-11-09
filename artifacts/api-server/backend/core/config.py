@@ -168,8 +168,12 @@ class Settings(BaseSettings):
     discovery_require_organizer_email: bool = False
     # Re-open pages that come back empty/thin (JavaScript-rendered sites) in
     # headless Chromium via Playwright. Needs `playwright install chromium`;
-    # without it discovery silently keeps the plain HTTP result.
-    discovery_browser_fetch: bool = True
+    # without it discovery silently keeps the plain HTTP result. Disabled by
+    # default in production to prevent OOM kill on memory-constrained hosting.
+    discovery_browser_fetch: bool = False
+    discovery_max_parallel_searches: int = 2
+    discovery_max_parallel_fetches: int = 3
+    discovery_max_parallel_organizer_lookups: int = 3
     # Public listing pages read directly from their schema.org data — this
     # is how discovery finds events with no AI key. `{city}` expands once per
     # DISCOVERY_TARGET_CITIES entry. Empty = AI web search only.
