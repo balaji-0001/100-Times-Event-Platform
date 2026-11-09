@@ -6,8 +6,10 @@ import { setAuthTokenGetter, setBaseUrl } from '@workspace/api-client-react';
 
 import './index.css';
 
-// Browser requests need an absolute API origin while Vite is on a separate port.
-setBaseUrl(import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000');
+// In local development, relative URLs are proxied through Vite to backend on port 8000.
+if (import.meta.env.VITE_API_BASE_URL) {
+  setBaseUrl(import.meta.env.VITE_API_BASE_URL);
+}
 setAuthTokenGetter(() => localStorage.getItem('100-times-auth-token'));
 
 createRoot(document.getElementById('root')!, {

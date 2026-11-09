@@ -124,11 +124,12 @@ app = FastAPI(
 )
 from backend.core.telemetry import TelemetryMiddleware
 app.add_middleware(TelemetryMiddleware)
+is_cors_wildcard = settings.cors_origins.strip() == "*" and settings.environment != "development"
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
     allow_origin_regex=settings.cors_origin_regex,
-    allow_credentials=settings.cors_origins.strip() != "*",
+    allow_credentials=not is_cors_wildcard,
     allow_methods=["*"],
     allow_headers=["*"],
 )
