@@ -57,7 +57,12 @@ class SearXNGSearchProvider(BaseSearchProvider):
 def query_searxng(base_url: str, query: str, max_results: int = 5) -> list[SearchProviderResult]:
     """One SearXNG JSON search: de-duplicated http(s) results, at most `max_results`."""
     params: dict[str, Any] = {"q": query, "format": "json", "categories": "general", "language": "en", "pageno": 1}
-    r = httpx.get(f"{base_url.rstrip('/')}/search", params=params, timeout=10.0)
+    try:
+        r = httpx.get(f"{base_url.rstrip('/')}/search", params=params, timeout=10.0)
+    except httpx.ConnectError:
+        raise RuntimeError(f"Cannot connect to SearXNG at {base_url}. Is the service running?")
+    except httpx.TimeoutException:
+        raise RuntimeError(f"SearXNG at {base_url} timed out")
     if r.status_code != 200:
         raise RuntimeError(f"SearXNG HTTP {r.status_code}: {r.text[:200]}")
 
